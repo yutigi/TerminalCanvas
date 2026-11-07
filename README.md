@@ -4,6 +4,8 @@ A desktop canvas for managing multiple AI terminals. Keep a shell, Claude Code, 
 
 This initial implementation shares Electron with the neighboring WebCanvas project. WebCanvas integration is planned; it is not included yet.
 
+![Terminal Canvas desktop UI showing the empty workspace, terminal profiles, and canvas controls.](docs/images/terminal-canvas.png)
+
 ## Run locally
 
 Use Node.js 22.12+ and npm. Windows 10 1809+ or Windows 11 is the primary target. The standard Windows setup uses the node-pty binary included in the dependency when it passes a real terminal check inside Electron.
