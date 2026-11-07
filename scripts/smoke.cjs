@@ -1,6 +1,13 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+function hasOutputLine(output, expected) {
+    const clean = output.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
+        .replace(/\x1b\[[\d;]*[Hf]/g, '\n')
+        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+    return clean.split(/\r?\n/).some(line => line.trim() === expected);
+}
+exports.hasOutputLine = hasOutputLine;
 exports.run = async ({ app, win, terminals, createCard }) => {
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError/.test(message || '')) errors.push(message); });
@@ -22,8 +29,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
                 if (event.type === 'data' && event.id === card.id) {
                     output += event.data;
                     terminals.acknowledge(card.id, event.data.length);
-                    const clean = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-                    if (clean.split(/\r?\n/).some(line => line.trim() === marker)) { clearTimeout(timeout); resolve(); }
+                    if (hasOutputLine(output, marker)) { clearTimeout(timeout); resolve(); }
                 }
             };
             try {

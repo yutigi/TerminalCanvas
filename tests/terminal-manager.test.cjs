@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { TerminalManager } = require('../src/terminal-manager.cjs');
 const { createCard } = require('../src/workspace.cjs');
 
-function harness() {
+function harness(options = {}) {
     const events = [], processes = [], launches = [];
     const spawn = (...args) => {
         launches.push(args);
@@ -16,7 +16,7 @@ function harness() {
         };
         processes.push(p); return p;
     };
-    const manager = new TerminalManager({ spawn, emit: e => events.push(e), platform: 'win32', home: process.cwd(), env: { ComSpec: 'cmd.exe', ELECTRON_RUN_AS_NODE: '1', SAMPLE: 'yes' } });
+    const manager = new TerminalManager({ spawn, emit: e => events.push(e), platform: 'win32', home: process.cwd(), env: { SystemRoot: 'C:\\Windows', ComSpec: 'cmd.exe', ELECTRON_RUN_AS_NODE: '1', SAMPLE: 'yes' }, ...options });
     return { manager, events, processes, launches };
 }
 test('does not launch anything until explicitly started; sends selected command once', () => {
@@ -25,12 +25,34 @@ test('does not launch anything until explicitly started; sends selected command 
     assert.equal(launches.length, 0);
     manager.start(card, 100, 30);
     assert.deepEqual(processes[0].writes, ['codex\r']);
-    assert.equal(launches[0][0], 'cmd.exe');
-    assert.deepEqual(launches[0][1], ['/d', '/q']);
+    assert.equal(launches[0][0], 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    assert.deepEqual(launches[0][1], ['-NoLogo']);
     assert.equal(launches[0][2].env.ELECTRON_RUN_AS_NODE, undefined);
     assert.equal(launches[0][2].env.SAMPLE, 'yes');
     assert.equal(launches[0][2].cwd, process.cwd());
 });
+test('uses Windows PowerShell from SystemRoot for a plain terminal', () => {
+    const { manager, launches, processes } = harness({ env: { SystemRoot: 'D:\\Windows', ComSpec: 'cmd.exe' } });
+    const result = manager.start(createCard());
+    assert.equal(result.shell, 'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    assert.equal(launches[0][0], result.shell);
+    assert.deepEqual(launches[0][1], ['-NoLogo']);
+    assert.deepEqual(processes[0].writes, []);
+});
+
+test('falls back to the standard Windows PowerShell path without SystemRoot', () => {
+    const { manager } = harness({ env: {} });
+    assert.equal(manager.start(createCard()).shell, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+});
+
+test('preserves the configured login shell and Bash fallback on other platforms', () => {
+    for (const env of [{ SHELL: '/bin/zsh' }, {}]) {
+        const { manager, launches } = harness({ platform: 'linux', env });
+        assert.equal(manager.start(createCard()).shell, env.SHELL || '/bin/bash');
+        assert.deepEqual(launches[0][1], ['-l']);
+    }
+});
+
 test('routes input and resize to the right PTY', () => {
     const { manager, processes, events } = harness();
     const a = createCard(), b = createCard(); manager.start(a); manager.start(b);

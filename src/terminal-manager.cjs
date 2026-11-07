@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 const { validateCard, LIMITS } = require('./workspace.cjs');
 
 // Terminal processes belong to the desktop host; renderers only receive this lifecycle API.
@@ -20,9 +21,10 @@ class TerminalManager {
         const cwd = card.cwd || this.home;
         if (!fs.statSync(cwd).isDirectory()) throw new Error('Working directory must be a folder.');
         const windows = this.platform === 'win32';
-        const shell = windows ? (this.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe') : (this.env.SHELL || '/bin/bash');
-        // No auto-run shell startup on Windows. Users can launch pwsh from any card.
-        const args = windows ? ['/d', '/q'] : ['-l'];
+        const shell = windows
+            ? path.win32.join(this.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+            : (this.env.SHELL || '/bin/bash');
+        const args = windows ? ['-NoLogo'] : ['-l'];
         const env = { ...this.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERMINAL_CANVAS: '1' };
         delete env.ELECTRON_RUN_AS_NODE;
         const terminal = this.spawn(shell, args, { name: 'xterm-256color', cwd, cols, rows, env });

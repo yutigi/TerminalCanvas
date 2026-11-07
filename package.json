@@ -10,7 +10,7 @@
         "check": "node scripts/check.cjs",
         "test": "node --test tests/*.test.cjs",
         "test:smoke": "node scripts/start.cjs --smoke-test",
-        "rebuild": "electron-rebuild -f -w node-pty",
+        "rebuild": "node scripts/rebuild.cjs",
         "build": "electron-builder --win portable"
     },
     "dependencies": {

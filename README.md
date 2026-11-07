@@ -6,7 +6,7 @@ This initial implementation shares Electron with the neighboring WebCanvas proje
 
 ## Run locally
 
-Use Node.js 22.12+ and npm. Windows 10 1809+ or Windows 11 is the primary target. Native rebuilds may require Python and Visual Studio Build Tools with Desktop development with C++, a Windows SDK, and the Spectre-mitigated libraries required by node-pty.
+Use Node.js 22.12+ and npm. Windows 10 1809+ or Windows 11 is the primary target. The standard Windows setup uses the node-pty binary included in the dependency when it passes a real terminal check inside Electron.
 
 ```powershell
 npm install
@@ -14,9 +14,15 @@ npm run rebuild
 npm start
 ```
 
-`npm install` needs access to the npm registry and Electron downloads. `npm run rebuild` rebuilds node-pty for Electron's runtime. Rerun it after changing Electron or native dependencies. AI CLIs must already be installed, available on your `PATH`, and authenticated; Terminal Canvas does not install or sign in to them.
+`npm install` needs access to the npm registry and Electron downloads. `npm run rebuild` verifies node-pty inside Electron on Windows and compiles it from source only if the existing binary fails. Other platforms compile from source. Rerun it after changing Electron or native dependencies. AI CLIs must already be installed, available on your `PATH`, and authenticated; Terminal Canvas does not install or sign in to them.
 
-The first successful install generates `package-lock.json`; include it in version control. A lockfile could not be generated during initial development because registry access was denied in the development session.
+A dependency lockfile is included. Use `npm ci` instead of `npm install` for an exact install from that lockfile.
+
+### Source-build troubleshooting
+
+To force compilation, run `npm run rebuild -- --from-source`. Windows source builds require Python and Visual Studio Build Tools with Desktop development with C++, a Windows SDK, and MSVC Spectre-mitigated libraries matching the compiler toolset and target architecture. If you see `MSB8040: Spectre-mitigated libraries are required`, open **Visual Studio Installer → Modify → Individual components**, install those matching libraries, then retry the source build. The default Windows rebuild can use the verified bundled binary without these compiler components.
+
+`npm run build` also invokes native compilation through electron-builder, so packaging currently requires the source-build prerequisites.
 
 For a dependency-free **layout preview**, run `npm run dev` and visit [localhost:4174](http://127.0.0.1:4174). The preview supports card layout and browser-local recovery; it cannot launch shells, choose native folders, or open/save workspace files. It does not simulate AI output.
 
@@ -28,7 +34,7 @@ For a dependency-free **layout preview**, run `npm run dev` and visit [localhost
 - Use the card's stop/start controls to end or relaunch its shell. Closing a running card asks before stopping it.
 - Copy/paste with Ctrl + Shift + C/V. Ctrl + C remains the shell interrupt. Paste respects the terminal's bracketed-paste mode.
 
-On Windows, cards open `cmd.exe` with AutoRun disabled. Use `pwsh` as the launch command for PowerShell, or enter it inside a running terminal. Other systems use the login shell selected by `SHELL`, falling back to Bash; those platforms have not been validated.
+On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by default. Optional launch commands run inside PowerShell. Use `pwsh` as the launch command for PowerShell 7 if installed, or `cmd.exe` for Command Prompt. Other systems use the login shell selected by `SHELL`, falling back to Bash; those platforms have not been validated.
 
 | Shortcut | Action |
 | --- | --- |
@@ -49,11 +55,12 @@ Restored cards are stopped until explicitly started. A saved command is never ex
 | --- | --- |
 | `npm start` | Launch the Electron desktop app |
 | `npm run dev` | Serve the layout preview on loopback port 4174 |
+| `npm run rebuild` | Verify the Windows native binary in Electron, or rebuild when needed |
 | `npm run check` | Check JavaScript syntax and the package manifest |
-| `npm test` | Run dependency-free workspace and terminal-manager tests |
+| `npm test` | Run dependency-free workspace, terminal-manager, rebuild, renderer, and smoke-output tests |
 | `npm run test:smoke` | Check the desktop renderer, real PTY output, resize, and cleanup; save `.cache/smoke.png` |
 | `npm run build` | Package an unsigned Windows portable executable in `release/` |
 
-Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. The initial session passed core tests and syntax checks, and served the preview successfully. Desktop startup, native rebuilds, packaging, and visual verification remain unverified because dependencies could not be downloaded and browser automation was unavailable.
+Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Windows validation passed syntax checks, all 21 automated tests, the default rebuild command, and the desktop smoke test. The smoke test emitted a node-pty `AttachConsole failed` message during terminal shutdown despite completing successfully; shutdown diagnostics need further investigation. Forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. Packaging remains unverified.
 
 Source lives in `src/`, scripts in `scripts/`, tests in `tests/`, and design notes in [docs/architecture.md](docs/architecture.md). `AGENTS.md` is preserved as requested; this README records the tooling added since that guide was created.
