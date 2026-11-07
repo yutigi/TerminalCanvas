@@ -1,0 +1,79 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { TerminalManager } = require('../src/terminal-manager.cjs');
+const { createCard } = require('../src/workspace.cjs');
+
+function harness() {
+    const events = [], processes = [], launches = [];
+    const spawn = (...args) => {
+        launches.push(args);
+        const p = {
+            pid: processes.length + 100, writes: [], sizes: [], pauses: 0, resumes: 0, killed: false, disposed: 0,
+            onData(fn) { this.data = fn; return { dispose: () => this.disposed++ }; },
+            onExit(fn) { this.exit = fn; return { dispose: () => this.disposed++ }; },
+            write(data) { this.writes.push(data); }, resize(...size) { this.sizes.push(size); },
+            pause() { this.pauses++; }, resume() { this.resumes++; }, kill() { this.killed = true; }
+        };
+        processes.push(p); return p;
+    };
+    const manager = new TerminalManager({ spawn, emit: e => events.push(e), platform: 'win32', home: process.cwd(), env: { ComSpec: 'cmd.exe', ELECTRON_RUN_AS_NODE: '1', SAMPLE: 'yes' } });
+    return { manager, events, processes, launches };
+}
+test('does not launch anything until explicitly started; sends selected command once', () => {
+    const { manager, launches, processes } = harness();
+    const card = createCard({ profile: 'codex' });
+    assert.equal(launches.length, 0);
+    manager.start(card, 100, 30);
+    assert.deepEqual(processes[0].writes, ['codex\r']);
+    assert.equal(launches[0][0], 'cmd.exe');
+    assert.deepEqual(launches[0][1], ['/d', '/q']);
+    assert.equal(launches[0][2].env.ELECTRON_RUN_AS_NODE, undefined);
+    assert.equal(launches[0][2].env.SAMPLE, 'yes');
+    assert.equal(launches[0][2].cwd, process.cwd());
+});
+test('routes input and resize to the right PTY', () => {
+    const { manager, processes, events } = harness();
+    const a = createCard(), b = createCard(); manager.start(a); manager.start(b);
+    manager.write(b.id, 'hello'); manager.resize(a.id, 120, 40);
+    processes[0].data('first'); processes[1].data('second');
+    assert.deepEqual(processes[0].writes, []);
+    assert.deepEqual(processes[1].writes, ['hello']);
+    assert.deepEqual(processes[0].sizes, [[120, 40]]);
+    assert.deepEqual(events.map(e => e.id), [a.id, b.id]);
+});
+test('applies backpressure at high watermark and resumes after renderer acknowledgment', () => {
+    const { manager, processes } = harness(); const card = createCard(); manager.start(card);
+    processes[0].data('a'.repeat(260000)); processes[0].data('more');
+    assert.equal(processes[0].pauses, 1);
+    manager.acknowledge(card.id, 250000);
+    assert.equal(processes[0].resumes, 1);
+    manager.acknowledge(card.id, -10);
+    assert.equal(manager.sessions.get(card.id).pending, 10004);
+});
+test('cleans exited sessions and ignores stale events after a restart', () => {
+    const { manager, processes, events } = harness(); const card = createCard(); manager.start(card);
+    const old = processes[0]; old.exit({ exitCode: 0 });
+    assert.equal(manager.sessions.size, 0); assert.equal(old.disposed, 2);
+    manager.start(card); old.data('stale'); old.exit({ exitCode: 1 });
+    assert.equal(manager.sessions.size, 1); assert.equal(events.length, 1);
+});
+test('stop and app-wide cleanup dispose subscriptions and kill each child', () => {
+    const { manager, processes } = harness(); const a = createCard(), b = createCard(); manager.start(a); manager.start(b);
+    manager.stop(a.id); manager.stop(a.id); manager.stopAll();
+    assert.equal(manager.sessions.size, 0);
+    assert.ok(processes.every(p => p.killed && p.disposed === 2));
+});
+test('rejects duplicate starts, invalid dimensions, large input, and invalid folders', () => {
+    const { manager } = harness(); const card = createCard(); manager.start(card);
+    assert.throws(() => manager.start(card), /already running/);
+    assert.throws(() => manager.resize(card.id, 0, 12), /dimensions/);
+    assert.throws(() => manager.start(createCard(), 80.5, 24), /dimensions/);
+    assert.throws(() => manager.write(card.id, 'a'.repeat(65537)), /64 KB/);
+    assert.throws(() => manager.start(createCard({ cwd: __filename })), /folder/);
+});
+test('failed launch commands kill the just-created terminal', () => {
+    const { manager, processes } = harness(); const originalSpawn = manager.spawn;
+    manager.spawn = (...args) => { const p = originalSpawn(...args); p.write = () => { throw new Error('write failed'); }; return p; };
+    assert.throws(() => manager.start(createCard({ command: 'echo hi' })), /write failed/);
+    assert.equal(manager.sessions.size, 0); assert.equal(processes[0].killed, true);
+});

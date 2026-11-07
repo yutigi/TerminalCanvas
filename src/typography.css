@@ -1,0 +1,2 @@
+/* Use OS fonts so the desktop workspace never needs a network font request. */
+code,kbd,.xterm{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Liberation Mono',monospace}

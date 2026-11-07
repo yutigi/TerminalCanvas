@@ -1,0 +1,35 @@
+{
+    "name": "terminal-canvas",
+    "version": "0.1.0",
+    "private": true,
+    "description": "A spatial desktop workspace for AI terminals.",
+    "main": "src/main.cjs",
+    "scripts": {
+        "start": "node scripts/start.cjs",
+        "dev": "node scripts/preview.cjs",
+        "check": "node scripts/check.cjs",
+        "test": "node --test tests/*.test.cjs",
+        "test:smoke": "node scripts/start.cjs --smoke-test",
+        "rebuild": "electron-rebuild -f -w node-pty",
+        "build": "electron-builder --win portable"
+    },
+    "dependencies": {
+        "@xterm/addon-fit": "0.11.0",
+        "@xterm/xterm": "6.0.0",
+        "node-pty": "1.1.0"
+    },
+    "devDependencies": {
+        "@electron/rebuild": "4.2.1",
+        "electron": "45.2.3",
+        "electron-builder": "26.18.0"
+    },
+    "engines": { "node": ">=22.12" },
+    "build": {
+        "appId": "local.terminalcanvas.desktop",
+        "productName": "Terminal Canvas",
+        "directories": { "output": "release" },
+        "files": ["src/**/*", "package.json"],
+        "asarUnpack": ["node_modules/node-pty/**/*"],
+        "win": { "target": "portable" }
+    }
+}
