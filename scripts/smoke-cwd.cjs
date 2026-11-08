@@ -48,6 +48,17 @@ exports.run = async ({ win, terminals, createCard }) => {
         const { captureScreenshot } = require('./smoke.cjs');
         await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
         if (!cmd && process.platform === 'win32') {
+            await waitFor(async () => !(await terminals.directory(cards[0])).warning, 'Shell did not become idle: ' + command);
+            const queue = await fs.mkdtemp(path.join(root, 'queue-'));
+            const marker = path.join(queue, 'running'), release = path.join(queue, 'release');
+            const quote = value => "'" + value.replaceAll("'", "''") + "'";
+            try {
+                terminals.write(cards[0].id, `Set-Location -LiteralPath ${quote(root)}\rSet-Location -LiteralPath ${quote(target)}; [IO.File]::WriteAllText(${quote(marker)}, 'running'); while (-not (Test-Path -LiteralPath ${quote(release)})) { Start-Sleep -Milliseconds 50 }\r`);
+                await waitFor(async () => { try { return await fs.readFile(marker, 'utf8') === 'running'; } catch { return false; } }, 'Buffered command did not start: ' + command);
+                assert.ok((await terminals.directory(cards[0])).warning, 'buffered command acceptance must invalidate the intermediate prompt: ' + command);
+            } finally { await fs.writeFile(release, 'continue'); }
+            await waitFor(async () => !(await terminals.directory(cards[0])).warning, 'Final idle prompt did not restore duplication: ' + command);
+            assert.equal((await terminals.directory(cards[0])).cwd, target);
             terminals.write(cards[0].id, 'Set-Location HKCU:\r');
             await waitFor(async () => await displayed(0) === 'Current directory unavailable', 'Non-filesystem location should be unknown: ' + command);
             assert.equal(terminals.snapshot().get(cards[0].id).cwd, target, 'an unavailable location preserves the last restorable folder');

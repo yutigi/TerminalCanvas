@@ -43,8 +43,8 @@ exports.checkCreationWorkflows = async ({ app, win, terminals, createCard, captu
                 terminals.write(cards[0].id, 'Start-Sleep -Milliseconds 500\r');
                 assert.ok((await terminals.directory(cards[0])).warning, 'a busy shell must not reuse a potentially stale prompt directory');
                 await until(async () => !(await terminals.directory(cards[0])).warning, 'Directory reporting did not resume after the command.');
-                // Reproduce a multiline paste with no PSReadLine: the first prompt
-                // must not make its intermediate folder available to Duplicate.
+                // PSReadLine may buffer the paste beyond Console.KeyAvailable.
+                // An intermediate prompt must not stay ready during the next command.
                 const marker = path.join(root, 'queued-cwd.txt'), release = path.join(root, 'release-command');
                 const quote = value => "'" + value.replace(/'/g, "''") + "'";
                 terminals.write(cards[0].id, `Set-Location -LiteralPath ${quote(other)}\rSet-Location -LiteralPath ${quote(nested)}; [IO.File]::WriteAllText(${quote(marker)}, (Get-Location).ProviderPath); while (-not (Test-Path -LiteralPath ${quote(release)})) { Start-Sleep -Milliseconds 50 }\r`);

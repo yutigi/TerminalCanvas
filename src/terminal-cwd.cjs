@@ -61,9 +61,21 @@ function directoryReports(platform, report, reportReady = () => {}) {
 }
 
 // Profiles load normally before -Command runs; wrap the resulting prompt only in
-// this process. No profile files, input handlers, or user commands are rewritten.
+// this process. Keep the existing line reader and its bindings: PSReadLine can
+// buffer pasted input itself, beyond what Console.KeyAvailable can observe.
 const powershellBootstrap = `
 $global:__TerminalCanvasPrompt = $function:prompt
+$global:__TerminalCanvasReadLine = $function:PSConsoleHostReadLine
+$global:__TerminalCanvasReader = $null
+if ($null -ne $global:__TerminalCanvasReadLine) {
+    function global:PSConsoleHostReadLine {
+        try { & $global:__TerminalCanvasReadLine }
+        finally {
+            try { [Console]::Write(([char]27).ToString() + ']777;tc-ready;0' + [char]7) } catch { }
+        }
+    }
+    $global:__TerminalCanvasReader = $function:PSConsoleHostReadLine
+}
 function global:prompt {
     $tcPrompt = & $global:__TerminalCanvasPrompt
     $tcExitVariable = Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Ignore
@@ -74,10 +86,11 @@ function global:prompt {
         $tcLocation = $executionContext.SessionState.Path.CurrentLocation
         if ($tcLocation.Provider.Name -eq 'FileSystem') { $tcDirectory = ([System.Uri]$tcLocation.ProviderPath).AbsoluteUri }
     } catch { }
-    # A pasted command can still be queued after this intermediate prompt. Only
-    # advertise a directory for duplication when the input queue has drained.
+    # Every accepted input line invalidates this prompt before execution, even
+    # when PSReadLine already drained the console into its own paste buffer.
+    # Without that reader (or if a profile/tool replaces it), require review.
     $tcReady = '0'
-    try { if (-not [Console]::KeyAvailable) { $tcReady = '1' } } catch { }
+    if ($null -ne $global:__TerminalCanvasReader -and $function:PSConsoleHostReadLine -eq $global:__TerminalCanvasReader) { $tcReady = '1' }
     try {
         [Console]::Write(([char]27).ToString() + ']7;' + $tcDirectory + [char]7)
         [Console]::Write(([char]27).ToString() + ']777;tc-ready;' + $tcReady + [char]7)
