@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets } = require('../src/assets.cjs');
+const { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, keepList, unusedAssets, deleteAssets } = require('../src/assets.cjs');
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082', 'hex');
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]);
@@ -72,4 +72,22 @@ test('imports reject malformed embedded images', async t => {
         await assert.rejects(extractAssets({ version: 2, items: [], assets }, dir), /Invalid embedded|Only PNG/);
     }
     assert.deepEqual(await fs.readdir(dir), []);
+});
+
+test('cleanup lists only unreferenced content-addressed images and deletes them', async t => {
+    const dir = await folder(t);
+    const png = await storeImage(dir, PNG), gif = await storeImage(dir, GIF), webp = await storeImage(dir, WEBP);
+    for (const other of ['notes.txt', `${png}.1234.tmp`, `${'e'.repeat(64)}.svg`]) await fs.writeFile(path.join(dir, other), 'keep me');
+    await fs.mkdir(path.join(dir, `${'f'.repeat(64)}.png`));
+    const unused = await unusedAssets(dir, keepList([png]));
+    assert.deepEqual(unused.map(a => a.name).sort(), [gif, webp].sort());
+    assert.equal(unused.find(a => a.name === gif).bytes, GIF.length);
+    assert.deepEqual(await deleteAssets(dir, [...unused, { name: `${'b'.repeat(64)}.png`, bytes: 99 }]), { deleted: 2, bytes: GIF.length + WEBP.length }, 'files that are already gone are skipped');
+    assert.deepEqual((await fs.readdir(dir)).sort(), [png, `${png}.1234.tmp`, `${'e'.repeat(64)}.svg`, `${'f'.repeat(64)}.png`, 'notes.txt'].sort());
+    assert.deepEqual(await unusedAssets(path.join(dir, 'missing'), keepList([])), [], 'no assets folder yet');
+});
+
+test('cleanup rejects malformed keep lists', () => {
+    for (const keep of [undefined, 'a.png', ['../workspace.terminalcanvas'], [`${'a'.repeat(64)}.svg`], [42]]) assert.throws(() => keepList(keep), /Invalid image list/);
+    assert.deepEqual([...keepList([`${'a'.repeat(64)}.png`])], [`${'a'.repeat(64)}.png`]);
 });

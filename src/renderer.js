@@ -31,7 +31,8 @@ const paths = {
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
     package: '<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 8v8l9 5 9-5V8m-9 5v8"/>',
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
-    redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>'
+    redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
+    trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -614,9 +615,12 @@ document.querySelectorAll('[data-color]').forEach(button => button.onclick = () 
 document.querySelectorAll('[data-font-size]').forEach(button => button.onclick = () => { if (ready) setItemFontSize(button.dataset.fontSize); });
 $('#image-tool').onclick = () => run(async () => {
     if (!ready || focused) return;
-    const result = await invoke('pick-image');
-    if (result.asset) await placeImage(result.asset, viewportCenterWorld());
+    await importing(async () => {
+        const result = await invoke('pick-image');
+        if (result.asset) await placeImage(result.asset, viewportCenterWorld());
+    });
 });
+$('#clean-images').onclick = () => run(async () => { if (ready) await cleanUpImages(); });
 $('#export-workspace').onclick = () => run(async () => {
     if (!ready) return;
     workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace';

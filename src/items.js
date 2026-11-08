@@ -341,15 +341,45 @@ function placeImage(asset, point) {
         probe.src = assetUrl(asset);
     });
 }
+// Counts imports between storing an image and placing it, when cleanup would see it as unused.
+let imageImports = 0;
+async function importing(task) {
+    imageImports++;
+    try { return await task(); } finally { imageImports--; }
+}
 // Image bytes go to the desktop host, which validates and stores them; the workspace keeps only the name.
-async function importImageFiles(files, point) {
-    const images = [...files].filter(file => /^image\//.test(file.type));
-    for (const [index, file] of images.entries()) {
-        if (file.size > 15 * 1024 * 1024) { toast(`${file.name || 'Image'} is larger than 15 MB.`); continue; }
-        const { asset } = await invoke('import-image', { bytes: new Uint8Array(await file.arrayBuffer()) });
-        await placeImage(asset, { x: point.x + index * 24, y: point.y + index * 24 });
-    }
-    return images.length;
+function importImageFiles(files, point) {
+    return importing(async () => {
+        const images = [...files].filter(file => /^image\//.test(file.type));
+        for (const [index, file] of images.entries()) {
+            if (file.size > 15 * 1024 * 1024) { toast(`${file.name || 'Image'} is larger than 15 MB.`); continue; }
+            const { asset } = await invoke('import-image', { bytes: new Uint8Array(await file.arrayBuffer()) });
+            await placeImage(asset, { x: point.x + index * 24, y: point.y + index * 24 });
+        }
+        return images.length;
+    });
+}
+// Images still in use: the workspace, its undo and redo steps, and copied items waiting to be pasted.
+function referencedImages() {
+    const names = new Set();
+    const add = items => { for (const item of items) if (item.type === 'image') names.add(item.asset); };
+    add(workspace.items);
+    for (const step of [...boardHistory.undo, ...boardHistory.redo]) add(step.items);
+    if (boardClipboard) add(boardClipboard.items);
+    return [...names];
+}
+const formatBytes = bytes => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+async function cleanUpImages() {
+    if (imageImports) return toast('Wait for images to finish importing, then try again.');
+    const { count, bytes } = await invoke('unused-images', { keep: referencedImages() });
+    if (!count) return toast('No unused images to delete.');
+    const plural = count === 1 ? '' : 's';
+    if (!await confirmAction(`Delete ${count} unused image${plural}?`,
+        `This frees ${formatBytes(bytes)}. They are not used by this workspace, its undo history, or copied items. Workspace files you saved earlier, other than portable copies, will show them as unavailable.`,
+        `Delete image${plural}`)) return;
+    if (imageImports) return toast('Wait for images to finish importing, then try again.');
+    const result = await invoke('delete-unused-images', { keep: referencedImages() });
+    toast(`Deleted ${result.deleted} unused image${result.deleted === 1 ? '' : 's'} (${formatBytes(result.bytes)}).`);
 }
 // The style toolbar edits the color of selected items and the text size of those that hold text.
 const selectedItems = types => [...selection].map(findItem).filter(item => item && types.includes(item.type));

@@ -47,7 +47,7 @@ class Element {
     showModal() { this.open = true; }
     close() { this.open = false; }
 }
-async function boot(workspace, { initialized = true } = {}) {
+async function boot(workspace, { initialized = true, respond } = {}) {
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
@@ -57,6 +57,8 @@ async function boot(workspace, { initialized = true } = {}) {
     const bridge = {
         async invoke(action, payload) {
             calls.push({ action, payload });
+            const response = respond?.(action, payload);
+            if (response) return response;
             if (action === 'initialize') return initialized ? { workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform: 'win32' } : new Promise(() => {});
             return { ok: true };
         },
@@ -566,4 +568,44 @@ test('duplicate, cut, frames, and pasting out of sight', async () => {
     const copy = json(context, 'workspace.items.at(-1)');
     assert.deepEqual([copy.x + copy.w / 2, copy.y + copy.h / 2], [550, 360], 'lands in the middle of the view');
     assert.equal(copy.groups, undefined, 'a one-member group is not kept');
+});
+
+test('image cleanup keeps images used by the workspace, history, and clipboard, and asks before deleting', async () => {
+    const workspace = createWorkspace();
+    const image = (id, letter) => ({ id, type: 'image', x: 0, y: 0, w: 100, h: 100, asset: `${letter.repeat(64)}.png` });
+    workspace.items.push(image('kept', 'a'), image('deleted', 'b'), image('copied', 'c'));
+    let unused = { count: 2, bytes: 3 * 1024 * 1024 };
+    const { elements, calls, context } = await boot(workspace, { respond: action => {
+        if (action === 'unused-images') return unused;
+        if (action === 'delete-unused-images') return { deleted: 2, bytes: 3 * 1024 * 1024 };
+    } });
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    vm.runInContext('select("copied"); copySelection(); select("deleted"); deleteSelection(); select("copied"); recordHistory(); removeItems(["copied"]); clearHistory()', context);
+    vm.runInContext('select("kept"); recordHistory(); removeItems(["kept"]); undo()', context);
+    vm.runInContext('select("deleted")', context);
+    elements.get('#clean-images').onclick();
+    await settle();
+    const request = calls.find(c => c.action === 'unused-images');
+    assert.deepEqual([...request.payload.keep].sort(), [`${'a'.repeat(64)}.png`, `${'c'.repeat(64)}.png`], 'kept: on the board and in history; copied: on the clipboard');
+    assert.equal(elements.get('#confirm-dialog').open, true);
+    assert.equal(elements.get('#confirm-title').textContent, 'Delete 2 unused images?');
+    assert.match(elements.get('#confirm-description').textContent, /3\.0 MB/);
+    elements.get('#confirm-cancel').onclick();
+    await settle();
+    assert.equal(calls.some(c => c.action === 'delete-unused-images'), false, 'cancel deletes nothing');
+    elements.get('#clean-images').onclick();
+    await settle();
+    elements.get('#confirm-ok').onclick();
+    await settle();
+    assert.equal(calls.filter(c => c.action === 'delete-unused-images').length, 1);
+    assert.match(elements.get('#toast').textContent, /Deleted 2 unused images \(3\.0 MB\)/);
+    unused = { count: 0, bytes: 0 };
+    elements.get('#clean-images').onclick();
+    await settle();
+    assert.match(elements.get('#toast').textContent, /No unused images/);
+    vm.runInContext('imageImports = 1', context);
+    elements.get('#clean-images').onclick();
+    await settle();
+    assert.match(elements.get('#toast').textContent, /finish importing/);
+    assert.equal(calls.filter(c => c.action === 'unused-images').length, 3, 'no request while an import is in progress');
 });

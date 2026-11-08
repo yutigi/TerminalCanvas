@@ -204,6 +204,17 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         if (Date.now() > imageDeadline) throw new Error('Board image did not load.');
         await new Promise(resolve => setTimeout(resolve, 50));
     }
+    // Image cleanup deletes stored images the board no longer uses, through the desktop commands.
+    // The smoke profile has its own assets folder, so this never touches the user's images.
+    const assets = path.join(app.getPath('userData'), 'assets');
+    const orphan = await storeImage(assets, nativeImage.createFromBitmap(Buffer.alloc(8 * 8 * 4, 0x7f), { width: 8, height: 8 }).toPNG());
+    const cleanup = await win.webContents.executeJavaScript(`(async () => {
+        const found = await invoke('unused-images', { keep: referencedImages() });
+        return { found, result: await invoke('delete-unused-images', { keep: referencedImages() }) };
+    })()`);
+    assert.ok(cleanup.found.count >= 1 && cleanup.result.deleted === cleanup.found.count, 'unused images are found and deleted');
+    assert.deepEqual(await fs.readdir(assets), [asset], 'only the image on the board remains');
+    assert.notEqual(orphan, asset);
     const toScreen = `const toScreen = p => { const r = viewport.getBoundingClientRect(), c = workspace.camera; return { x: Math.round(r.left + c.x + p.x * c.z), y: Math.round(r.top + c.y + p.y * c.z) }; };`;
     const wirePoint = await win.webContents.executeJavaScript(`(() => { ${toScreen}
         const { start, end } = linePoints(findItem('wire'));

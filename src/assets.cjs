@@ -5,6 +5,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ASSET_NAME } = require('./workspace.cjs');
 
 const IMAGE_BYTES = 15 * 1024 * 1024;
+const KEEP_LIMIT = 200000;
 const TYPES = Object.freeze([
     { ext: 'png', mime: 'image/png', test: b => b.length > 8 && b.readUInt32BE(0) === 0x89504e47 && b.readUInt32BE(4) === 0x0d0a1a0a },
     { ext: 'jpg', mime: 'image/jpeg', test: b => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
@@ -64,4 +65,34 @@ async function extractAssets(raw, directory) {
     }
     return board;
 }
-module.exports = { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, imageNames };
+// The renderer names every image still in use: the workspace, its undo history, and copied items.
+function keepList(raw) {
+    if (!Array.isArray(raw) || raw.length > KEEP_LIMIT || !raw.every(name => typeof name === 'string' && ASSET_NAME.test(name))) throw new Error('Invalid image list.');
+    return new Set(raw);
+}
+// Stored images not in `keep`. Only content-addressed image files are ever considered.
+async function unusedAssets(directory, keep) {
+    let names;
+    try { names = await fs.readdir(directory); } catch (error) {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+    }
+    const unused = [];
+    for (const name of names.sort()) {
+        if (!ASSET_NAME.test(name) || keep.has(name)) continue;
+        const stat = await fs.stat(path.join(directory, name)).catch(() => null);
+        if (stat?.isFile()) unused.push({ name, bytes: stat.size });
+    }
+    return unused;
+}
+async function deleteAssets(directory, assets) {
+    let deleted = 0, bytes = 0;
+    for (const asset of assets) {
+        try {
+            await fs.unlink(assetPath(directory, asset.name));
+            deleted++; bytes += asset.bytes;
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    return { deleted, bytes };
+}
+module.exports = { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, imageNames, keepList, unusedAssets, deleteAssets };
