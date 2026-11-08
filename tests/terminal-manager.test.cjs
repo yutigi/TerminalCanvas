@@ -26,7 +26,7 @@ test('does not launch anything until explicitly started; sends selected command 
     manager.start(card, 100, 30);
     assert.deepEqual(processes[0].writes, ['codex\r']);
     assert.equal(launches[0][0], 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-    assert.deepEqual(launches[0][1], ['-NoLogo']);
+    assert.deepEqual(launches[0][1], ['-NoLogo', '-ExecutionPolicy', 'RemoteSigned']);
     assert.equal(launches[0][2].env.ELECTRON_RUN_AS_NODE, undefined);
     assert.equal(launches[0][2].env.SAMPLE, 'yes');
     assert.equal(launches[0][2].cwd, process.cwd());
@@ -36,13 +36,20 @@ test('uses Windows PowerShell from SystemRoot for a plain terminal', () => {
     const result = manager.start(createCard());
     assert.equal(result.shell, 'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
     assert.equal(launches[0][0], result.shell);
-    assert.deepEqual(launches[0][1], ['-NoLogo']);
+    assert.deepEqual(launches[0][1], ['-NoLogo', '-ExecutionPolicy', 'RemoteSigned']);
     assert.deepEqual(processes[0].writes, []);
 });
 
 test('falls back to the standard Windows PowerShell path without SystemRoot', () => {
     const { manager } = harness({ env: {} });
     assert.equal(manager.start(createCard()).shell, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+});
+
+test('allows local scripts such as npm.ps1 in Windows PowerShell cards', () => {
+    const { manager, launches } = harness();
+    manager.start(createCard());
+    const args = launches[0][1];
+    assert.equal(args[args.indexOf('-ExecutionPolicy') + 1], 'RemoteSigned');
 });
 
 test('preserves the configured login shell and Bash fallback on other platforms', () => {

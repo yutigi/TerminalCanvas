@@ -24,7 +24,9 @@ class TerminalManager {
         const shell = windows
             ? path.win32.join(this.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
             : (this.env.SHELL || '/bin/bash');
-        const args = windows ? ['-NoLogo'] : ['-l'];
+        // Windows PowerShell defaults to Restricted, which blocks npm.ps1 and similar shims.
+        // A process-scoped policy fixes that for this shell only; Group Policy still wins.
+        const args = windows ? ['-NoLogo', '-ExecutionPolicy', 'RemoteSigned'] : ['-l'];
         const env = { ...this.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERMINAL_CANVAS: '1' };
         delete env.ELECTRON_RUN_AS_NODE;
         const terminal = this.spawn(shell, args, { name: 'xterm-256color', cwd, cols, rows, env });
