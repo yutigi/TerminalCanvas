@@ -35,7 +35,13 @@ For a dependency-free **layout preview**, run `npm run dev` and visit [localhost
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
 - Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
 - Use the card's stop/start controls to end or relaunch its shell. Closing a running card asks before stopping it.
-- Copy/paste with Ctrl + Shift + C/V. Ctrl + C remains the shell interrupt. Paste respects the terminal's bracketed-paste mode.
+- In a terminal, **Ctrl + C copies selected text**; with no text selected, it sends the shell interrupt. Click inside the terminal to clear a text selection before interrupting. **Ctrl + V pastes** clipboard text. Ctrl + Shift + C/V also copy/paste; explicit copy with no selection leaves the clipboard intact. These shortcuts work in both canvas and fullscreen **Focus** views and leave text fields and canvas shortcuts alone.
+
+On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text is selected. Windows desktop behavior is tested with real native key events, clipboard IPC, and PowerShell. macOS aliases have automated handler coverage, but macOS and Linux desktop behavior has not been validated. Clipboard shortcuts require the desktop app; the browser layout preview does not provide clipboard IPC.
+
+Paste accepts plain text up to 64,000 characters and uses xterm to normalize line endings and respect bracketed-paste mode. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
+
+![The in-app shortcut guide explaining selection-aware copy, paste, and interrupt.](docs/images/terminal-clipboard-shortcuts.png)
 
 ### Board items
 
@@ -59,6 +65,9 @@ On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by def
 | Ctrl + Shift + N | New terminal |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl + C in a terminal | Copy selected text, or interrupt with no selection |
+| Ctrl + V / Ctrl + Shift + V in a terminal | Paste clipboard text |
+| Ctrl + Shift + C in a terminal | Copy selected text; no selection leaves clipboard intact |
 | / outside a terminal or input | Search terminals |
 | V / H | Select / hand tool |
 | T / N / R / O / L / A / F | Text, sticky note, rectangle, ellipse, line, arrow, frame tool |
@@ -87,11 +96,11 @@ Restored cards are stopped until explicitly started. A saved command is never ex
 | `npm run rebuild` | Verify the Windows native binary in Electron, or rebuild when needed |
 | `npm run icons` | Regenerate native PNG/ICO icons from `src/assets/logo.svg` using Electron |
 | `npm run check` | Check JavaScript syntax and the package manifest |
-| `npm test` | Run dependency-free icon, workspace, board geometry, image asset, minimap, terminal-manager, rebuild, renderer, and smoke-output/capture tests |
-| `npm run test:smoke` | Check the desktop renderer, minimap navigation, first-click terminal typing, board items (image loading, connector hit testing, note typing, grouping), real PTY output, resize, and cleanup; save `.cache/smoke.png`, `.cache/smoke-first-click.png`, and `.cache/smoke-board.png` |
+| `npm test` | Run dependency-free icon, workspace, board geometry, image asset, minimap, terminal-manager, rebuild, renderer, clipboard IPC, and smoke-output/capture tests |
+| `npm run test:smoke` | Check native terminal copy/paste, multiline/bracketed paste, shell interrupt, outside text-field shortcuts, the desktop renderer, minimap navigation, first-click terminal typing, board items (image loading, connector hit testing, note typing, grouping), real PTY output, resize, and cleanup; save `.cache/smoke.png`, `.cache/smoke-first-click.png`, `.cache/smoke-board.png`, and `.cache/smoke-clipboard.png` |
 | `npm run build` | Package an unsigned Windows portable executable in `release/` |
 
-Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Screenshot capture retries transient `UnknownVizError` failures up to five times, requesting a repaint and waiting 100 ms between attempts. Persistent failures, unrelated errors, and empty captures still fail the test. Current Windows validation passed syntax checks and all 62 automated tests; the board screenshot was visually inspected. In 14 desktop smoke runs on this machine, every run that reached the board checks passed them, but 5 runs failed earlier at the first-click terminal focus assertion. That assertion fails at the same rate on `main` without the board changes (4 of 8 runs), so it is a pre-existing intermittent failure. The native icon comparison against the SVG passed previously. The smoke test still emits a node-pty `AttachConsole failed` message during shutdown despite completing successfully. The default rebuild command passed previously; forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. Packaging remains unverified.
+Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Screenshot capture retries transient `UnknownVizError` failures up to five times, requesting a repaint and waiting 100 ms between attempts. Persistent failures, unrelated errors, and empty captures still fail the test. Current Windows validation passed syntax checks and all 71 automated tests. The desktop smoke test passed native clipboard checks in canvas and Focus views, including real PowerShell interruption, alongside the existing renderer, board, and PTY checks; the shortcut-guide screenshot was visually inspected. The clipboard bridge awaits Electron 45's asynchronous reads/writes before returning IPC results or enforcing text limits. In 14 desktop smoke runs on this machine, every run that reached the board checks passed them, but 5 runs failed earlier at the first-click terminal focus assertion. That assertion fails at the same rate on `main` without the board changes (4 of 8 runs), so it is a pre-existing intermittent failure. The native icon comparison against the SVG passed previously. The smoke test still emits a node-pty `AttachConsole failed` message during shutdown despite completing successfully. The default rebuild command passed previously; forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. The standard `npm run build` was attempted and failed with `MSB8040: Spectre-mitigated libraries are required for this project`; packaging remains unverified.
 
 Source lives in `src/`, scripts in `scripts/`, tests in `tests/`, and design notes in [docs/architecture.md](docs/architecture.md). `AGENTS.md` is preserved as requested; this README records the tooling added since that guide was created.
 
