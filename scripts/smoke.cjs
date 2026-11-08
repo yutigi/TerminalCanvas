@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { nativeImage } = require('electron');
+const { nativeImage, clipboard, ClipboardItem } = require('electron');
 const { storeImage } = require('../src/assets.cjs');
 const { validateWorkspace } = require('../src/workspace.cjs');
 function hasOutputLine(output, expected) {
@@ -67,6 +67,29 @@ const key = (keyCode, modifiers = [], char = false) => [
     { type: 'keyDown', keyCode, modifiers }, ...(char ? [{ type: 'char', keyCode, modifiers }] : []), { type: 'keyUp', keyCode, modifiers }
 ];
 exports.inputWaiter = inputWaiter;
+// Clipboard checks use the real system clipboard, so they put back whatever the user had copied.
+// Every format is read before the task runs, because clipboard items read their data lazily.
+async function withSavedClipboard(task) {
+    const saved = await Promise.all((await clipboard.read()).map(async item =>
+        Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)])))));
+    try { return await task(); } finally {
+        try {
+            if (saved.length) await clipboard.write(saved.map(data => new ClipboardItem(data)));
+            else clipboard.clear();
+        } catch (error) { console.warn(`Could not restore the clipboard: ${error.message}`); }
+    }
+}
+const clipboardText = async () => (await clipboard.readText()).replace(/\r\n/g, '\n');
+// Terminal copy and paste go through these desktop commands.
+async function checkClipboardBridge(win) {
+    const marker = `terminal-canvas-clipboard-${Date.now()}\nsecond line`;
+    await withSavedClipboard(async () => {
+        await win.webContents.executeJavaScript(`invoke('clipboard-write', ${JSON.stringify(marker)})`);
+        assert.equal(await clipboardText(), marker, 'clipboard-write reaches the system clipboard');
+        const read = await win.webContents.executeJavaScript("invoke('clipboard-read').then(result => result.text)");
+        assert.equal(read.replace(/\r\n/g, '\n'), marker, 'clipboard-read returns the clipboard text');
+    });
+}
 exports.run = async ({ app, win, terminals, createCard }) => {
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError|Content Security Policy/.test(message || '')) errors.push(message); });
@@ -77,6 +100,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     }
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
+    await checkClipboardBridge(win);
     const overviewCards = ['shell', 'claude', 'codex', 'gemini'].map((profile, index) => createCard({
         profile, title: ['Project shell', 'Backend agent', 'Frontend agent', 'Review agent'][index],
         x: index % 2 * 700, y: Math.floor(index / 2) * 470

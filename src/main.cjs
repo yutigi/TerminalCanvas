@@ -38,14 +38,15 @@ function saveWorkspace(file, raw, extra = {}) {
     return task;
 }
 async function command(action, payload) {
+    // Electron's clipboard API is asynchronous.
     if (action === 'clipboard-read') {
-        const text = clipboard.readText();
+        const text = await clipboard.readText();
         if (text.length > 64000) throw new Error('Paste is limited to 64,000 characters.');
         return { text };
     }
     if (action === 'clipboard-write') {
         if (typeof payload !== 'string' || payload.length > 1024 * 1024) throw new Error('Selection exceeds 1 MB.');
-        clipboard.writeText(payload);
+        await clipboard.writeText(payload);
         return { ok: true };
     }
     if (action === 'initialize') {
