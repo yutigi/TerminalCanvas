@@ -29,7 +29,10 @@ const paths = {
     arrow: '<path d="M5 19 19 5M10 5h9v9"/>',
     frame: '<path d="M7 3v18M17 3v18M3 7h18M3 17h18"/>',
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
-    package: '<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 8v8l9 5 9-5V8m-9 5v8"/>'
+    package: '<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 8v8l9 5 9-5V8m-9 5v8"/>',
+    undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+    redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
+    trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -42,7 +45,7 @@ const sessions = new Map();
 // Terminals sit inside the zoomed world; xterm needs mouse coordinates without that scale.
 window.TerminalCanvasPointer?.install(window);
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
-let ready = false, formBusy = false;
+let ready = false, formBusy = false, activeDrags = 0;
 let topCardZIndex = 0;
 let minimapVisible = true, minimapLayout, minimapDrag;
 // `selection` holds every selected terminal and item; `selected` is the primary one.
@@ -114,12 +117,12 @@ function renderMinimap() {
         return node;
     }));
     $('#minimap-cards').replaceChildren(...nodes);
-    const { x, y, z } = workspace.camera;
+    const view = visibleWorld();
     positionMinimapElement($('#minimap-viewport'), {
-        x: -x / z * minimapLayout.scale + minimapLayout.offsetX,
-        y: -y / z * minimapLayout.scale + minimapLayout.offsetY,
-        w: viewport.clientWidth / z * minimapLayout.scale,
-        h: viewport.clientHeight / z * minimapLayout.scale
+        x: view.x * minimapLayout.scale + minimapLayout.offsetX,
+        y: view.y * minimapLayout.scale + minimapLayout.offsetY,
+        w: view.w * minimapLayout.scale,
+        h: view.h * minimapLayout.scale
     });
 }
 $('#minimap-toggle').onclick = () => { minimapVisible = !minimapVisible; renderMinimap(); };
@@ -233,12 +236,13 @@ function applySelection(raise, focusTerminal = raise) {
     if (raise && item && !['frame', 'line'].includes(item.type)) itemViews.get(item.id).element.style.zIndex = String(++topCardZIndex);
     // Board shortcuts need focus outside the terminal, which would otherwise receive Delete and Ctrl+G.
     if (selected && !(s && focusTerminal) && document.activeElement?.closest?.('.xterm')) viewport.focus({ preventScroll: true });
-    renderSelectionBox(); refresh();
+    renderSelectionBox(); renderStyleToolbar(); refresh();
 }
 function renderSelectionBox() {
     const box = $('#selection-box');
     const chosen = [...selection].map(findElement).filter(Boolean);
-    const grouped = chosen.length > 0 && chosen.every(e => e.group && e.group === chosen[0].group);
+    const outer = chosen.length ? Geometry.outerGroup(chosen[0]) : null;
+    const grouped = !!outer && chosen.every(e => Geometry.outerGroup(e) === outer);
     if (chosen.length < 2 && !grouped) { box.hidden = true; return; }
     const b = Geometry.unionBounds(chosen.map(boundsOf));
     Object.assign(box.style, { left: `${b.x - 8}px`, top: `${b.y - 8}px`, width: `${b.w + 16}px`, height: `${b.h + 16}px` });
@@ -273,23 +277,34 @@ function startMove(event, id, handle) {
         for (const o of origins) { Object.assign(o.e, shift(o, dx, dy)); placeElement(o.e); }
         for (const o of ends) { if (o.start) o.line.start = shift(o.start, dx, dy); if (o.end) o.line.end = shift(o.end, dx, dy); }
         renderLines(); renderSelectionBox();
-    }, moved => { if (moved) { renderMinimap(); changed(); } });
+    }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
 }
+// Grouping wraps whole groups in a new outer group; ungrouping removes only the outermost level.
 function groupSelection() {
+    if (boardBusy()) return;
     const chosen = [...selection].map(findElement).filter(Boolean);
-    if (chosen.length < 2) return toast('Select two or more items to group them.');
-    const group = newId();
-    for (const e of chosen) e.group = group;
+    if (Geometry.selectionUnits(chosen).size < 2) return toast('Select two or more items or groups to group them.');
+    if (chosen.some(e => (e.groups?.length || 0) >= GROUP_DEPTH)) return toast(`Groups can be nested up to ${GROUP_DEPTH} levels deep.`);
+    recordHistory();
+    const paths = Geometry.groupPaths(chosen, newId());
+    chosen.forEach((e, index) => setGroups(e, paths[index]));
     renderSelectionBox(); changed();
 }
 function ungroupSelection() {
-    for (const e of [...selection].map(findElement)) if (e) delete e.group;
+    if (boardBusy()) return;
+    const chosen = [...selection].map(findElement).filter(e => e?.groups);
+    if (!chosen.length) return;
+    recordHistory();
+    const paths = Geometry.ungroupPaths(chosen);
+    chosen.forEach((e, index) => setGroups(e, paths[index]));
+    pruneGroups();
     renderSelectionBox(); changed();
 }
 // Keyboard deletion never closes terminals; their close button handles running processes.
 function deleteSelection() {
+    if (boardBusy()) return;
     const ids = [...selection].filter(id => findItem(id));
-    if (ids.length) removeItems(ids);
+    if (ids.length) { recordHistory(); removeItems(ids); }
     else if (selection.size) toast('Use a terminal\'s close button to remove it.');
 }
 function centerCard(card) {
@@ -323,7 +338,7 @@ function setFocus(id) {
     viewport.classList.toggle('focus-mode', !!id);
     $('#exit-focus').hidden = !id;
     for (const [key, s] of sessions) s.element.classList.toggle('focused', key === id);
-    renderCamera();
+    renderCamera(); renderStyleToolbar();
     if (id) select(id);
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
@@ -432,12 +447,7 @@ function mount(card) {
         if (action === 'close') {
             if (['running', 'starting'].includes(s.status) && !await confirmAction('Close this terminal?', 'Its running shell and child processes will be stopped. Terminal output is not saved.', 'Close terminal')) return;
             await invoke('stop', { id: card.id });
-            if (focused === card.id) setFocus(null);
-            detachConnectors([card.id]);
-            dispose(card.id); workspace.cards = workspace.cards.filter(c => c.id !== card.id);
-            selection.delete(card.id);
-            if (selected === card.id) selected = [...selection].at(-1) ?? null;
-            renderLines(); applySelection(false); changed();
+            removeCard(card);
         }
     }));
     const header = el.querySelector('.card-header');
@@ -447,6 +457,16 @@ function mount(card) {
         card.h = Math.max(280, Math.min(1800, initial.h + dy / workspace.camera.z));
         renderGeometry(card);
     }, () => ({ w: card.w, h: card.h }));
+}
+// Closing a terminal is not undoable; undo steps that refer to it leave its connectors with free ends.
+function removeCard(card) {
+    if (focused === card.id) setFocus(null);
+    detachConnectors([card.id]);
+    dispose(card.id); workspace.cards = workspace.cards.filter(c => c.id !== card.id);
+    pruneGroups();
+    selection.delete(card.id);
+    if (selected === card.id) selected = [...selection].at(-1) ?? null;
+    renderLines(); applySelection(false); changed();
 }
 function dispose(id) {
     const s = sessions.get(id); if (!s) return;
@@ -472,32 +492,55 @@ async function start(card) {
     } catch (error) { showDirectory(s, card.cwd || 'Home directory'); setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
-function beginDrag(element, event, move, end) {
+// With `history`, nothing moves until the pointer passes the click threshold; that first movement
+// records an undo step, so a click records nothing and later steps stay in order. A cancelled drag
+// is put back where it started.
+function beginDrag(element, event, move, end, { history = false } = {}) {
+    // A drag whose release never arrived (the window lost focus first) ends where it last was.
+    for (const stop of [...openDrags]) stop();
     event.preventDefault(); element.setPointerCapture(event.pointerId);
     const origin = { x: event.clientX, y: event.clientY };
-    let moved = false;
+    let moved = false, done = false, step = null, last = event;
+    activeDrags++;
+    const stop = () => finish(last);
+    openDrags.add(stop);
     const update = e => {
-        if (e.pointerId !== event.pointerId) return;
+        if (done || e.pointerId !== event.pointerId) return;
+        last = e;
         const dx = e.clientX - origin.x, dy = e.clientY - origin.y;
         if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        if (history && !moved) return;
+        if (history && !step) { step = snapshotBoard(); commitHistory(step); }
         move(dx, dy, e);
     };
+    // If the captured element is removed mid-drag, the release goes elsewhere; the window still sees it.
     const finish = e => {
-        if (e.pointerId !== event.pointerId) return;
-        element.removeEventListener('pointermove', update); element.removeEventListener('pointerup', finish); element.removeEventListener('pointercancel', finish);
+        if (done || e.pointerId !== event.pointerId) return;
+        done = true;
+        openDrags.delete(stop);
+        for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) element.removeEventListener(type, type === 'pointermove' ? update : finish);
+        window.removeEventListener('pointerup', finish, true); window.removeEventListener('pointercancel', finish, true);
+        activeDrags--;
         if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId);
-        end?.(moved && e.type !== 'pointercancel', e);
+        const cancelled = e.type === 'pointercancel';
+        if (step && cancelled) { restoreBoard(step); discardHistory(step); }
+        end?.(moved && !cancelled, e);
+        notifyBoardIdle();
     };
-    element.addEventListener('pointermove', update); element.addEventListener('pointerup', finish); element.addEventListener('pointercancel', finish);
+    element.addEventListener('pointermove', update);
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) element.addEventListener(type, finish);
+    window.addEventListener('pointerup', finish, true); window.addEventListener('pointercancel', finish, true);
 }
+const openDrags = new Set();
+window.addEventListener('blur', () => { for (const stop of [...openDrags]) stop(); });
 function drag(element, allowed, move, initial) {
     element.addEventListener('pointerdown', event => {
         if (event.button !== 0 || !allowed(event)) return;
         const data = initial();
-        beginDrag(element, event, (dx, dy) => move(dx, dy, data), () => changed());
+        beginDrag(element, event, (dx, dy) => move(dx, dy, data), moved => { if (moved) changed(); }, { history: true });
     });
 }
-const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .minimap, .exit-focus');
+const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus');
 // Capture phase: finish in-place edits, and let creation tools draw over existing elements.
 viewport.addEventListener('pointerdown', event => {
     if (editing && !event.target.closest('.item-editor, .frame-title-editor')) document.activeElement?.blur();
@@ -506,7 +549,7 @@ viewport.addEventListener('pointerdown', event => {
     beginCreate(event);
 }, true);
 viewport.addEventListener('pointerdown', event => {
-    if (focused || event.target.closest('button') || onCanvasChrome(event.target)) return;
+    if (!ready || focused || event.target.closest('button') || onCanvasChrome(event.target)) return;
     const empty = event.target === viewport || event.target === world || !!event.target.closest('.empty-state');
     if (event.button !== 1 && !(event.button === 0 && (hand || empty))) return;
     if (event.button === 0 && event.shiftKey && !hand) {
@@ -537,6 +580,7 @@ viewport.addEventListener('pointerdown', event => {
 viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
+    if (!ready) return;
     // Wheel events from a zoomed terminal carry coordinates rewritten for xterm; zoom around the real pointer.
     const rect = viewport.getBoundingClientRect(), point = window.TerminalCanvasPointer?.clientPoint(event) ?? { x: event.clientX, y: event.clientY };
     zoom(Math.exp(-event.deltaY * .002), { x: point.x - rect.left, y: point.y - rect.top });
@@ -573,6 +617,12 @@ function loadWorkspace(board) {
     if (editing) document.activeElement?.blur();
     workspace = board;
     workspace.items = Array.isArray(board.items) ? board.items : [];
+    clearHistory();
+    // The browser preview stores unvalidated layouts, which may still use format 2's single group.
+    for (const e of [...workspace.cards, ...workspace.items]) {
+        if (e.group && !e.groups) e.groups = [e.group];
+        delete e.group;
+    }
     setFocus(null);
     for (const id of sessions.keys()) dispose(id);
     for (const id of [...itemViews.keys()]) disposeItem(id);
@@ -593,14 +643,17 @@ $('#search').oninput = () => { if (ready) refresh(); };
 $('#canvas-nav').onclick = () => { if (ready) fitCanvas(); };
 $('#add-terminal').onclick = $('#empty-add').onclick = () => openLaunch();
 $('#arrange').onclick = () => {
-    if (!ready) return; setFocus(null);
+    if (!ready || boardBusy()) return; setFocus(null);
     const columns = Math.max(1, Math.ceil(Math.sqrt(workspace.cards.length)));
-    workspace.cards.forEach((c, i) => { c.x = (i % columns) * 700; c.y = Math.floor(i / columns) * 470; c.w = 660; c.h = 430; renderGeometry(c); }); fitCanvas();
+    recordChange(() => workspace.cards.forEach((c, i) => { c.x = (i % columns) * 700; c.y = Math.floor(i / columns) * 470; c.w = 660; c.h = 430; renderGeometry(c); }));
+    fitCanvas();
 };
 $('#focus-toggle').onclick = () => { if (ready) setFocus(focused ? null : selected); };
 $('#exit-focus').onclick = () => setFocus(null);
 $('#fit').onclick = () => { if (ready) fitCanvas(); };
 $('#zoom-in').onclick = () => { if (ready) zoom(1.15); };
+$('#undo').onclick = undo;
+$('#redo').onclick = redo;
 $('#zoom-out').onclick = () => { if (ready) zoom(1 / 1.15); };
 $('#zoom-reset').onclick = () => { if (ready) zoom(1 / workspace.camera.z); };
 function setTool(name) {
@@ -614,11 +667,16 @@ function setTool(name) {
     });
 }
 document.querySelectorAll('[data-tool]').forEach(button => button.onclick = () => { if (ready) setTool(button.dataset.tool); });
+document.querySelectorAll('[data-color]').forEach(button => button.onclick = () => { if (ready) setItemColor(button.dataset.color); });
+document.querySelectorAll('[data-font-size]').forEach(button => button.onclick = () => { if (ready) setItemFontSize(button.dataset.fontSize); });
 $('#image-tool').onclick = () => run(async () => {
     if (!ready || focused) return;
-    const result = await invoke('pick-image');
-    if (result.asset) await placeImage(result.asset, viewportCenterWorld());
+    await importing(async () => {
+        const result = await invoke('pick-image');
+        if (result.asset) await placeImage(result.asset, viewportCenterWorld());
+    });
 });
+$('#clean-images').onclick = () => run(async () => { if (ready) await cleanUpImages(); });
 $('#export-workspace').onclick = () => run(async () => {
     if (!ready) return;
     workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace';
@@ -629,10 +687,7 @@ $('#export-workspace').onclick = () => run(async () => {
 });
 document.addEventListener('paste', event => {
     if (!ready || focused || document.querySelector('dialog[open]') || event.target?.closest?.('input,textarea,.xterm')) return;
-    const files = [...(event.clipboardData?.files || [])];
-    if (!files.some(file => /^image\//.test(file.type))) return;
-    event.preventDefault();
-    run(() => importImageFiles(files, viewportCenterWorld()));
+    if (pasteFromClipboard(event.clipboardData)) event.preventDefault();
 });
 viewport.addEventListener('dragover', event => {
     if (!ready || focused || ![...(event.dataTransfer?.types || [])].includes('Files')) return;
@@ -646,7 +701,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;
@@ -656,7 +711,13 @@ document.addEventListener('keydown', event => {
         if (key === 'o') { event.preventDefault(); $('#open-workspace').click(); }
         if (key === 'n' && event.shiftKey) { event.preventDefault(); openLaunch(); }
         if (key === 'f' && event.shiftKey) { event.preventDefault(); if (findCard(selected)) setFocus(focused ? null : selected); }
-        if (key === 'g' && !focused && !event.target.closest('input,textarea,select,.xterm')) { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }
+        const onBoard = !focused && !event.target.closest('input,textarea,select,.xterm');
+        if (key === 'g' && onBoard) { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }
+        if (((key === 'z' && event.shiftKey) || (key === 'y' && !event.shiftKey)) && onBoard) { event.preventDefault(); redo(); }
+        else if (key === 'z' && onBoard) { event.preventDefault(); undo(); }
+        // Ctrl+V arrives as a paste event, which also carries images from other apps.
+        if (!event.shiftKey && onBoard && (key === 'c' || key === 'x') && copySelection({ cut: key === 'x' })) event.preventDefault();
+        if (!event.shiftKey && onBoard && key === 'd') { event.preventDefault(); duplicateSelection(); }
         return;
     }
     if (event.altKey || event.target.closest('input,textarea,select,.xterm')) return;
@@ -693,7 +754,7 @@ if (bridge) {
             button.onclick = () => openLaunch(p.id); $('#profile-list').append(button);
         }
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
-        loadWorkspace(initial.workspace); ready = true;
+        loadWorkspace(initial.workspace); ready = true; renderStyleToolbar();
         if (initial.warning) toast(initial.warning);
     });
 } else toast('Desktop bridge unavailable. Run npm start or npm run dev for the layout preview.');

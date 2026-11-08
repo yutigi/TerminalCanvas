@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets } = require('../src/assets.cjs');
+const { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, keepList, unusedAssets, deleteAssets, serialize } = require('../src/assets.cjs');
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082', 'hex');
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]);
@@ -72,4 +72,54 @@ test('imports reject malformed embedded images', async t => {
         await assert.rejects(extractAssets({ version: 2, items: [], assets }, dir), /Invalid embedded|Only PNG/);
     }
     assert.deepEqual(await fs.readdir(dir), []);
+});
+
+test('cleanup lists only unreferenced content-addressed images and deletes them', async t => {
+    const dir = await folder(t);
+    const png = await storeImage(dir, PNG), gif = await storeImage(dir, GIF), webp = await storeImage(dir, WEBP);
+    for (const other of ['notes.txt', `${png}.1234.tmp`, `${'e'.repeat(64)}.svg`]) await fs.writeFile(path.join(dir, other), 'keep me');
+    await fs.mkdir(path.join(dir, `${'f'.repeat(64)}.png`));
+    const unused = await unusedAssets(dir, keepList([png]));
+    assert.deepEqual(unused.map(a => a.name).sort(), [gif, webp].sort());
+    assert.equal(unused.find(a => a.name === gif).bytes, GIF.length);
+    assert.deepEqual(await deleteAssets(dir, [...unused, { name: `${'b'.repeat(64)}.png`, bytes: 99 }]), { deleted: 2, bytes: GIF.length + WEBP.length, failed: 0 }, 'files that are already gone are skipped');
+    assert.deepEqual((await fs.readdir(dir)).sort(), [png, `${png}.1234.tmp`, `${'e'.repeat(64)}.svg`, `${'f'.repeat(64)}.png`, 'notes.txt'].sort());
+    assert.deepEqual(await unusedAssets(path.join(dir, 'missing'), keepList([])), [], 'no assets folder yet');
+});
+
+test('cleanup rejects malformed keep lists', () => {
+    for (const keep of [undefined, 'a.png', ['../workspace.terminalcanvas'], [`${'a'.repeat(64)}.svg`], [42]]) assert.throws(() => keepList(keep), /Invalid image list/);
+    assert.deepEqual([...keepList([`${'a'.repeat(64)}.png`])], [`${'a'.repeat(64)}.png`]);
+});
+
+test('serialized asset tasks run one at a time in call order and survive failures', async () => {
+    const queue = serialize(), events = [];
+    const task = (name, ms, fail = false) => () => new Promise((resolve, reject) => {
+        events.push(`start ${name}`);
+        setTimeout(() => { events.push(`end ${name}`); fail ? reject(new Error(name)) : resolve(name); }, ms);
+    });
+    const results = await Promise.allSettled([queue(task('a', 20)), queue(task('b', 1, true)), queue(task('c', 1))]);
+    assert.deepEqual(events, ['start a', 'end a', 'start b', 'end b', 'start c', 'end c']);
+    assert.deepEqual(results.map(r => r.status), ['fulfilled', 'rejected', 'fulfilled']);
+});
+
+test('an import queued behind a cleanup of the same image stores it again', async t => {
+    const dir = await folder(t), queue = serialize();
+    const name = await storeImage(dir, PNG);
+    const cleanup = queue(async () => deleteAssets(dir, await unusedAssets(dir, keepList([]))));
+    const imported = queue(() => storeImage(dir, PNG));
+    assert.deepEqual(await cleanup, { deleted: 1, bytes: PNG.length, failed: 0 });
+    assert.equal(await imported, name);
+    assert.deepEqual(await fs.readdir(dir), [name], 'the reimported image exists after cleanup');
+});
+
+test('a file that cannot be deleted is counted and the rest are still deleted', async t => {
+    const dir = await folder(t);
+    const gif = await storeImage(dir, GIF), png = await storeImage(dir, PNG);
+    const locked = `${'0'.repeat(64)}.png`;
+    await fs.mkdir(path.join(dir, locked));
+    await fs.writeFile(path.join(dir, locked, 'inside'), 'x');
+    const result = await deleteAssets(dir, [{ name: locked, bytes: 1 }, { name: gif, bytes: GIF.length }, { name: png, bytes: PNG.length }]);
+    assert.deepEqual(result, { deleted: 2, bytes: GIF.length + PNG.length, failed: 1 });
+    assert.deepEqual(await fs.readdir(dir), [locked]);
 });
