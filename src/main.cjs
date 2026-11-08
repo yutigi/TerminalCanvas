@@ -6,10 +6,13 @@ const { randomUUID } = require('node:crypto');
 const { LIMITS, PROFILES, validateWorkspace, createWorkspace, createCard } = require('./workspace.cjs');
 const { fallbackDirectory } = require('./directories.cjs');
 const { TerminalManager } = require('./terminal-manager.cjs');
+const { prepareIntegration } = require('./shell-integration.cjs');
+const { WorkspaceRecovery } = require('./workspace-recovery.cjs');
 const { IMAGE_BYTES, assetPath, storeImage, embedAssets, extractAssets, keepList, unusedAssets, deleteAssets, serialize } = require('./assets.cjs');
 
-const smoke = process.argv.includes('--smoke-test');
-if (smoke) app.setPath('userData', path.resolve(__dirname, '../.cache/smoke-profile'));
+const restorationSmoke = process.argv.find(arg => arg.startsWith('--restoration-smoke='))?.split('=')[1];
+const smoke = process.argv.includes('--smoke-test') || !!restorationSmoke;
+if (smoke) app.setPath('userData', path.resolve(__dirname, restorationSmoke ? '../.cache/restoration-profile' : '../.cache/smoke-profile'));
 app.enableSandbox();
 // Images load through a read-only scheme limited to content-addressed names in the assets folder.
 protocol.registerSchemesAsPrivileged([{ scheme: 'tc-asset', privileges: { standard: true, secure: true } }]);
@@ -19,6 +22,7 @@ const shellUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
 const authorized = event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame && event.senderFrame.url === shellUrl;
 const emit = payload => { if (win && !win.isDestroyed()) win.webContents.send('terminal:event', payload); };
 const recovery = () => path.join(app.getPath('userData'), 'workspace.terminalcanvas');
+const recoveryState = new WorkspaceRecovery({ save: board => saveWorkspace(recovery(), board), onError: error => emit({ type: 'error', message: `Could not save session recovery: ${error.message}` }) });
 const assetsFolder = () => path.join(app.getPath('userData'), 'assets');
 const assetTypes = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 // Everything that writes or deletes stored images runs in arrival order.
@@ -70,35 +74,46 @@ async function command(action, payload) {
         let workspace = createWorkspace(), warning;
         try { workspace = await readWorkspace(recovery()); }
         catch (error) { if (error.code !== 'ENOENT') warning = `Could not restore your last workspace: ${error.message}`; }
+        recoveryState.reset(workspace);
         return { workspace, profiles: PROFILES, home: app.getPath('home'), platform: process.platform, warning };
     }
     if (action === 'create-card') return { card: createCard(payload) };
     if (action === 'duplicate-directory') return terminals.directory(payload);
-    if (action === 'start') return terminals.start(payload?.card, payload?.cols, payload?.rows);
+    if (action === 'start') {
+        const card = recoveryState.rememberCard(payload?.card);
+        const result = terminals.start(card, payload?.cols, payload?.rows, payload?.mode);
+        try { await recoveryState.flush(); }
+        catch (error) { terminals.stop(card.id); throw error; }
+        return result;
+    }
     if (action === 'stop') { terminals.stop(payload?.id); return { ok: true }; }
     if (action === 'pick-folder') {
         const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Choose a project folder', defaultPath: fallbackDirectory(payload?.cwd, app.getPath('home'), process.cwd()) || undefined });
         return { path: result.canceled ? null : result.filePaths[0] };
     }
-    if (action === 'autosave') { await saveWorkspace(recovery(), payload); return { ok: true }; }
+    if (action === 'autosave') { await recoveryState.persist(payload); return { ok: true }; }
     if (action === 'save' || action === 'save-as') {
-        const board = validateWorkspace(payload);
+        terminals.snapshot();
+        const board = recoveryState.accept(payload);
         let target = action === 'save' ? filename : null;
         if (!target) {
             const result = await dialog.showSaveDialog(win, { title: 'Save workspace', defaultPath: `${board.name.replace(/[^\w -]/g, '') || 'Workspace'}.terminalcanvas`, filters: [{ name: 'Terminal Canvas workspace', extensions: ['terminalcanvas'] }] });
             if (result.canceled) return { canceled: true };
             target = result.filePath;
         }
-        await saveWorkspace(target, board);
+        terminals.snapshot();
+        await saveWorkspace(target, recoveryState.merge(board));
         filename = target;
         return { ok: true };
     }
     if (action === 'export') {
-        const board = validateWorkspace(payload);
+        terminals.snapshot();
+        const board = recoveryState.accept(payload);
         const result = await dialog.showSaveDialog(win, { title: 'Export portable workspace', defaultPath: `${board.name.replace(/[^\w -]/g, '') || 'Workspace'} (portable).terminalcanvas`, filters: [{ name: 'Terminal Canvas workspace', extensions: ['terminalcanvas'] }] });
         if (result.canceled) return { canceled: true };
         const { assets, missing } = await embedAssets(board, assetsFolder());
-        await saveWorkspace(result.filePath, board, { assets });
+        terminals.snapshot();
+        await saveWorkspace(result.filePath, recoveryState.merge(board), { assets });
         return { ok: true, images: Object.keys(assets).length, missing: missing.length };
     }
     if (action === 'import-image') {
@@ -124,13 +139,25 @@ async function command(action, payload) {
         if (result.canceled) return { canceled: true };
         const workspace = await readWorkspace(result.filePaths[0]);
         terminals.stopAll();
+        terminals.forget();
+        recoveryState.reset(workspace);
+        await recoveryState.flush();
         filename = result.filePaths[0];
         return { workspace };
     }
-    if (action === 'new') { terminals.stopAll(); filename = null; return { workspace: createWorkspace() }; }
-    if (action === 'close') {
-        await saveWorkspace(recovery(), payload);
+    if (action === 'new') {
         terminals.stopAll();
+        terminals.forget();
+        filename = null;
+        recoveryState.reset(createWorkspace());
+        await recoveryState.flush();
+        return { workspace: recoveryState.board };
+    }
+    if (action === 'close') {
+        terminals.snapshot();
+        await recoveryState.flush(payload);
+        await terminals.shutdown();
+        await recoveryState.flush();
         quitting = true;
         win.close();
         return { ok: true };
@@ -139,7 +166,14 @@ async function command(action, payload) {
 }
 app.whenReady().then(async () => {
     const pty = require('node-pty');
-    terminals = new TerminalManager({ spawn: pty.spawn, emit });
+    terminals = new TerminalManager({
+        spawn: pty.spawn,
+        integration: options => prepareIntegration({ ...options, folder: path.join(app.getPath('userData'), 'shell-integration') }),
+        emit: event => {
+            if (event.type === 'metadata') recoveryState.update(event.id, { cwd: event.cwd, session: event.session });
+            emit(event);
+        }
+    });
     protocol.handle('tc-asset', async request => {
         try {
             const url = new URL(request.url);
@@ -175,13 +209,20 @@ app.whenReady().then(async () => {
         if (!quitting && !smoke) { event.preventDefault(); emit({ type: 'closing', running: terminals.sessions.size }); }
         else terminals.stopAll();
     });
-    win.webContents.on('render-process-gone', () => { terminals.stopAll(); quitting = true; win.close(); });
+    win.webContents.on('render-process-gone', () => {
+        terminals.shutdown().then(() => recoveryState.flush()).catch(console.error).finally(() => { quitting = true; win.close(); });
+    });
     await win.loadURL(shellUrl);
-    if (smoke) require('../scripts/smoke.cjs').run({ app, win, terminals, createCard }).catch(error => { console.error(error); app.exit(1); });
+    if (smoke) require(restorationSmoke ? '../scripts/restoration-smoke.cjs' : '../scripts/smoke.cjs').run({ app, win, terminals, createCard, phase: restorationSmoke }).catch(error => { console.error(error); terminals.stopAll(); app.exit(1); });
 }).catch(error => {
     console.error(error);
     dialog.showErrorBox('Terminal Canvas could not start', `${error.message}\n\nRun npm install and npm run rebuild, then try again.`);
     app.exit(1);
 });
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', event => {
+    if (quitting || smoke || !win || win.isDestroyed()) return;
+    event.preventDefault();
+    emit({ type: 'closing', running: terminals.sessions.size });
+});
 app.on('will-quit', () => terminals?.stopAll());

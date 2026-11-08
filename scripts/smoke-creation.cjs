@@ -82,7 +82,7 @@ exports.checkCreationWorkflows = async ({ app, win, terminals, createCard, captu
         const count = await js('workspace.cards.length');
         await js('duplicateTerminal(workspace.cards[0])');
         assert.equal(await js('document.querySelector("#launch-dialog").open'), true);
-        assert.equal(await js('document.querySelector("#cwd").value'), root);
+        assert.equal(await js('document.querySelector("#cwd").value'), await js('workspace.cards[0].cwd'), 'fallback uses the last saved folder');
         assert.equal(await js('document.querySelector("#launch-error").hidden'), false);
         assert.equal(await js('workspace.cards.length'), count, 'fallback needs review before creating anything');
         await js('document.querySelector("#launch-dialog").close(); document.querySelector("#search").focus()');

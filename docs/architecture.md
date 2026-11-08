@@ -20,9 +20,13 @@ flowchart LR
 
 - `workspace.cjs` defines versioned, serializable workspace/card data, profile defaults, bounds, and validation. Runtime fields are excluded from imported and saved layouts.
 - `terminal-manager.cjs` owns spawning, input, resizing, acknowledgments, exit handling, and disposal. Its injected spawn and event functions allow lifecycle tests without native dependencies.
+- `terminal-cwd.cjs` decodes bounded OSC directory reports, preserves PowerShell prompt/status behavior, and polls native Unix shell directories. The host saves each valid report for recovery; unavailable reports clear only the live label. AI metadata and native shell tracking share this directory decoder to preserve UNC and local-host semantics.
+- `shell-integration.cjs` prepares per-terminal PowerShell/Bash functions for directory reporting and ordinary Claude/Codex invocations. Bash starts as an interactive login shell; the host queues the integration source command before any saved command so normal profiles run first. Claude receives a per-launch settings file with a `SessionStart` hook; its Windows stdin bridge explicitly decodes UTF-8 before forwarding JSON. `session-hook.cjs` atomically records only a provider, UUID, directory, and invocation token; it never copies transcripts. Explicit custom Claude settings take precedence over hook injection.
+- `session-metadata.cjs` validates optional session metadata and parses bounded OSC reports and Codex session-header/exit-hint lines only between a shell-reported Codex launch and its matching end token. Arbitrary shell text and output from another provider do not change the saved ID. Invocation tokens also keep hook updates from a previous launch out of the current one. Shared conversation history is never scanned to guess an association.
+- `workspace-recovery.cjs` keeps host-observed metadata authoritative over delayed renderer snapshots, queues recovery writes when metadata changes, and supplies the final close snapshot. Optional malformed session metadata is discarded without discarding cards or board items.
 - `main.cjs` owns the native window, file/folder dialogs, clipboard, persistence, and IPC authorization. It accepts calls only from the local main frame.
 - `preload.cjs` exposes explicit methods while keeping Node.js unavailable to renderer code.
-- `renderer.js` owns canvas navigation, card UI, selection, tools, and xterm emulators. A terminal's running state reflects its shell process, rather than an inferred AI activity state.
+- `renderer.js` owns canvas navigation, card UI, selection, tools, and xterm emulators. A terminal's running state reflects its shell process, rather than an inferred AI activity state. Each session counts incoming metadata events so a delayed startup response cannot overwrite a newer directory or AI ID.
 - `items.js` renders and edits board items (text labels, sticky notes, shapes, frames, images, and lines), their colors and text sizes, and image import and cleanup. It loads before `renderer.js` and uses the renderer's state when its functions run.
 - `item-styles.js` defines the color and text-size palettes and the group nesting limit. The renderer and the host's workspace validation load the same file, so they cannot disagree.
 - `history.js` holds undo and redo. `clipboard.js` copies, cuts, pastes, and duplicates board items. Both load after `items.js` in the same way.
@@ -31,6 +35,10 @@ flowchart LR
 - `assets.cjs` validates image bytes by signature, stores them content-addressed in the user-data `assets` folder, embeds or extracts them for portable exports, and finds and deletes unused ones.
 
 Output acknowledgments pause a producer above 256,000 unprocessed characters and resume it below 32,000. This propagates backpressure to the PTY instead of growing an unbounded renderer write queue. Layout writes are serialized and use a temporary file followed by rename. Save failures are surfaced to the user.
+
+Terminal cards can carry `session: { provider: 'codex' | 'claude', sessionId: UUID, cwd: string }` as an additive field in workspace format 3 (also accepted when migrating formats 1 and 2). The card directory tracks the shell, while `session.cwd` tracks the captured AI conversation's folder. No running state is serialized. Starting in `resume` mode uses the allowlisted provider and validated UUID to build a fixed command, independent of the saved launch command; `fresh` mode launches only a shell. An invalid/missing folder prevents resume but permits a fresh shell in Home. IDs are candidates for provider-side resume, not proof that a conversation remains available.
+
+Hook metadata is polled every 500 ms, plus before terminal stop/exit, save/export, and close. A normal close waits for the atomic recovery queue, stops processes, waits for native PTY exit cleanup, and flushes again. Previously stopped terminals remain tracked until cleanup finishes; each stop has a five-second fallback if no exit arrives. This keeps Electron alive while node-pty completes its asynchronous native callbacks. App-quit requests use the same renderer close flow as window close. On renderer failure, the host stops processes and saves its last known workspace. Process termination or power loss can still lose unobserved/unwritten changes. See the README's recovery limits for unsupported shell launches and Codex's exit-only resume hint on some versions.
 
 ## Board items
 
@@ -56,6 +64,6 @@ No dynamic plugin loader is present in v0.1. Introducing browser cards will requ
 
 ## Trade-offs and follow-up
 
-Electron matches WebCanvas's stack and supports mature terminal rendering at the cost of a larger desktop runtime. Plain JavaScript keeps this initial app small; revisit TypeScript and a component framework as UI complexity grows. Native node-pty requires runtime-compatible binaries/build tools. macOS/Linux behavior, signed distribution, persistent processes, output search, multiple named workspaces, and AI-specific session resumption remain future work.
+Electron matches WebCanvas's stack and supports mature terminal rendering at the cost of a larger desktop runtime. Plain JavaScript keeps this initial app small; revisit TypeScript and a component framework as UI complexity grows. Native node-pty requires runtime-compatible binaries/build tools. macOS/Linux behavior, signed distribution, persistent processes, output search, multiple named workspaces, and broader provider/session discovery remain future work.
 
 Implementation references: [Electron security guidance](https://www.electronjs.org/docs/latest/tutorial/security), [node-pty](https://github.com/microsoft/node-pty), and [xterm flow control](https://xtermjs.org/docs/guides/flowcontrol/).

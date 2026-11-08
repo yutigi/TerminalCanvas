@@ -69,6 +69,7 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     elements.get('#minimap-map').clientWidth = 198;
     elements.get('#minimap-map').clientHeight = 120;
     const calls = [];
+    let onEvent;
     const bridge = {
         async invoke(action, payload) {
             calls.push({ action, payload });
@@ -79,7 +80,7 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
             if (action === 'clipboard-read') return readClipboard ? readClipboard() : { text: clipboard.text };
             return { ok: true };
         },
-        onEvent(callback) { this.event = callback; }, resize() {}, acknowledge() {}, input() {}
+        onEvent(handler) { onEvent = handler; this.event = handler; }, resize() {}, acknowledge() {}, input() {}
     };
     const documentListeners = new Map();
     const document = Object.assign(new Element(), {
@@ -91,8 +92,78 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     // Load renderer scripts in the same order as index.html.
     for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)" defer>/g)) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', script), 'utf8'), context);
     await new Promise(resolve => setImmediate(resolve));
-    return { elements, calls, context, document, window, bridge, documentListeners, event: payload => bridge.event(payload) };
+    return { elements, calls, context, onEvent, document, window, bridge, documentListeners, event: payload => bridge.event(payload) };
 }
+
+test('restored AI sessions offer Resume and a fresh shell without launching anything', async () => {
+    const workspace = createWorkspace();
+    const card = { ...createCard({ profile: 'claude' }), session: { provider: 'claude', sessionId: '12345678-1234-4321-9876-123456789abc', cwd: '/project' } };
+    workspace.cards.push(card);
+    const { context, calls } = await boot(workspace);
+    assert.equal(vm.runInContext('[...sessions.values()][0].status', context), 'idle');
+    assert.match(vm.runInContext('[...sessions.values()][0].element.querySelector(\'[data-action="start"]\').innerHTML', context), /Resume session/);
+    assert.match(vm.runInContext('[...sessions.values()][0].element.querySelector(\'.placeholder-copy\').textContent', context), /Saved Claude Code session/);
+    assert.deepEqual(calls.map(c => c.action), ['initialize']);
+});
+
+test('host metadata updates the renderer model and folder display without running commands', async () => {
+    const workspace = createWorkspace(); const card = createCard(); workspace.cards.push(card);
+    const { context, calls, onEvent } = await boot(workspace);
+    const session = { provider: 'codex', sessionId: '12345678-1234-4321-9876-123456789abc', cwd: '/agent' };
+    onEvent({ type: 'metadata', id: card.id, cwd: '/current', session });
+    assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(workspace.cards[0].session)', context)), session);
+    assert.equal(vm.runInContext('[...sessions.values()][0].element.querySelector(".card-directory span").textContent', context), '/current');
+    assert.deepEqual(calls.map(c => c.action), ['initialize']);
+});
+
+test('metadata received during startup takes precedence over an older start response', async () => {
+    const workspace = createWorkspace(); const card = createCard();
+    const oldSession = { provider: 'claude', sessionId: '11111111-1111-4111-8111-111111111111', cwd: '/old' };
+    const latestSession = { provider: 'claude', sessionId: '22222222-2222-4222-8222-222222222222', cwd: '/latest' };
+    workspace.cards.push({ ...card, cwd: '/old', session: oldSession });
+    const { context, onEvent } = await boot(workspace);
+    vm.runInContext(`
+        sessions.get(workspace.cards[0].id).terminal = { reset() {}, focus() {}, cols: 80, rows: 24 };
+        bridge.invoke = async action => action === 'start' ? new Promise(resolve => { globalThis.finishStart = resolve; }) : ({ ok: true });
+    `, context);
+    const starting = vm.runInContext('start(workspace.cards[0])', context);
+    await new Promise(resolve => setImmediate(resolve));
+    onEvent({ type: 'metadata', id: card.id, cwd: '/latest', session: latestSession });
+    context.startResponse = { cwd: '/old', session: oldSession };
+    vm.runInContext('finishStart(startResponse)', context);
+    await starting;
+    assert.equal(json(context, 'workspace.cards[0].cwd'), '/latest');
+    assert.deepEqual(json(context, 'workspace.cards[0].session'), latestSession);
+    assert.equal(vm.runInContext('[...sessions.values()][0].element.querySelector(".card-directory span").textContent', context), '/latest');
+});
+
+test('start responses still supply metadata when no newer event has arrived', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard());
+    const { context } = await boot(workspace);
+    vm.runInContext(`
+        sessions.get(workspace.cards[0].id).terminal = { reset() {}, focus() {}, cols: 80, rows: 24 };
+        bridge.invoke = async action => action === 'start' ? ({ cwd: '/home' }) : ({ ok: true });
+    `, context);
+    await vm.runInContext('start(workspace.cards[0])', context);
+    assert.equal(json(context, 'workspace.cards[0].cwd'), '/home');
+});
+
+test('Resume and Start fresh send explicit start modes and shutdown sends the latest metadata', async () => {
+    const workspace = createWorkspace(); const card = createCard();
+    card.session = { provider: 'codex', sessionId: '12345678-1234-4321-9876-123456789abc', cwd: '/agent' };
+    workspace.cards.push(card);
+    const { context, calls, onEvent } = await boot(workspace);
+    vm.runInContext('sessions.get(workspace.cards[0].id).terminal = { reset() {}, focus() {}, cols: 80, rows: 24 }', context);
+    await vm.runInContext('start(workspace.cards[0])', context);
+    assert.equal(calls.find(c => c.action === 'start').payload.mode, 'resume');
+    vm.runInContext('sessions.get(workspace.cards[0].id).status = "idle"', context);
+    await vm.runInContext('start(workspace.cards[0], "fresh")', context);
+    assert.equal(calls.filter(c => c.action === 'start').at(-1).payload.mode, 'fresh');
+    onEvent({ type: 'metadata', id: card.id, cwd: '/last', session: card.session });
+    onEvent({ type: 'closing', running: 0 });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.find(c => c.action === 'close').payload.cards[0].cwd, '/last');
+});
 test('renderer initializes an empty workspace and enables the launch dialog', async () => {
     const { elements, calls } = await boot(createWorkspace());
     assert.equal(elements.get('#toast').hidden, true, elements.get('#toast').textContent);
