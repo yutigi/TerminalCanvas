@@ -95,4 +95,14 @@ async function deleteAssets(directory, assets) {
     }
     return { deleted, bytes };
 }
-module.exports = { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, imageNames, keepList, unusedAssets, deleteAssets };
+// Runs tasks one at a time in call order. Imports reuse an existing file with the same content, so a
+// cleanup that interleaved with an import could delete the file the import just handed out.
+function serialize() {
+    let tail = Promise.resolve();
+    return task => {
+        const result = tail.then(task);
+        tail = result.catch(() => {});
+        return result;
+    };
+}
+module.exports = { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, imageNames, keepList, unusedAssets, deleteAssets, serialize };

@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, keepList, unusedAssets, deleteAssets } = require('../src/assets.cjs');
+const { IMAGE_BYTES, detectImage, assetPath, storeImage, embedAssets, extractAssets, keepList, unusedAssets, deleteAssets, serialize } = require('../src/assets.cjs');
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082', 'hex');
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]);
@@ -90,4 +90,25 @@ test('cleanup lists only unreferenced content-addressed images and deletes them'
 test('cleanup rejects malformed keep lists', () => {
     for (const keep of [undefined, 'a.png', ['../workspace.terminalcanvas'], [`${'a'.repeat(64)}.svg`], [42]]) assert.throws(() => keepList(keep), /Invalid image list/);
     assert.deepEqual([...keepList([`${'a'.repeat(64)}.png`])], [`${'a'.repeat(64)}.png`]);
+});
+
+test('serialized asset tasks run one at a time in call order and survive failures', async () => {
+    const queue = serialize(), events = [];
+    const task = (name, ms, fail = false) => () => new Promise((resolve, reject) => {
+        events.push(`start ${name}`);
+        setTimeout(() => { events.push(`end ${name}`); fail ? reject(new Error(name)) : resolve(name); }, ms);
+    });
+    const results = await Promise.allSettled([queue(task('a', 20)), queue(task('b', 1, true)), queue(task('c', 1))]);
+    assert.deepEqual(events, ['start a', 'end a', 'start b', 'end b', 'start c', 'end c']);
+    assert.deepEqual(results.map(r => r.status), ['fulfilled', 'rejected', 'fulfilled']);
+});
+
+test('an import queued behind a cleanup of the same image stores it again', async t => {
+    const dir = await folder(t), queue = serialize();
+    const name = await storeImage(dir, PNG);
+    const cleanup = queue(async () => deleteAssets(dir, await unusedAssets(dir, keepList([]))));
+    const imported = queue(() => storeImage(dir, PNG));
+    assert.deepEqual(await cleanup, { deleted: 1, bytes: PNG.length });
+    assert.equal(await imported, name);
+    assert.deepEqual(await fs.readdir(dir), [name], 'the reimported image exists after cleanup');
 });
