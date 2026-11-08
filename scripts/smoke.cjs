@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { nativeImage } = require('electron');
+const { nativeImage, shell } = require('electron');
 const { storeImage } = require('../src/assets.cjs');
 const { validateWorkspace } = require('../src/workspace.cjs');
 function hasOutputLine(output, expected) {
@@ -31,6 +31,46 @@ async function captureScreenshot(win) {
     }
 }
 exports.captureScreenshot = captureScreenshot;
+// Native-input coverage of xterm's real OSC 8 provider and the desktop IPC path.
+async function checkTerminalLinks({ win, createCard, openedLinks }) {
+    const linkCard = createCard({ title: 'Hyperlink smoke terminal', x: 0, y: 0 });
+    try {
+        await win.webContents.executeJavaScript(`
+            loadWorkspace(${JSON.stringify({ version: 1, name: 'Hyperlink smoke workspace', camera: { x: 20, y: 20, z: 1 }, cards: [linkCard] })});
+            setStatus(workspace.cards[0], 'exited');
+            window.__originalConfirm = window.confirm;
+            window.__linkConfirmations = 0;
+            window.confirm = () => { window.__linkConfirmations++; return false; };
+            new Promise(resolve => sessions.get(workspace.cards[0].id).terminal.write(
+                ${JSON.stringify('\x1b]8;;https://github.com/yutigi/TerminalCanvas\x07GitHub\x1b]8;;\x07\r\n\x1b]8;;file:///C:/Windows/notepad.exe\x07Unsafe\x1b]8;;\x07')},
+                () => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        `);
+        const points = await win.webContents.executeJavaScript(`(() => {
+            const terminal = sessions.get(workspace.cards[0].id).terminal;
+            const rect = terminal.element.querySelector('.xterm-screen').getBoundingClientRect();
+            return [0, 1].map(row => ({ x: Math.round(rect.left + rect.width / terminal.cols * 2.5),
+                y: Math.round(rect.top + rect.height / terminal.rows * (row + .5)) }));
+        })()`);
+        assert.deepEqual(openedLinks, [], 'terminal output must never open links automatically');
+        for (const [index, point] of points.entries()) {
+            win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+            await new Promise(resolve => setTimeout(resolve, 150));
+            assert.equal(openedLinks.length, index, 'hover must never open a link');
+            win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+            win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+            await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 150))');
+            assert.equal(await win.webContents.executeJavaScript('window.__linkConfirmations'), 0, 'links must not show a confirmation prompt');
+            assert.deepEqual(openedLinks, ['https://github.com/yutigi/TerminalCanvas'],
+                index === 0 ? 'a GitHub click reaches the system browser' : 'an unsafe scheme never reaches the system browser');
+        }
+        const screenshot = path.resolve(__dirname, '../.cache/smoke-links.png');
+        await fs.mkdir(path.dirname(screenshot), { recursive: true });
+        await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
+    } finally {
+        await win.webContents.executeJavaScript('window.confirm = window.__originalConfirm; delete window.__originalConfirm; delete window.__linkConfirmations;');
+    }
+}
+exports.checkTerminalLinks = checkTerminalLinks;
 exports.run = async ({ app, win, terminals, createCard }) => {
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError|Content Security Policy/.test(message || '')) errors.push(message); });
@@ -41,6 +81,12 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     }
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
+    // Intercept only the OS launch so routine smoke runs do not spawn a browser.
+    const openExternal = shell.openExternal;
+    const openedLinks = [];
+    shell.openExternal = async url => { openedLinks.push(url); };
+    try { await checkTerminalLinks({ win, createCard, openedLinks }); }
+    finally { shell.openExternal = openExternal; }
     const overviewCards = ['shell', 'claude', 'codex', 'gemini'].map((profile, index) => createCard({
         profile, title: ['Project shell', 'Backend agent', 'Frontend agent', 'Review agent'][index],
         x: index % 2 * 700, y: Math.floor(index / 2) * 470
@@ -188,7 +234,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         const screenshot = path.resolve(__dirname, '../.cache/smoke.png');
         await fs.mkdir(path.dirname(screenshot), { recursive: true });
         await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
-        console.log(`Desktop smoke passed: renderer, minimap navigation, first-click typing, board items, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
+        console.log(`Desktop smoke passed: renderer, hyperlink clicks without confirmation, minimap navigation, first-click typing, board items, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
     } finally { terminals.emit = originalEmit; terminals.stopAll(); }
     app.quit();
 };
