@@ -47,7 +47,8 @@ class Element {
     showModal() { this.open = true; }
     close() { this.open = false; }
 }
-async function boot(workspace, { initialized = true, respond } = {}) {
+// Options other than `initialized` and `respond` are set on the renderer's window.
+async function boot(workspace, { initialized = true, respond, ...windowOverrides } = {}) {
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
@@ -62,18 +63,18 @@ async function boot(workspace, { initialized = true, respond } = {}) {
             if (action === 'initialize') return initialized ? { workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform: 'win32' } : new Promise(() => {});
             return { ok: true };
         },
-        onEvent() {}, resize() {}, acknowledge() {}, input() {}
+        onEvent(callback) { this.event = callback; }, resize() {}, acknowledge() {}, input() {}
     };
     const document = {
         querySelector: selector => selector === 'dialog[open]' ? [...elements.values()].find(e => e.open) : elements.get(selector),
         querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener() {}
     };
-    const window = Object.assign(new Element(), { terminalCanvas: bridge });
-    const context = vm.createContext({ document, window, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
+    const window = Object.assign(new Element(), { terminalCanvas: bridge }, windowOverrides);
+    const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
     // Load renderer scripts in the same order as index.html.
     for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)" defer>/g)) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', script), 'utf8'), context);
     await new Promise(resolve => setImmediate(resolve));
-    return { elements, calls, context, window };
+    return { elements, calls, context, window, bridge };
 }
 test('renderer initializes an empty workspace and enables the launch dialog', async () => {
     const { elements, calls } = await boot(createWorkspace());
@@ -834,4 +835,63 @@ test('ending a text label edit with its original text keeps its original height'
     assert.deepEqual(json(context, '[workspace.items[0].h, boardHistory.undo.length]'), [40, 0]);
     assert.equal(json(context, 'itemViews.get("t").element.style.height'), '40px');
     assert.equal(json(context, 'redrawn'), 1, 'connectors attached to the label follow its restored height');
+});
+
+test('live directory events update only the corresponding display and preserve launch folders', async () => {
+    const board = createWorkspace();
+    board.cards.push(createCard({ cwd: 'C:\\Launch one' }), createCard({ cwd: 'C:\\Launch two' }));
+    const { elements, context, bridge } = await boot(board);
+    const [first, second] = elements.get('#world').children;
+    bridge.event({ type: 'cwd', id: board.cards[1].id, cwd: 'D:\\New folder\\子' });
+    assert.equal(second.querySelector('.card-directory span').textContent, 'D:\\New folder\\子');
+    assert.equal(second.querySelector('.card-directory').title, 'D:\\New folder\\子');
+    assert.equal(first.querySelector('.card-directory span').textContent, board.cards[0].cwd);
+    assert.equal(vm.runInContext('workspace.cards[1].cwd', context), board.cards[1].cwd);
+    bridge.event({ type: 'cwd', id: board.cards[1].id, cwd: null });
+    assert.equal(second.querySelector('.card-directory span').textContent, 'Current directory unavailable');
+    bridge.event({ type: 'cwd', id: 'removed', cwd: '/ignored' });
+});
+
+test('restarting clears the previous live directory and still sends the configured launch folder', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ cwd: 'C:\\Launch folder' }));
+    const { context, bridge, elements, calls } = await boot(board);
+    bridge.event({ type: 'cwd', id: board.cards[0].id, cwd: 'D:\\Previous live folder' });
+    vm.runInContext(`const s = sessions.get(workspace.cards[0].id);
+        s.status = 'exited'; s.terminal = { reset() {}, focus() {}, cols: 80, rows: 24 };`, context);
+    await vm.runInContext('start(workspace.cards[0])', context);
+    assert.equal(calls.find(c => c.action === 'start').payload.card.cwd, board.cards[0].cwd);
+    assert.equal(elements.get('#world').children[0].querySelector('.card-directory span').textContent, 'Current directory unavailable');
+    bridge.event({ type: 'cwd', id: board.cards[0].id, cwd: board.cards[0].cwd });
+    assert.equal(elements.get('#world').children[0].querySelector('.card-directory span').textContent, board.cards[0].cwd);
+});
+
+test('terminal hyperlinks open only on a trusted primary click, without confirmation', async () => {
+    let options;
+    const terminal = {
+        loadAddon() {}, open() {}, onData() {}, onResize() {}, attachCustomKeyEventHandler() {}
+    };
+    const workspace = createWorkspace();
+    workspace.cards.push(createCard());
+    const { calls, elements } = await boot(workspace, {
+        Terminal: function (value) { options = value; return terminal; },
+        FitAddon: { FitAddon: class {} },
+        confirm() { assert.fail('Hyperlinks must not ask for confirmation.'); },
+        open() { assert.fail('Hyperlinks must use the validated desktop bridge.'); }
+    });
+    assert.equal(elements.get('#toast').hidden, true, elements.get('#toast').textContent);
+    assert.ok(options.linkHandler);
+    assert.equal(options.linkHandler.allowNonHttpProtocols, false);
+    const opened = () => calls.filter(call => call.action === 'open-link');
+    assert.equal(opened().length, 0, 'restoring and rendering a terminal never opens a link');
+    const uri = 'https://github.com/yutigi/TerminalCanvas';
+    const click = { isTrusted: true, button: 0, preventDefault() {} };
+    options.linkHandler.activate({ ...click, isTrusted: false }, uri);
+    options.linkHandler.activate({ ...click, button: 1 }, uri);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(opened().length, 0, 'synthetic and non-primary clicks never open a link');
+    let prevented = false;
+    options.linkHandler.activate({ ...click, preventDefault() { prevented = true; } }, uri);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(prevented, true);
+    assert.deepEqual(opened(), [{ action: 'open-link', payload: uri }]);
 });
