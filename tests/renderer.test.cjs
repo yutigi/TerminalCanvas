@@ -60,7 +60,7 @@ async function boot(workspace) {
             if (action === 'initialize') return { workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform: 'win32' };
             return { ok: true };
         },
-        onEvent() {}, resize() {}, acknowledge() {}, input() {}
+        onEvent(callback) { this.event = callback; }, resize() {}, acknowledge() {}, input() {}
     };
     const document = {
         querySelector: selector => selector === 'dialog[open]' ? [...elements.values()].find(e => e.open) : elements.get(selector),
@@ -70,7 +70,7 @@ async function boot(workspace) {
     // Load renderer scripts in the same order as index.html.
     for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)" defer>/g)) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', script), 'utf8'), context);
     await new Promise(resolve => setImmediate(resolve));
-    return { elements, calls, context };
+    return { elements, calls, context, bridge };
 }
 test('renderer initializes an empty workspace and enables the launch dialog', async () => {
     const { elements, calls } = await boot(createWorkspace());
@@ -337,4 +337,32 @@ test('shift-dragging empty canvas selects enclosed items; clicking empty canvas 
     viewport.dispatch('pointerdown', { clientX: 900, clientY: 900 });
     viewport.dispatch('pointerup', { clientX: 900, clientY: 900 });
     assert.deepEqual(json(context, '[...selection]'), []);
+});
+
+test('live directory events update only the corresponding display and preserve launch folders', async () => {
+    const board = createWorkspace();
+    board.cards.push(createCard({ cwd: 'C:\\Launch one' }), createCard({ cwd: 'C:\\Launch two' }));
+    const { elements, context, bridge } = await boot(board);
+    const [first, second] = elements.get('#world').children;
+    bridge.event({ type: 'cwd', id: board.cards[1].id, cwd: 'D:\\New folder\\子' });
+    assert.equal(second.querySelector('.card-directory span').textContent, 'D:\\New folder\\子');
+    assert.equal(second.querySelector('.card-directory').title, 'D:\\New folder\\子');
+    assert.equal(first.querySelector('.card-directory span').textContent, board.cards[0].cwd);
+    assert.equal(vm.runInContext('workspace.cards[1].cwd', context), board.cards[1].cwd);
+    bridge.event({ type: 'cwd', id: board.cards[1].id, cwd: null });
+    assert.equal(second.querySelector('.card-directory span').textContent, 'Current directory unavailable');
+    bridge.event({ type: 'cwd', id: 'removed', cwd: '/ignored' });
+});
+
+test('restarting clears the previous live directory and still sends the configured launch folder', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ cwd: 'C:\\Launch folder' }));
+    const { context, bridge, elements, calls } = await boot(board);
+    bridge.event({ type: 'cwd', id: board.cards[0].id, cwd: 'D:\\Previous live folder' });
+    vm.runInContext(`const s = sessions.get(workspace.cards[0].id);
+        s.status = 'exited'; s.terminal = { reset() {}, focus() {}, cols: 80, rows: 24 };`, context);
+    await vm.runInContext('start(workspace.cards[0])', context);
+    assert.equal(calls.find(c => c.action === 'start').payload.card.cwd, board.cards[0].cwd);
+    assert.equal(elements.get('#world').children[0].querySelector('.card-directory span').textContent, 'Current directory unavailable');
+    bridge.event({ type: 'cwd', id: board.cards[0].id, cwd: board.cards[0].cwd });
+    assert.equal(elements.get('#world').children[0].querySelector('.card-directory span').textContent, board.cards[0].cwd);
 });

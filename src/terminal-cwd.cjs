@@ -1,0 +1,101 @@
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const os = require('node:os');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { fileURLToPath } = require('node:url');
+const runFile = promisify(execFile);
+
+function validDirectory(value, platform) {
+    return typeof value === 'string' && value.length <= 4096 && !/[\x00-\x1f\x7f]/.test(value)
+        && (platform === 'win32' ? path.win32 : path.posix).isAbsolute(value) ? value : null;
+}
+
+// Observe metadata without changing the PTY bytes or its backpressure accounting.
+// Bound retained data even if a program emits an unterminated/oversized OSC.
+function directoryReports(platform, report) {
+    let state = 'text', payload = '', overflow = false;
+    function finish() {
+        if (!overflow && payload.startsWith('9;9;')) {
+            let value = payload.slice(4);
+            if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+            report(validDirectory(value, platform));
+        } else if (!overflow && payload.startsWith('7;')) {
+            try {
+                const url = new URL(payload.slice(2));
+                const localHost = !url.hostname || ['localhost', os.hostname().toLowerCase()].includes(url.hostname.toLowerCase());
+                if (url.protocol === 'file:' && (localHost || platform === 'win32')) {
+                    // A non-local file host on Windows represents a UNC share.
+                    if (localHost) url.hostname = '';
+                    report(validDirectory(fileURLToPath(url, { windows: platform === 'win32' }), platform));
+                }
+            } catch { report(null); }
+        }
+        state = 'text'; payload = ''; overflow = false;
+    }
+    return data => {
+        for (const char of data) {
+            if (state === 'text') { if (char === '\x1b') state = 'escape'; }
+            else if (state === 'escape') { state = char === ']' ? 'osc' : char === '\x1b' ? 'escape' : 'text'; }
+            else if (state === 'osc') {
+                if (char === '\x07') finish();
+                else if (char === '\x1b') state = 'osc-escape';
+                else if (payload.length < 16384) payload += char;
+                else overflow = true;
+            } else if (state === 'osc-escape') {
+                if (char === '\\') finish();
+                else { state = char === ']' ? 'osc' : 'text'; payload = ''; overflow = false; }
+            }
+        }
+    };
+}
+
+// Profiles load normally before -Command runs; wrap the resulting prompt only in
+// this process. No profile files, input handlers, or user commands are rewritten.
+const powershellBootstrap = `
+$global:__TerminalCanvasPrompt = $function:prompt
+function global:prompt {
+    $tcPrompt = & $global:__TerminalCanvasPrompt
+    $tcExitCode = $global:LASTEXITCODE
+    $tcDirectory = ''
+    try {
+        $tcLocation = $executionContext.SessionState.Path.CurrentLocation
+        if ($tcLocation.Provider.Name -eq 'FileSystem') { $tcDirectory = ([System.Uri]$tcLocation.ProviderPath).AbsoluteUri }
+    } catch { }
+    try { [Console]::Write(([char]27).ToString() + ']7;' + $tcDirectory + [char]7) } catch { }
+    $global:LASTEXITCODE = $tcExitCode
+    $tcPrompt
+}
+`;
+function powershellArgs() {
+    return ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(powershellBootstrap, 'utf16le').toString('base64')];
+}
+
+async function processDirectory(pid, platform, { readlink = fs.readlink, run = runFile } = {}) {
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    try {
+        if (platform === 'linux') return validDirectory(await readlink(`/proc/${pid}/cwd`), platform);
+        if (platform === 'darwin') {
+            const { stdout } = await run('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn0'], { timeout: 800, maxBuffer: 65536, windowsHide: true });
+            const name = stdout.split('\0').find(field => field.replace(/^\n/, '').startsWith('n'));
+            return validDirectory(name?.replace(/^\n?n/, ''), platform);
+        }
+    } catch { /* Missing permissions, exited processes, and unavailable tools are unknown. */ }
+    return null;
+}
+
+// Never overlap lookups. Disposing invalidates in-flight results as well as timers.
+function watchDirectory(pid, platform, report, { read = processDirectory, schedule = setTimeout, cancel = clearTimeout } = {}) {
+    let disposed = false, timer;
+    async function poll() {
+        let cwd = null;
+        try { cwd = validDirectory(await read(pid, platform), platform); } catch { /* Unknown. */ }
+        if (disposed) return;
+        report(cwd);
+        timer = schedule(poll, 1000);
+        timer?.unref?.();
+    }
+    void poll();
+    return { dispose() { disposed = true; cancel(timer); } };
+}
+module.exports = { directoryReports, powershellArgs, processDirectory, watchDirectory };
