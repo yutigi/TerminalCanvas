@@ -83,7 +83,7 @@ test('Linux queries the shell PID symlink and macOS parses NUL-delimited lsof na
 test('PowerShell integration preserves the custom prompt, failed status and native exit code', { skip: process.platform !== 'win32' }, () => {
     const { spawnSync } = require('node:child_process');
     const { powershellArgs } = require('../src/terminal-cwd.cjs');
-    const bootstrap = Buffer.from(powershellArgs()[3], 'base64').toString('utf16le');
+    const bootstrap = Buffer.from(powershellArgs().at(-1), 'base64').toString('utf16le');
     const script = `function global:prompt { "CUSTOM:$?:$global:LASTEXITCODE>" }; ${bootstrap}
         $global:LASTEXITCODE = 37; Write-Error 'expected failure' -ErrorAction SilentlyContinue
         $result = prompt; Write-Output ('RESULT=' + $result + ';LAST=' + $global:LASTEXITCODE)`;
@@ -120,7 +120,7 @@ for (const executable of ['powershell.exe', 'pwsh.exe']) {
     test(`${executable} prompt supports strict mode with missing and existing LASTEXITCODE`, { skip: process.platform !== 'win32' }, t => {
         const { spawnSync } = require('node:child_process');
         const { powershellArgs } = require('../src/terminal-cwd.cjs');
-        const bootstrap = Buffer.from(powershellArgs()[3], 'base64').toString('utf16le');
+        const bootstrap = Buffer.from(powershellArgs().at(-1), 'base64').toString('utf16le');
         const script = `Set-StrictMode -Version Latest
             $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
             Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Ignore
