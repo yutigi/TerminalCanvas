@@ -39,6 +39,8 @@ const world = $('#world');
 const minimap = $('#minimap');
 const minimapMap = $('#minimap-map');
 const sessions = new Map();
+// Terminals sit inside the zoomed world; xterm needs mouse coordinates without that scale.
+window.TerminalCanvasPointer?.install(window);
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
 let ready = false, formBusy = false;
 let topCardZIndex = 0;
@@ -534,7 +536,10 @@ viewport.addEventListener('pointerdown', event => {
 });
 viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault(); const rect = viewport.getBoundingClientRect(); zoom(Math.exp(-event.deltaY * .002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+    event.preventDefault();
+    // Wheel events from a zoomed terminal carry coordinates rewritten for xterm; zoom around the real pointer.
+    const rect = viewport.getBoundingClientRect(), point = window.TerminalCanvasPointer?.clientPoint(event) ?? { x: event.clientX, y: event.clientY };
+    zoom(Math.exp(-event.deltaY * .002), { x: point.x - rect.left, y: point.y - rect.top });
 }, { passive: false });
 function openLaunch(profileId = 'shell') {
     if (!ready || document.querySelector('dialog[open]')) return;
