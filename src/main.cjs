@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, session, clipboard, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, session, clipboard, protocol, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
@@ -38,6 +38,19 @@ function saveWorkspace(file, raw, extra = {}) {
     return task;
 }
 async function command(action, payload) {
+    if (action === 'open-link') {
+        // Terminal output is untrusted. Validate again at the OS boundary, even though
+        // xterm filters OSC 8 links to HTTP(S) before offering them for activation.
+        if (typeof payload !== 'string' || !/^https?:\/\//i.test(payload) || /[\u0000-\u0020\u007f]/.test(payload)) {
+            throw new Error('Only valid HTTP and HTTPS links can be opened.');
+        }
+        const url = new URL(payload);
+        if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
+            throw new Error('Only valid HTTP and HTTPS links without credentials can be opened.');
+        }
+        await shell.openExternal(url.href);
+        return { ok: true };
+    }
     if (action === 'clipboard-read') {
         const text = await clipboard.readText();
         if (text.length > 64000) throw new Error('Paste is limited to 64,000 characters.');

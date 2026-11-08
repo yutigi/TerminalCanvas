@@ -365,12 +365,20 @@ function mount(card) {
     el.querySelector('.card-directory span').textContent = card.cwd || 'Home directory';
     el.querySelector('.card-directory').title = card.cwd || 'Home directory';
     el.querySelector('.placeholder-copy').textContent = card.command ? `Ready to run: ${card.command}` : 'Your shell is ready. Start when you are.';
-    const s = { element: el, status: 'idle', terminal: null, fit: null, placeholder: el.querySelector('.terminal-placeholder') };
+    const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
             fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: 12, lineHeight: 1.3,
             cursorBlink: true, scrollback: 5000, allowProposedApi: false,
+            linkHandler: {
+                allowNonHttpProtocols: false,
+                activate(event, uri) {
+                    if (!event.isTrusted || event.button !== 0) return;
+                    event.preventDefault();
+                    run(() => invoke('open-link', uri));
+                }
+            },
             theme: { background: '#15191f', foreground: '#c8d1dc', cursor: '#c8ecb5', selectionBackground: '#52694e80', black: '#29313d', red: '#e59a91', green: '#b5d69a', yellow: '#dfc68c', blue: '#94b5e8', magenta: '#baa0da', cyan: '#91cbc7', white: '#d5dce5', brightBlack: '#667486', brightRed: '#f0b2a9', brightGreen: '#c8ecb5', brightYellow: '#f1dbab', brightBlue: '#b2cdff', brightMagenta: '#d8bcf6', brightCyan: '#b1e4df', brightWhite: '#f0f4fa' }
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
@@ -390,10 +398,14 @@ function mount(card) {
             if (event.type === 'keydown') {
                 const text = copy ? s.terminal.getSelection() : '';
                 if (copy && text) run(() => invoke('clipboard-write', text));
-                if (paste && s.status === 'running') run(async () => {
-                    const { text } = await invoke('clipboard-read');
-                    if (sessions.get(card.id) === s && s.status === 'running') s.terminal.paste(text);
-                });
+                if (paste && s.status === 'running') {
+                    // Capture at keydown: restart can happen before the queued clipboard read begins.
+                    const generation = s.generation;
+                    run(async () => {
+                        const { text } = await invoke('clipboard-read');
+                        if (sessions.get(card.id) === s && s.status === 'running' && s.generation === generation) s.terminal.paste(text);
+                    });
+                }
             }
             return false;
         });
@@ -438,17 +450,24 @@ function dispose(id) {
     const s = sessions.get(id); if (!s) return;
     s.observer?.disconnect(); s.terminal?.dispose(); s.element.remove(); sessions.delete(id);
 }
+function showDirectory(s, cwd) {
+    s.cwd = cwd;
+    const label = cwd || 'Current directory unavailable';
+    s.element.querySelector('.card-directory span').textContent = label;
+    s.element.querySelector('.card-directory').title = label;
+}
 async function start(card) {
     const s = sessions.get(card.id);
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
-    s.terminal.reset(); fitTerminal(s); setStatus(card, 'starting');
+    s.generation++;
+    s.terminal.reset(); fitTerminal(s); showDirectory(s, null); setStatus(card, 'starting');
     try {
         await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows });
         if (sessions.get(card.id) !== s) return;
         if (s.status === 'starting') setStatus(card, 'running');
         s.terminal.focus();
-    } catch (error) { setStatus(card, 'idle', error.message); throw error; }
+    } catch (error) { showDirectory(s, card.cwd || 'Home directory'); setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
 function beginDrag(element, event, move, end) {
@@ -651,6 +670,7 @@ if (bridge) {
             if (s?.terminal) s.terminal.write(event.data, () => bridge.acknowledge(event.id, event.data.length));
             else bridge.acknowledge(event.id, event.data.length);
         }
+        if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
         if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); setStatus(workspace.cards.find(c => c.id === event.id), 'exited'); }
         if (event.type === 'error') toast(event.message);
         if (event.type === 'closing') run(async () => {

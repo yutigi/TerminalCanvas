@@ -10,7 +10,8 @@ exports.run = async ({ win, terminals, createCard, hasOutputLine, capture }) => 
     const originalWrite = terminals.write;
     const originalEmit = terminals.emit;
     const inputs = [];
-    let output = '';
+    let output = '', fixtureMode = false;
+    const nativeModifiers = process.platform === 'darwin' ? ['meta'] : ['control'];
     const card = createCard({ title: 'Clipboard shortcuts' });
     const evaluate = script => win.webContents.executeJavaScript(script);
     const waitFor = async (check, description, timeout = 5000) => {
@@ -32,7 +33,11 @@ exports.run = async ({ win, terminals, createCard, hasOutputLine, capture }) => 
     try {
         win.focus(); win.webContents.focus();
         terminals.emit = event => {
-            if (event.id === card.id && event.type === 'data') output += event.data;
+            if (event.id === card.id && event.type === 'data') {
+                output += event.data;
+                // Focus/resize can make ConPTY repaint the shell over synthetic xterm fixtures.
+                if (fixtureMode) { terminals.acknowledge(card.id, event.data.length); return; }
+            }
             originalEmit(event);
         };
         await evaluate(`loadWorkspace(${JSON.stringify({ version: 1, name: 'Clipboard smoke workspace', camera: { x: 30, y: 30, z: 1 }, cards: [card] })}); start(workspace.cards[0])`);
@@ -42,9 +47,15 @@ exports.run = async ({ win, terminals, createCard, hasOutputLine, capture }) => 
         // Capture PTY-bound bytes without executing the multiline fixtures as shell commands.
         terminals.write = (id, data) => inputs.push({ id, data });
         for (const focus of [false, true]) {
-            await evaluate(`setFocus(${focus ? JSON.stringify(card.id) : 'null'}); ${terminal}.focus()`);
+            fixtureMode = true;
+            await evaluate(`setFocus(${focus ? JSON.stringify(card.id) : 'null'}); ${terminal}.reset(); ${terminal}.focus()`);
             await write('\x1b[2J\x1b[HSelected terminal text\r\nSecond line');
-            for (const modifiers of [['control'], ['control', 'shift']]) {
+            // Force shell output after installing the fixture: it must be captured without repainting it.
+            const noise = `clipboard-fixture-noise-${Date.now()}`;
+            originalWrite.call(terminals, card.id, `echo ${noise}\r`);
+            await waitFor(() => hasOutputLine(output, noise), 'shell output isolated from copy fixture');
+            const clipboardModifiers = [['control'], ['control', 'shift'], ...(process.platform === 'darwin' ? [['meta']] : [])];
+            for (const modifiers of clipboardModifiers) {
                 inputs.length = 0;
                 await clipboard.writeText('old clipboard');
                 await evaluate(`${terminal}.select(0, 0, 22); ${terminal}.focus()`);
@@ -60,7 +71,7 @@ exports.run = async ({ win, terminals, createCard, hasOutputLine, capture }) => 
             assert.deepEqual(inputs.map(input => input.data), ['\x03'], 'selection-free Ctrl+C sends exactly one interrupt');
             for (const bracketed of [false, true]) {
                 await write(`\x1b[?2004${bracketed ? 'h' : 'l'}`);
-                for (const modifiers of [['control'], ['control', 'shift']]) {
+                for (const modifiers of clipboardModifiers) {
                     for (const selection of [false, true]) {
                         inputs.length = 0;
                         await clipboard.writeText('first\r\nsecond\nthird');
@@ -73,14 +84,15 @@ exports.run = async ({ win, terminals, createCard, hasOutputLine, capture }) => 
             }
             // Native input editing must remain available even while a terminal stays selected.
             await evaluate(`document.querySelector('#search').value = 'outside terminal'; document.querySelector('#search').focus(); document.querySelector('#search').select()`);
-            await key('C');
+            await key('C', nativeModifiers);
             assert.equal(await clipboard.readText(), 'outside terminal');
             await clipboard.writeText('native paste');
             inputs.length = 0;
-            await key('V');
+            await key('V', nativeModifiers);
             assert.equal(await evaluate("document.querySelector('#search').value"), 'native paste');
             assert.deepEqual(inputs, []);
-            // Interrupt an actual blocking command, then prove the same shell responds promptly.
+            // Reconnect the real PTY for the process interruption check in this view.
+            fixtureMode = false;
             terminals.write = originalWrite;
             await evaluate(`${terminal}.clearSelection(); ${terminal}.focus()`);
             const started = `clipboard-blocking-${Date.now()}`;
