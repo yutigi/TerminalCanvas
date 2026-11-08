@@ -8,6 +8,26 @@ function hasOutputLine(output, expected) {
     return clean.split(/\r?\n/).some(line => line.trim() === expected);
 }
 exports.hasOutputLine = hasOutputLine;
+async function captureScreenshot(win) {
+    const attempts = 5;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+            const image = await win.webContents.capturePage();
+            assert.ok(!image.isEmpty(), 'Smoke screenshot must not be empty.');
+            return image;
+        } catch (error) {
+            if (error.message !== 'UnknownVizError') throw error;
+            if (attempt === attempts) {
+                throw new Error(`Smoke screenshot capture failed after ${attempts} attempts: ${error.message}`, { cause: error });
+            }
+            // A compositor surface copy can fail transiently even after renderer IPC succeeds.
+            // Request another painted frame before retrying; never skip screenshot validation.
+            win.webContents.invalidate();
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+    }
+}
+exports.captureScreenshot = captureScreenshot;
 exports.run = async ({ app, win, terminals, createCard }) => {
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError/.test(message || '')) errors.push(message); });
@@ -70,7 +90,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         assert.deepEqual(errors, []);
         const screenshot = path.resolve(__dirname, '../.cache/smoke.png');
         await fs.mkdir(path.dirname(screenshot), { recursive: true });
-        await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG());
+        await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
         console.log(`Desktop smoke passed: renderer, minimap navigation, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
     } finally { terminals.emit = originalEmit; terminals.stopAll(); }
     app.quit();
