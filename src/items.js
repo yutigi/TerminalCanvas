@@ -397,24 +397,26 @@ function setItemColor(color) {
     if (boardBusy()) return;
     const items = selectedItems(COLORED_TYPES);
     if (!items.length || (color !== 'default' && !ITEM_COLORS.includes(color))) return;
-    recordHistory();
-    for (const item of items) {
-        if (color === 'default') delete item.color;
-        else item.color = color;
-        renderItem(item);
-    }
+    recordChange(() => {
+        for (const item of items) {
+            if (color === 'default') delete item.color;
+            else item.color = color;
+            renderItem(item);
+        }
+    });
     renderStyleToolbar(); changed();
 }
 function setItemFontSize(size) {
     if (boardBusy()) return;
     const items = selectedItems(TEXT_TYPES);
     if (!items.length || (size !== 'medium' && !ITEM_FONT_SIZES.includes(size))) return;
-    recordHistory();
-    for (const item of items) {
-        if (size === 'medium') delete item.fontSize;
-        else item.fontSize = size;
-        renderItem(item);
-        fitTextLabel(item);
-    }
+    recordChange(() => {
+        for (const item of items) {
+            if (size === 'medium') delete item.fontSize;
+            else item.fontSize = size;
+            renderItem(item);
+            fitTextLabel(item);
+        }
+    });
     renderLines(); renderSelectionBox(); renderStyleToolbar(); renderMinimap(); changed();
 }

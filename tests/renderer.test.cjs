@@ -678,3 +678,21 @@ test('discarding a new empty text label keeps the redo steps it would have clear
     vm.runInContext('redo()', context);
     assert.equal(json(context, 'workspace.items[0].color'), 'blue');
 });
+
+test('repeating a color, text size, or Arrange that changes nothing adds no undo step', async () => {
+    const workspace = createWorkspace();
+    workspace.cards.push(createCard({ x: 30, y: 40 }), createCard({ x: 900, y: 40 }));
+    workspace.items.push(note('a', 0, 0));
+    const { elements, context } = await boot(workspace);
+    const steps = () => json(context, 'boardHistory.undo.length');
+    vm.runInContext('select("a"); setItemColor("blue"); setItemColor("blue"); setItemFontSize("large"); setItemFontSize("large"); setItemColor("default"); setItemColor("default")', context);
+    assert.equal(steps(), 3);
+    vm.runInContext('undo()', context);
+    vm.runInContext('setItemColor("blue")', context);
+    assert.equal(json(context, 'boardHistory.redo.length'), 1, 'a no-op keeps redo');
+    elements.get('#arrange').onclick();
+    elements.get('#arrange').onclick();
+    assert.equal(steps(), 3, 'only the first Arrange moved anything');
+    vm.runInContext('undo()', context);
+    assert.deepEqual(json(context, 'workspace.cards.map(c => [c.x, c.y])'), [[30, 40], [900, 40]]);
+});

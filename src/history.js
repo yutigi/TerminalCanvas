@@ -29,6 +29,14 @@ function commitHistory(snapshot) {
     renderHistoryButtons();
 }
 function recordHistory() { commitHistory(snapshotBoard()); }
+const boardKey = snapshot => JSON.stringify([snapshot.cards, snapshot.items]);
+// Runs `change` and records it as a step only if it altered the board, so repeating it adds nothing.
+function recordChange(change) {
+    const before = snapshotBoard(), key = boardKey(before);
+    const result = change();
+    if (boardKey(snapshotBoard()) !== key) commitHistory(before);
+    return result;
+}
 // Drops a step that turned out to change nothing, such as an empty text label that was removed,
 // and restores the redo steps that recording it cleared.
 function discardHistory(snapshot) {

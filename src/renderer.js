@@ -599,10 +599,10 @@ $('#search').oninput = () => { if (ready) refresh(); };
 $('#canvas-nav').onclick = () => { if (ready) fitCanvas(); };
 $('#add-terminal').onclick = $('#empty-add').onclick = () => openLaunch();
 $('#arrange').onclick = () => {
-    if (!ready) return; setFocus(null);
-    if (workspace.cards.length) recordHistory();
+    if (!ready || boardBusy()) return; setFocus(null);
     const columns = Math.max(1, Math.ceil(Math.sqrt(workspace.cards.length)));
-    workspace.cards.forEach((c, i) => { c.x = (i % columns) * 700; c.y = Math.floor(i / columns) * 470; c.w = 660; c.h = 430; renderGeometry(c); }); fitCanvas();
+    recordChange(() => workspace.cards.forEach((c, i) => { c.x = (i % columns) * 700; c.y = Math.floor(i / columns) * 470; c.w = 660; c.h = 430; renderGeometry(c); }));
+    fitCanvas();
 };
 $('#focus-toggle').onclick = () => { if (ready) setFocus(focused ? null : selected); };
 $('#exit-focus').onclick = () => setFocus(null);
