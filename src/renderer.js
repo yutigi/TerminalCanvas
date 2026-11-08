@@ -349,24 +349,37 @@ function setStatus(card, value, message) {
     s.element.querySelector('.status-text').textContent = value === 'running' ? 'Running' : value === 'starting' ? 'Starting' : value === 'exited' ? 'Exited' : 'Ready';
     const toggle = s.element.querySelector('[data-action="toggle"]');
     toggle.innerHTML = icon(['running', 'starting'].includes(value) ? 'stop' : 'play');
-    toggle.title = ['running', 'starting'].includes(value) ? 'Stop terminal' : 'Start terminal';
+    toggle.title = ['running', 'starting'].includes(value) ? 'Stop terminal' : card.session ? 'Resume session' : 'Start terminal';
     toggle.setAttribute('aria-label', toggle.title);
     s.placeholder.hidden = ['running', 'starting'].includes(value) || value === 'exited';
     if (message) s.element.querySelector('.placeholder-copy').textContent = message;
+    s.element.querySelector('[data-action="fresh-shell"]').disabled = ['running', 'starting'].includes(value);
     refresh();
+}
+function recoveryInfo(card) {
+    const s = sessions.get(card.id); if (!s) return;
+    s.element.querySelector('.card-directory span').textContent = card.cwd || 'Home directory';
+    s.element.querySelector('.card-directory').title = card.cwd || 'Home directory';
+    s.element.querySelector('[data-action="start"]').innerHTML = icon('play') + (card.session ? 'Resume session' : 'Start terminal');
+    s.element.querySelector('.placeholder-copy').textContent = card.session
+        ? `Saved ${card.session.provider === 'claude' ? 'Claude Code' : 'Codex'} session ${card.session.sessionId.slice(0, 8)}. Resume it, or open a fresh shell.`
+        : card.command ? `Ready to run: ${card.command}. No saved AI session ID is available.` : 'Your shell is ready. Start when you are.';
+    if (!['running', 'starting'].includes(s.status)) {
+        const toggle = s.element.querySelector('[data-action="toggle"]');
+        toggle.title = card.session ? 'Resume session' : 'Start terminal';
+        toggle.setAttribute('aria-label', toggle.title);
+    }
 }
 function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
-    el.querySelector('.card-directory span').textContent = card.cwd || 'Home directory';
-    el.querySelector('.card-directory').title = card.cwd || 'Home directory';
-    el.querySelector('.placeholder-copy').textContent = card.command ? `Ready to run: ${card.command}` : 'Your shell is ready. Start when you are.';
     const s = { element: el, status: 'idle', terminal: null, fit: null, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
+    recoveryInfo(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
             fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: 12, lineHeight: 1.3,
@@ -401,6 +414,7 @@ function mount(card) {
         const action = button.dataset.action;
         if (action === 'focus') setFocus(focused ? null : card.id);
         if (action === 'start') await start(card);
+        if (action === 'fresh' || action === 'fresh-shell') await start(card, 'fresh');
         if (action === 'toggle') {
             if (s.status === 'starting') return;
             if (s.status === 'running') { await invoke('stop', { id: card.id }); s.terminal?.writeln('\r\n\x1b[90m[Terminal stopped]\x1b[0m'); setStatus(card, 'exited'); }
@@ -429,14 +443,19 @@ function dispose(id) {
     const s = sessions.get(id); if (!s) return;
     s.observer?.disconnect(); s.terminal?.dispose(); s.element.remove(); sessions.delete(id);
 }
-async function start(card) {
+async function start(card, mode = card.session ? 'resume' : 'start') {
     const s = sessions.get(card.id);
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
     s.terminal.reset(); fitTerminal(s); setStatus(card, 'starting');
     try {
-        await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows });
+        clearTimeout(autosaveTimer);
+        await invoke('autosave', workspace);
+        const result = await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows, mode });
         if (sessions.get(card.id) !== s) return;
+        if (result.cwd) card.cwd = result.cwd;
+        if (result.session) card.session = result.session;
+        recoveryInfo(card); changed();
         if (s.status === 'starting') setStatus(card, 'running');
         s.terminal.focus();
     } catch (error) { setStatus(card, 'idle', error.message); throw error; }
@@ -638,6 +657,14 @@ window.addEventListener('resize', () => { if (ready) renderCamera(); });
 if (bridge) {
     bridge.onEvent(event => {
         const s = sessions.get(event.id);
+        if (event.type === 'metadata') {
+            const card = workspace?.cards.find(c => c.id === event.id);
+            if (card) {
+                card.cwd = event.cwd;
+                if (event.session) card.session = event.session;
+                recoveryInfo(card); changed(); refresh();
+            }
+        }
         if (event.type === 'data') {
             if (s?.terminal) s.terminal.write(event.data, () => bridge.acknowledge(event.id, event.data.length));
             else bridge.acknowledge(event.id, event.data.length);

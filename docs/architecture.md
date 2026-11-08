@@ -20,6 +20,9 @@ flowchart LR
 
 - `workspace.cjs` defines versioned, serializable workspace/card data, profile defaults, bounds, and validation. Runtime fields are excluded from imported and saved layouts.
 - `terminal-manager.cjs` owns spawning, input, resizing, acknowledgments, exit handling, and disposal. Its injected spawn and event functions allow lifecycle tests without native dependencies.
+- `shell-integration.cjs` prepares per-terminal PowerShell/Bash functions for directory reporting and ordinary Claude/Codex invocations. Claude receives a per-launch settings file with a `SessionStart` hook. `session-hook.cjs` atomically records only a provider, UUID, directory, and invocation token; it never copies transcripts. Explicit custom Claude settings take precedence over hook injection.
+- `session-metadata.cjs` validates optional session metadata and parses bounded OSC reports and explicit resume hints. Invocation tokens keep hook updates from a previous launch out of the current one. Codex IDs depend on explicit resume arguments or output; shared conversation history is never scanned to guess an association.
+- `workspace-recovery.cjs` keeps host-observed metadata authoritative over delayed renderer snapshots, queues recovery writes when metadata changes, and supplies the final close snapshot. Optional malformed session metadata is discarded without discarding cards or board items.
 - `main.cjs` owns the native window, file/folder dialogs, clipboard, persistence, and IPC authorization. It accepts calls only from the local main frame.
 - `preload.cjs` exposes explicit methods while keeping Node.js unavailable to renderer code.
 - `renderer.js` owns canvas navigation, card UI, selection, tools, and xterm emulators. A terminal's running state reflects its shell process, rather than an inferred AI activity state.
@@ -28,6 +31,10 @@ flowchart LR
 - `assets.cjs` validates image bytes by signature, stores them content-addressed in the user-data `assets` folder, and embeds or extracts them for portable exports.
 
 Output acknowledgments pause a producer above 256,000 unprocessed characters and resume it below 32,000. This propagates backpressure to the PTY instead of growing an unbounded renderer write queue. Layout writes are serialized and use a temporary file followed by rename. Save failures are surfaced to the user.
+
+Terminal cards can carry `session: { provider: 'codex' | 'claude', sessionId: UUID, cwd: string }` as an additive field in workspace version 2. The card directory tracks the shell, while `session.cwd` tracks the captured AI conversation's folder. No running state is serialized. Starting in `resume` mode uses the allowlisted provider and validated UUID to build a fixed command, independent of the saved launch command; `fresh` mode launches only a shell. An invalid/missing folder prevents resume but permits a fresh shell in Home. IDs are candidates for provider-side resume, not proof that a conversation remains available.
+
+Hook metadata is polled every 500 ms, plus before terminal stop/exit, save/export, and close. A normal close waits for the atomic recovery queue, stops processes, and flushes again. App-quit requests use the same renderer close flow as window close. On renderer failure, the host stops processes and saves its last known workspace. Process termination or power loss can still lose unobserved/unwritten changes. See the README's recovery limits for unsupported shell launches and Codex's exit-only resume hint on some versions.
 
 ## Board items
 
@@ -51,6 +58,6 @@ No dynamic plugin loader is present in v0.1. Introducing browser cards will requ
 
 ## Trade-offs and follow-up
 
-Electron matches WebCanvas's stack and supports mature terminal rendering at the cost of a larger desktop runtime. Plain JavaScript keeps this initial app small; revisit TypeScript and a component framework as UI complexity grows. Native node-pty requires runtime-compatible binaries/build tools. macOS/Linux behavior, signed distribution, persistent processes, output search, multiple named workspaces, and AI-specific session resumption remain future work.
+Electron matches WebCanvas's stack and supports mature terminal rendering at the cost of a larger desktop runtime. Plain JavaScript keeps this initial app small; revisit TypeScript and a component framework as UI complexity grows. Native node-pty requires runtime-compatible binaries/build tools. macOS/Linux behavior, signed distribution, persistent processes, output search, multiple named workspaces, and broader provider/session discovery remain future work.
 
 Implementation references: [Electron security guidance](https://www.electronjs.org/docs/latest/tutorial/security), [node-pty](https://github.com/microsoft/node-pty), and [xterm flow control](https://xtermjs.org/docs/guides/flowcontrol/).

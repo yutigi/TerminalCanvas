@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { sessionMetadata } = require('./session-metadata.cjs');
 
 const LIMITS = Object.freeze({ cards: 24, items: 1000, bytes: 64 * 1024 * 1024, coordinate: 100000, text: 10000 });
 const VERSION = 2;
@@ -51,6 +52,9 @@ function validateCard(raw) {
         cwd: text(raw.cwd, 4096, 'working directory'),
         command: text(raw.command, 2000, 'command')
     };
+    // Optional recovery metadata is best effort: a bad ID never discards the layout.
+    const session = sessionMetadata(raw.session);
+    if (session) card.session = session;
     position(raw, card, 'card');
     for (const [key, min, max] of [['w', 400, 2400], ['h', 280, 1800]]) {
         if (!finite(raw[key], min, max)) throw new Error('Invalid card size.');
