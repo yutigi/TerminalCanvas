@@ -28,8 +28,23 @@ test('lines resolve free points and attached elements', () => {
     assert.equal(free.end.x, 0, 'attached end sits on the border facing the free point');
 });
 
+test('nested groups select as their outermost group and unwrap one level at a time', () => {
+    const elements = [{ id: 'a', groups: ['outer', 'inner'] }, { id: 'b', groups: ['outer', 'inner'] }, { id: 'c', groups: ['outer'] }, { id: 'd' }];
+    assert.deepEqual([...G.expandGroups(new Set(['a']), elements)].sort(), ['a', 'b', 'c'], 'an inner member selects the whole outer group');
+    assert.deepEqual([...G.selectionUnits(elements)].sort(), ['element:d', 'outer']);
+    assert.deepEqual(G.groupPaths(elements, 'top'), [['top', 'outer', 'inner'], ['top', 'outer', 'inner'], ['top', 'outer'], ['top']]);
+    assert.deepEqual(G.ungroupPaths(elements), [['inner'], ['inner'], [], []]);
+    const afterUngroup = elements.map((e, i) => ({ ...e, groups: G.ungroupPaths(elements)[i] }));
+    assert.deepEqual([...G.expandGroups(new Set(['a']), afterUngroup)].sort(), ['a', 'b'], 'the inner group survives');
+    assert.deepEqual(G.pruneGroupPaths([{ id: 'a', groups: ['g', 'solo'] }, { id: 'b', groups: ['g'] }, { id: 'c', groups: ['lonely'] }]), [['g'], ['g'], []]);
+    const wrapper = [{ id: 'a', groups: ['outer', 'inner'] }, { id: 'b', groups: ['outer', 'inner'] }];
+    assert.deepEqual(G.pruneGroupPaths(wrapper), [['inner'], ['inner']], 'a group that only wraps one inner group is removed');
+    const chain = [{ id: 'a', groups: ['x', 'y', 'z'] }, { id: 'b', groups: ['x', 'y', 'z'] }, { id: 'c', groups: ['x'] }];
+    assert.deepEqual(G.pruneGroupPaths(chain), [['x', 'z'], ['x', 'z'], ['x']], 'a redundant middle level is removed');
+});
+
 test('groups expand to every member and leave ungrouped elements alone', () => {
-    const elements = [{ id: 'a', group: 'g1' }, { id: 'b', group: 'g1' }, { id: 'c' }, { id: 'd', group: 'g2' }];
+    const elements = [{ id: 'a', groups: ['g1'] }, { id: 'b', groups: ['g1'] }, { id: 'c' }, { id: 'd', groups: ['g2'] }];
     assert.deepEqual([...G.expandGroups(new Set(['a']), elements)].sort(), ['a', 'b']);
     assert.deepEqual([...G.expandGroups(new Set(['c']), elements)], ['c']);
     assert.deepEqual([...G.expandGroups(new Set(['b', 'd']), elements)].sort(), ['a', 'b', 'd']);
@@ -56,4 +71,11 @@ test('hit testing prefers the highest element and normalizes dragged rectangles'
     assert.deepEqual(G.rectFromPoints({ x: 10, y: 50 }, { x: -10, y: 20 }), { x: -10, y: 20, w: 20, h: 30 });
     assert.deepEqual(G.unionBounds([{ x: 0, y: 0, w: 10, h: 10 }, { x: -5, y: 20, w: 5, h: 5 }]), { x: -5, y: 0, w: 15, h: 25 });
     assert.equal(G.unionBounds([]), null);
+});
+
+test('rectangles intersect only when they overlap', () => {
+    const a = { x: 0, y: 0, w: 10, h: 10 };
+    assert.equal(G.intersects(a, { x: 5, y: 5, w: 10, h: 10 }), true);
+    assert.equal(G.intersects(a, { x: 10, y: 0, w: 5, h: 5 }), false, 'touching edges do not overlap');
+    assert.equal(G.intersects(a, { x: -20, y: -20, w: 5, h: 5 }), false);
 });

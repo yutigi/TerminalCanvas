@@ -7,7 +7,7 @@ const { LIMITS, PROFILES, validateWorkspace, createWorkspace, createCard } = req
 const { TerminalManager } = require('./terminal-manager.cjs');
 const { prepareIntegration } = require('./shell-integration.cjs');
 const { WorkspaceRecovery } = require('./workspace-recovery.cjs');
-const { IMAGE_BYTES, assetPath, storeImage, embedAssets, extractAssets } = require('./assets.cjs');
+const { IMAGE_BYTES, assetPath, storeImage, embedAssets, extractAssets, keepList, unusedAssets, deleteAssets, serialize } = require('./assets.cjs');
 
 const restorationSmoke = process.argv.find(arg => arg.startsWith('--restoration-smoke='))?.split('=')[1];
 const smoke = process.argv.includes('--smoke-test') || !!restorationSmoke;
@@ -24,9 +24,12 @@ const recovery = () => path.join(app.getPath('userData'), 'workspace.terminalcan
 const recoveryState = new WorkspaceRecovery({ save: board => saveWorkspace(recovery(), board), onError: error => emit({ type: 'error', message: `Could not save session recovery: ${error.message}` }) });
 const assetsFolder = () => path.join(app.getPath('userData'), 'assets');
 const assetTypes = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+// Everything that writes or deletes stored images runs in arrival order.
+const assetTask = serialize();
 async function readWorkspace(file) {
     if ((await fs.stat(file)).size > LIMITS.bytes) throw new Error('Workspace files must be smaller than 64 MB.');
-    return validateWorkspace(await extractAssets(JSON.parse(await fs.readFile(file, 'utf8')), assetsFolder()));
+    const raw = JSON.parse(await fs.readFile(file, 'utf8'));
+    return validateWorkspace(await assetTask(() => extractAssets(raw, assetsFolder())));
 }
 function saveWorkspace(file, raw, extra = {}) {
     const board = validateWorkspace(raw);
@@ -55,14 +58,15 @@ async function command(action, payload) {
         await shell.openExternal(url.href);
         return { ok: true };
     }
+    // Electron's clipboard API is asynchronous.
     if (action === 'clipboard-read') {
-        const text = clipboard.readText();
+        const text = await clipboard.readText();
         if (text.length > 64000) throw new Error('Paste is limited to 64,000 characters.');
         return { text };
     }
     if (action === 'clipboard-write') {
         if (typeof payload !== 'string' || payload.length > 1024 * 1024) throw new Error('Selection exceeds 1 MB.');
-        clipboard.writeText(payload);
+        await clipboard.writeText(payload);
         return { ok: true };
     }
     if (action === 'initialize') {
@@ -112,13 +116,21 @@ async function command(action, payload) {
     }
     if (action === 'import-image') {
         if (!(payload?.bytes instanceof Uint8Array)) throw new Error('Invalid image data.');
-        return { asset: await storeImage(assetsFolder(), payload.bytes) };
+        return { asset: await assetTask(() => storeImage(assetsFolder(), payload.bytes)) };
     }
     if (action === 'pick-image') {
         const result = await dialog.showOpenDialog(win, { title: 'Add an image', properties: ['openFile'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }] });
         if (result.canceled) return { canceled: true };
         if ((await fs.stat(result.filePaths[0])).size > IMAGE_BYTES) throw new Error('Images must be smaller than 15 MB.');
-        return { asset: await storeImage(assetsFolder(), await fs.readFile(result.filePaths[0])) };
+        const bytes = await fs.readFile(result.filePaths[0]);
+        return { asset: await assetTask(() => storeImage(assetsFolder(), bytes)) };
+    }
+    // Cleanup is manual: the renderer confirms the count first, and the list is computed again on delete.
+    if (action === 'unused-images' || action === 'delete-unused-images') {
+        const keep = keepList(payload?.keep);
+        if (action === 'delete-unused-images') return assetTask(async () => deleteAssets(assetsFolder(), await unusedAssets(assetsFolder(), keep)));
+        const unused = await assetTask(() => unusedAssets(assetsFolder(), keep));
+        return { count: unused.length, bytes: unused.reduce((sum, asset) => sum + asset.bytes, 0) };
     }
     if (action === 'open') {
         const result = await dialog.showOpenDialog(win, { title: 'Open workspace', properties: ['openFile'], filters: [{ name: 'Terminal Canvas workspace', extensions: ['terminalcanvas', 'json'] }] });
