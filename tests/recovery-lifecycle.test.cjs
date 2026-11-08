@@ -42,7 +42,7 @@ async function host(folder) {
         const terminal = {
             pid: processes.length + 100, killed: false, writes: [],
             onData(fn) { this.data = fn; return { dispose() {} }; }, onExit(fn) { this.exit = fn; return { dispose() {} }; },
-            write(data) { this.writes.push(data); }, kill() { this.killed = true; }
+            write(data) { this.writes.push(data); }, kill() { this.killed = true; setImmediate(() => this.exit({ exitCode: 0 })); }
         };
         processes.push(terminal); return terminal;
     };

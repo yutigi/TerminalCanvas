@@ -12,6 +12,7 @@
         "test:smoke": "node scripts/start.cjs --smoke-test",
         "test:restoration": "node scripts/test-restoration.cjs",
         "rebuild": "node scripts/rebuild.cjs",
+        "postinstall": "node scripts/patch-node-pty.cjs",
         "icons": "node scripts/icons.cjs",
         "build": "electron-builder --win portable"
     },

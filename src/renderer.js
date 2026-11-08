@@ -39,6 +39,8 @@ const world = $('#world');
 const minimap = $('#minimap');
 const minimapMap = $('#minimap-map');
 const sessions = new Map();
+// Terminals sit inside the zoomed world; xterm needs mouse coordinates without that scale.
+window.TerminalCanvasPointer?.install(window);
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
 let ready = false, formBusy = false;
 let topCardZIndex = 0;
@@ -358,8 +360,8 @@ function setStatus(card, value, message) {
 }
 function recoveryInfo(card) {
     const s = sessions.get(card.id); if (!s) return;
-    s.element.querySelector('.card-directory span').textContent = card.cwd || 'Home directory';
-    s.element.querySelector('.card-directory').title = card.cwd || 'Home directory';
+    if (['running', 'starting'].includes(s.status)) showDirectory(s, s.cwd);
+    else showDirectory(s, card.cwd || 'Home directory');
     s.element.querySelector('[data-action="start"]').innerHTML = icon('play') + (card.session ? 'Resume session' : 'Start terminal');
     s.element.querySelector('.placeholder-copy').textContent = card.session
         ? `Saved ${card.session.provider === 'claude' ? 'Claude Code' : 'Codex'} session ${card.session.sessionId.slice(0, 8)}. Resume it, or open a fresh shell.`
@@ -384,6 +386,14 @@ function mount(card) {
         s.terminal = new window.Terminal({
             fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: 12, lineHeight: 1.3,
             cursorBlink: true, scrollback: 5000, allowProposedApi: false,
+            linkHandler: {
+                allowNonHttpProtocols: false,
+                activate(event, uri) {
+                    if (!event.isTrusted || event.button !== 0) return;
+                    event.preventDefault();
+                    run(() => invoke('open-link', uri));
+                }
+            },
             theme: { background: '#15191f', foreground: '#c8d1dc', cursor: '#c8ecb5', selectionBackground: '#52694e80', black: '#29313d', red: '#e59a91', green: '#b5d69a', yellow: '#dfc68c', blue: '#94b5e8', magenta: '#baa0da', cyan: '#91cbc7', white: '#d5dce5', brightBlack: '#667486', brightRed: '#f0b2a9', brightGreen: '#c8ecb5', brightYellow: '#f1dbab', brightBlue: '#b2cdff', brightMagenta: '#d8bcf6', brightCyan: '#b1e4df', brightWhite: '#f0f4fa' }
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
@@ -443,11 +453,17 @@ function dispose(id) {
     const s = sessions.get(id); if (!s) return;
     s.observer?.disconnect(); s.terminal?.dispose(); s.element.remove(); sessions.delete(id);
 }
+function showDirectory(s, cwd) {
+    s.cwd = cwd;
+    const label = cwd || 'Current directory unavailable';
+    s.element.querySelector('.card-directory span').textContent = label;
+    s.element.querySelector('.card-directory').title = label;
+}
 async function start(card, mode = card.session ? 'resume' : 'start') {
     const s = sessions.get(card.id);
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
-    s.terminal.reset(); fitTerminal(s); setStatus(card, 'starting');
+    s.terminal.reset(); fitTerminal(s); showDirectory(s, null); setStatus(card, 'starting');
     try {
         clearTimeout(autosaveTimer);
         await invoke('autosave', workspace);
@@ -461,7 +477,7 @@ async function start(card, mode = card.session ? 'resume' : 'start') {
         recoveryInfo(card); changed();
         if (s.status === 'starting') setStatus(card, 'running');
         s.terminal.focus();
-    } catch (error) { setStatus(card, 'idle', error.message); throw error; }
+    } catch (error) { showDirectory(s, card.cwd || 'Home directory'); setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
 function beginDrag(element, event, move, end) {
@@ -528,7 +544,10 @@ viewport.addEventListener('pointerdown', event => {
 });
 viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault(); const rect = viewport.getBoundingClientRect(); zoom(Math.exp(-event.deltaY * .002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+    event.preventDefault();
+    // Wheel events from a zoomed terminal carry coordinates rewritten for xterm; zoom around the real pointer.
+    const rect = viewport.getBoundingClientRect(), point = window.TerminalCanvasPointer?.clientPoint(event) ?? { x: event.clientX, y: event.clientY };
+    zoom(Math.exp(-event.deltaY * .002), { x: point.x - rect.left, y: point.y - rect.top });
 }, { passive: false });
 function openLaunch(profileId = 'shell') {
     if (!ready || document.querySelector('dialog[open]')) return;
@@ -664,6 +683,7 @@ if (bridge) {
             const card = workspace?.cards.find(c => c.id === event.id);
             if (card) {
                 if (s) s.metadataRevision++;
+                if (s && !event.initial && event.cwd !== card.cwd) s.cwd = event.cwd;
                 card.cwd = event.cwd;
                 if (event.session) card.session = event.session;
                 recoveryInfo(card); changed(); refresh();
@@ -673,6 +693,7 @@ if (bridge) {
             if (s?.terminal) s.terminal.write(event.data, () => bridge.acknowledge(event.id, event.data.length));
             else bridge.acknowledge(event.id, event.data.length);
         }
+        if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
         if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); setStatus(workspace.cards.find(c => c.id === event.id), 'exited'); }
         if (event.type === 'error') toast(event.message);
         if (event.type === 'closing') run(async () => {

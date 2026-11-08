@@ -12,11 +12,11 @@ function harness(options = {}) {
             onData(fn) { this.data = fn; return { dispose: () => this.disposed++ }; },
             onExit(fn) { this.exit = fn; return { dispose: () => this.disposed++ }; },
             write(data) { this.writes.push(data); }, resize(...size) { this.sizes.push(size); },
-            pause() { this.pauses++; }, resume() { this.resumes++; }, kill() { this.killed = true; }
+            pause() { this.pauses++; }, resume() { this.resumes++; }, kill() { this.killed = true; setImmediate(() => this.exit({ exitCode: 0 })); }
         };
         processes.push(p); return p;
     };
-    const manager = new TerminalManager({ spawn, emit: e => events.push(e), platform: 'win32', home: process.cwd(), env: { SystemRoot: 'C:\\Windows', ComSpec: 'cmd.exe', ELECTRON_RUN_AS_NODE: '1', SAMPLE: 'yes' }, ...options });
+    const manager = new TerminalManager({ spawn, emit: e => events.push(e), platform: 'win32', home: process.cwd(), watchCwd: () => ({ dispose() {} }), env: { SystemRoot: 'C:\\Windows', ComSpec: 'cmd.exe', ELECTRON_RUN_AS_NODE: '1', SAMPLE: 'yes' }, ...options });
     return { manager, events, processes, launches };
 }
 test('does not launch anything until explicitly started; sends selected command once', () => {
@@ -26,7 +26,7 @@ test('does not launch anything until explicitly started; sends selected command 
     manager.start(card, 100, 30);
     assert.deepEqual(processes[0].writes, ['codex\r']);
     assert.equal(launches[0][0], 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-    assert.deepEqual(launches[0][1], ['-NoLogo']);
+    assert.deepEqual(launches[0][1].slice(0, 5), ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand']);
     assert.equal(launches[0][2].env.ELECTRON_RUN_AS_NODE, undefined);
     assert.equal(launches[0][2].env.SAMPLE, 'yes');
     assert.equal(launches[0][2].cwd, process.cwd());
@@ -50,13 +50,25 @@ test('uses Windows PowerShell from SystemRoot for a plain terminal', () => {
     const result = manager.start(createCard());
     assert.equal(result.shell, 'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
     assert.equal(launches[0][0], result.shell);
-    assert.deepEqual(launches[0][1], ['-NoLogo']);
+    assert.deepEqual(launches[0][1].slice(0, 5), ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand']);
     assert.deepEqual(processes[0].writes, []);
 });
 
 test('falls back to the standard Windows PowerShell path without SystemRoot', () => {
     const { manager } = harness({ env: {} });
     assert.equal(manager.start(createCard()).shell, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+});
+
+test('allows local scripts such as npm.ps1 in PowerShell cards and plain PowerShell launchers', () => {
+    for (const command of ['', 'powershell', 'pwsh.exe']) {
+        const { manager, launches } = harness();
+        manager.start(createCard({ command }));
+        const args = launches[0][1];
+        assert.equal(args[args.indexOf('-ExecutionPolicy') + 1], 'RemoteSigned');
+    }
+    const { manager, launches } = harness();
+    manager.start(createCard({ command: 'cmd.exe' }));
+    assert.equal(launches[0][1].includes('-ExecutionPolicy'), false);
 });
 
 test('preserves the configured login shell and Bash fallback on other platforms', () => {
@@ -181,4 +193,96 @@ test('shutdown snapshots read the final hook update and reject another launch to
     assert.equal(manager.snapshot().get(card.id).session.provider, 'claude');
     assert.equal(cleaned, 1);
     assert.equal(manager.sessions.size, 0);
+});
+
+test('reports split prompt metadata independently without changing PTY bytes or input', () => {
+    const { manager, processes, events } = harness();
+    const a = createCard(), b = createCard(); manager.start(a); manager.start(b);
+    const chunks = ['output\x1b]9;', '9;D:\\A folder\\子\x1b', '\\after'];
+    chunks.forEach(chunk => processes[1].data(chunk));
+    assert.deepEqual(events.filter(e => e.type === 'cwd'), [{ type: 'cwd', id: b.id, cwd: 'D:\\A folder\\子' }]);
+    assert.deepEqual(events.filter(e => e.type === 'data').map(e => e.data), chunks);
+    assert.equal(manager.sessions.get(b.id).pending, chunks.join('').length);
+    processes[1].data('\x1b]9;9;\x07');
+    assert.equal(events.at(-1).cwd, null);
+    manager.write(a.id, 'cd "ignored input"\r');
+    assert.deepEqual(processes[0].writes, ['cd "ignored input"\r']);
+    assert.equal(events.filter(e => e.type === 'cwd').length, 2);
+});
+
+test('plain Windows shell launchers receive the matching integration', () => {
+    for (const command of ['pwsh', 'powershell.exe', 'cmd.exe']) {
+        const { manager, launches, processes } = harness();
+        manager.start(createCard({ command }));
+        assert.equal(launches[0][0], command === 'pwsh' ? 'pwsh.exe' : command);
+        assert.equal(launches[0][2].env.PROMPT, '$E]9;9;$P$E\\$P$G');
+        assert.deepEqual(processes[0].writes, []);
+        assert.equal(launches[0][1].includes('-NoExit'), command !== 'cmd.exe');
+    }
+});
+
+test('process lookups are scoped to sessions, disposed on exit, and ignored after restart', () => {
+    const watchers = [];
+    const { manager, processes, events } = harness({ platform: 'linux', watchCwd(pid, platform, report) {
+        const watcher = { pid, platform, report, disposed: false, dispose() { this.disposed = true; } };
+        watchers.push(watcher); return watcher;
+    } });
+    const a = createCard(), b = createCard(); manager.start(a); manager.start(b);
+    watchers[1].report('/folder with spaces'); watchers[1].report('/folder with spaces');
+    assert.deepEqual(events.filter(e => e.type === 'cwd'), [{ type: 'cwd', id: b.id, cwd: '/folder with spaces' }]);
+    assert.equal(manager.snapshot().get(b.id).cwd, '/folder with spaces');
+    assert.equal(watchers[1].pid, processes[1].pid);
+    processes[0].exit({ exitCode: 0 }); manager.start(a);
+    watchers[0].report('/stale');
+    assert.equal(events.filter(e => e.type === 'cwd').length, 1);
+    assert.equal(watchers[0].disposed, true);
+    manager.stopAll(); assert.ok(watchers.every(w => w.disposed));
+});
+
+test('shutdown waits for every killed PTY to finish native exit cleanup', async () => {
+    const { manager, processes } = harness();
+    manager.start(createCard()); manager.start(createCard());
+    for (const p of processes) p.kill = () => { p.killed = true; };
+    let finished = false;
+    const shutdown = manager.shutdown().then(() => { finished = true; });
+    assert.ok(processes.every(p => p.killed));
+    assert.equal(manager.sessions.size, 0);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(finished, false);
+    processes[0].exit({ exitCode: 0 });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(finished, false, 'the second PTY still owns native resources');
+    processes[1].exit({ exitCode: 0 });
+    await shutdown;
+    assert.equal(finished, true);
+});
+
+test('shutdown has a bounded fallback for a PTY that never reports exit', async () => {
+    const { manager, processes } = harness(); manager.start(createCard());
+    processes[0].kill = () => {};
+    await manager.shutdown(10);
+    assert.equal(manager.sessions.size, 0);
+});
+
+test('shutdown also waits for terminals stopped before the application closes', async () => {
+    const { manager, processes } = harness(); const card = createCard(); manager.start(card);
+    processes[0].kill = () => {};
+    manager.stop(card.id);
+    let finished = false;
+    const shutdown = manager.shutdown().then(() => { finished = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(finished, false);
+    processes[0].exit({ exitCode: 0 });
+    await shutdown;
+    assert.equal(manager.stopping.size, 0);
+});
+
+test('Windows directory reports retain the last valid recovery folder and AI conversation', () => {
+    const { manager, processes } = harness();
+    const card = { ...createCard(), session: savedSession }; manager.start(card);
+    processes[0].data('\x1b]9;9;D:\\changed folder\\子\x07');
+    assert.deepEqual(manager.snapshot().get(card.id), { cwd: 'D:\\changed folder\\子', session: savedSession });
+    processes[0].data('\x1b]7;\x07');
+    assert.equal(manager.snapshot().get(card.id).cwd, 'D:\\changed folder\\子');
+    manager.stopAll();
 });

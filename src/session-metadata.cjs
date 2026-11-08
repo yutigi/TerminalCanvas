@@ -9,8 +9,8 @@ function sessionMetadata(raw) {
 
 // Inspect a bounded rolling buffer; never save terminal text or infer IDs from unrelated files.
 class MetadataParser {
-    constructor({ cwd, onChange, onLaunch = () => {}, onEnd = () => {}, onWarning = () => {}, platform = process.platform }) {
-        Object.assign(this, { cwd, onChange, onLaunch, onEnd, onWarning, platform });
+    constructor({ cwd, onChange, onLaunch = () => {}, onEnd = () => {}, onWarning = () => {}, platform = process.platform, directories = true }) {
+        Object.assign(this, { cwd, onChange, onLaunch, onEnd, onWarning, platform, directories });
         this.buffer = '';
         this.text = '';
     }
@@ -29,7 +29,7 @@ class MetadataParser {
     }
     control(value) {
         try {
-            if (value.startsWith('7;file://')) {
+            if (this.directories && value.startsWith('7;file://')) {
                 const url = new URL(value.slice(2));
                 if (!url.hostname || url.hostname === 'localhost') {
                     const cwd = fileURLToPath(url, { windows: this.platform === 'win32' });

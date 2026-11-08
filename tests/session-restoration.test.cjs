@@ -141,6 +141,8 @@ test('integration files are per terminal and preserve the shell fallback on unsu
     const b = prepareIntegration({ folder, platform: 'linux', shell: '/bin/zsh' });
     assert.notEqual(a.sessionFile, b.sessionFile);
     assert.ok(a.args.includes('-EncodedCommand'));
+    assert.equal(a.args[a.args.indexOf('-ExecutionPolicy') + 1], 'RemoteSigned');
+    assert.equal(prepareIntegration({ folder, platform: 'win32', shell: 'cmd.exe' }), undefined);
     assert.equal(b.args, undefined);
     assert.ok(!JSON.stringify(a.env).includes('API_KEY'));
     a.cleanup(); b.cleanup();
@@ -183,6 +185,32 @@ test('the Windows Claude hook decodes Unicode directories as UTF-8', { skip: pro
 });
 
 const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : '/bin/bash';
+for (const executable of ['powershell.exe', 'pwsh.exe']) {
+    test(`${executable} AI integration preserves strict-mode custom prompts and native exit codes`, { skip: process.platform !== 'win32' }, t => {
+        const source = `Set-StrictMode -Version Latest
+            $ErrorActionPreference = 'Stop'
+            $ProgressPreference = 'SilentlyContinue'
+            Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Ignore
+            function global:prompt { "CUSTOM:$?>" }
+            ${powershellSource('unused-settings.json')}
+            Write-Error 'expected failure' -ErrorAction SilentlyContinue
+            $result = prompt
+            Write-Output ('RESULT=' + $result + ';EXISTS=' + ($null -ne (Get-Variable LASTEXITCODE -Scope Global -ErrorAction Ignore)))
+            $global:LASTEXITCODE = 37
+            Write-Error 'expected failure' -ErrorAction SilentlyContinue
+            $result = prompt
+            Write-Output ('RESULT2=' + $result + ';LAST=' + $global:LASTEXITCODE)`;
+        const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')], {
+            encoding: 'utf8', windowsHide: true, timeout: 15000
+        });
+        if (executable === 'pwsh.exe' && result.error?.code === 'ENOENT') return t.skip('PowerShell 7 is not installed.');
+        assert.equal(result.status, 0, result.error?.message || result.stderr);
+        assert.equal(result.stderr, '');
+        assert.match(result.stdout, /RESULT=CUSTOM:False>;EXISTS=False/);
+        assert.match(result.stdout, /RESULT2=CUSTOM:False>;LAST=37/);
+    });
+}
+
 test('integrated Bash loads login profiles before installing hooks and preserves existing prompt commands', { skip: !fs.existsSync(bash) }, t => {
     const folder = temporary(t);
     fs.writeFileSync(path.join(folder, '.bash_profile'), 'export TC_REVIEW_LOGIN=profile-loaded\n. "$HOME/.bashrc"\n');

@@ -1,20 +1,18 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { powershellArgs } = require('./terminal-cwd.cjs');
 const psQuote = value => "'" + value.replace(/'/g, "''") + "'";
 const shQuote = value => "'" + value.replace(/'/g, "'\\''") + "'";
 
 function powershellSource(settings) {
-    return `
+    // Share directory reporting with plain PowerShell cards, including strict-mode
+    // prompts, custom prompt output, provider locations and native exit status.
+    return Buffer.from(powershellArgs().at(-1), 'base64').toString('utf16le') + `
 function global:__tc_emit($event) {
     $json = ConvertTo-Json -Compress -InputObject $event
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
     [Console]::Write(([char]27).ToString() + ']633;TC;' + $encoded + [char]7)
-}
-$script:tcOriginalPrompt = $function:prompt
-function global:prompt {
-    if ((Get-Location).Provider.Name -eq 'FileSystem') { __tc_emit @{ type = 'cwd'; cwd = (Get-Location).ProviderPath } }
-    if ($script:tcOriginalPrompt) { & $script:tcOriginalPrompt } else { 'PS ' + (Get-Location) + '> ' }
 }
 function global:__tc_agent($provider, $arguments) {
     try {
@@ -84,6 +82,8 @@ fi
 
 // Intercept ordinary CLI launches without changing global CLI settings.
 function prepareIntegration({ folder, executable = process.execPath, platform = process.platform, shell }) {
+    // cmd uses its native PROMPT reports; PowerShell functions cannot run there.
+    if (platform === 'win32' && /^cmd(?:\.exe)?$/i.test(path.win32.basename(shell))) return undefined;
     fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
     const stem = path.join(folder, randomUUID());
     const sessionFile = `${stem}.json`, settings = `${stem}.settings.json`;
@@ -98,7 +98,7 @@ function prepareIntegration({ folder, executable = process.execPath, platform = 
     const script = `${stem}.${windows ? 'ps1' : 'bash'}`;
     fs.writeFileSync(script, source, { mode: 0o600 });
     let args, initializeCommand;
-    if (windows) args = ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')];
+    if (windows) args = ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')];
     else if (path.basename(shell) === 'bash') {
         // Login profiles keep control of environment setup and whether .bashrc is sourced.
         // Queue integration as the first input command, after Bash finishes those profiles.
