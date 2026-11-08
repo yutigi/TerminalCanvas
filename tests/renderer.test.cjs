@@ -47,7 +47,7 @@ class Element {
     showModal() { this.open = true; }
     close() { this.open = false; }
 }
-async function boot(workspace) {
+async function boot(workspace, { initialized = true } = {}) {
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
@@ -57,7 +57,7 @@ async function boot(workspace) {
     const bridge = {
         async invoke(action, payload) {
             calls.push({ action, payload });
-            if (action === 'initialize') return { workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform: 'win32' };
+            if (action === 'initialize') return initialized ? { workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform: 'win32' } : new Promise(() => {});
             return { ok: true };
         },
         onEvent() {}, resize() {}, acknowledge() {}, input() {}
@@ -83,6 +83,15 @@ test('renderer initializes an empty workspace and enables the launch dialog', as
     assert.deepEqual(calls.map(c => c.action), ['initialize']);
     assert.equal(elements.get('#minimap').hidden, true);
     assert.equal(elements.get('#minimap-toggle').disabled, true);
+});
+
+test('canvas input before the workspace loads is ignored instead of throwing', async () => {
+    const { elements } = await boot(createWorkspace(), { initialized: false });
+    const viewport = elements.get('#viewport');
+    viewport.dispatch('wheel', { ctrlKey: true, deltaY: -100 });
+    viewport.dispatch('pointerdown', { target: viewport });
+    viewport.dispatch('pointerdown', { target: viewport, shiftKey: true });
+    assert.equal(viewport.captured.size, 0);
 });
 
 test('minimap tracks selection, zoom, card geometry, visibility, and focus mode', async () => {

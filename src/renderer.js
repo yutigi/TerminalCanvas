@@ -476,7 +476,7 @@ viewport.addEventListener('pointerdown', event => {
     beginCreate(event);
 }, true);
 viewport.addEventListener('pointerdown', event => {
-    if (focused || event.target.closest('button') || onCanvasChrome(event.target)) return;
+    if (!ready || focused || event.target.closest('button') || onCanvasChrome(event.target)) return;
     const empty = event.target === viewport || event.target === world || !!event.target.closest('.empty-state');
     if (event.button !== 1 && !(event.button === 0 && (hand || empty))) return;
     if (event.button === 0 && event.shiftKey && !hand) {
@@ -506,7 +506,9 @@ viewport.addEventListener('pointerdown', event => {
 });
 viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault(); const rect = viewport.getBoundingClientRect(); zoom(Math.exp(-event.deltaY * .002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+    event.preventDefault();
+    if (!ready) return;
+    const rect = viewport.getBoundingClientRect(); zoom(Math.exp(-event.deltaY * .002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
 }, { passive: false });
 function openLaunch(profileId = 'shell') {
     if (!ready || document.querySelector('dialog[open]')) return;

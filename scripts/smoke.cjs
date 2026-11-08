@@ -31,6 +31,42 @@ async function captureScreenshot(win) {
     }
 }
 exports.captureScreenshot = captureScreenshot;
+// Native input and executeJavaScript travel on separate channels, so a script can run before earlier
+// input reaches the page. Wait until the renderer has dispatched the last event, and its handlers ran.
+// Pointer events stand in for mouse buttons because a canceled pointerdown suppresses mousedown/mouseup.
+const DOM_EVENTS = Object.freeze({ mouseDown: 'pointerdown', mouseUp: 'pointerup', keyDown: 'keydown', keyUp: 'keyup' });
+function inputWaiter(events) {
+    const last = events.at(-1);
+    const type = DOM_EVENTS[last.type];
+    if (!type) throw new Error(`Native input must end with one of: ${Object.keys(DOM_EVENTS).join(', ')}.`);
+    const count = events.filter(event => event.type === last.type).length;
+    const point = 'x' in last ? { x: last.x, y: last.y } : null;
+    return `window.__smokeInput = new Promise((resolve, reject) => {
+        const point = ${JSON.stringify(point)};
+        let seen = 0;
+        const done = () => { window.removeEventListener(${JSON.stringify(type)}, listener, true); clearTimeout(timer); };
+        const listener = event => {
+            // Ignore stray pointer input, such as the real mouse moving over the smoke window.
+            if (point && (Math.abs(event.clientX - point.x) > 1 || Math.abs(event.clientY - point.y) > 1)) return;
+            if (++seen === ${count}) { done(); setTimeout(resolve, 0); }
+        };
+        const timer = setTimeout(() => { done(); reject(new Error('Native ${type} did not reach the renderer.')); }, 5000);
+        window.addEventListener(${JSON.stringify(type)}, listener, true);
+    }); undefined`;
+}
+async function sendInput(win, events) {
+    await win.webContents.executeJavaScript(inputWaiter(events));
+    for (const event of events) win.webContents.sendInputEvent(event);
+    await win.webContents.executeJavaScript('window.__smokeInput');
+}
+const click = (point, modifiers = []) => [
+    { type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1, modifiers },
+    { type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1, modifiers }
+];
+const key = (keyCode, modifiers = [], char = false) => [
+    { type: 'keyDown', keyCode, modifiers }, ...(char ? [{ type: 'char', keyCode, modifiers }] : []), { type: 'keyUp', keyCode, modifiers }
+];
+exports.inputWaiter = inputWaiter;
 exports.run = async ({ app, win, terminals, createCard }) => {
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError|Content Security Policy/.test(message || '')) errors.push(message); });
@@ -57,10 +93,11 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     assert.equal(overview.hidden, false);
     assert.equal(overview.cards, 4);
     assert.equal(overview.overlap, false, 'minimap must not cover canvas tools');
-    win.webContents.sendInputEvent({ type: 'mouseDown', x: overview.x, y: overview.y, button: 'left', clickCount: 1 });
-    win.webContents.sendInputEvent({ type: 'mouseMove', x: overview.x - 20, y: overview.y - 10 });
-    win.webContents.sendInputEvent({ type: 'mouseUp', x: overview.x - 20, y: overview.y - 10, button: 'left', clickCount: 1 });
-    // A renderer round trip flushes the preceding native input events.
+    await sendInput(win, [
+        { type: 'mouseDown', x: overview.x, y: overview.y, button: 'left', clickCount: 1 },
+        { type: 'mouseMove', x: overview.x - 20, y: overview.y - 10 },
+        { type: 'mouseUp', x: overview.x - 20, y: overview.y - 10, button: 'left', clickCount: 1 }
+    ]);
     const navigation = await win.webContents.executeJavaScript('({ x: workspace.camera.x, z: workspace.camera.z, dragging: !!minimapDrag })');
     assert.notEqual(navigation.x, overview.cameraX);
     assert.equal(navigation.z, .65);
@@ -82,14 +119,11 @@ exports.run = async ({ app, win, terminals, createCard }) => {
                 const rect = sessions.get(workspace.cards[${index}].id).element.querySelector('.xterm-screen').getBoundingClientRect();
                 return { x: Math.round(rect.left + 30), y: Math.round(rect.top + 30) };
             })()`);
-            win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
-            win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+            await sendInput(win, click(point));
             assert.equal(await win.webContents.executeJavaScript(`document.activeElement === sessions.get(workspace.cards[${index}].id).terminal.textarea`), true,
                 'one click must focus the terminal input');
             const before = inputs.length;
-            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K' });
-            win.webContents.sendInputEvent({ type: 'char', keyCode: 'k' });
-            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K' });
+            await sendInput(win, [{ type: 'keyDown', keyCode: 'K' }, { type: 'char', keyCode: 'k' }, { type: 'keyUp', keyCode: 'K' }]);
             const inputDeadline = Date.now() + 2000;
             while (!inputs.slice(before).some(input => input.id === inputCards[index].id && input.data === 'k')) {
                 if (Date.now() > inputDeadline) throw new Error('First-click keyboard input did not reach the selected PTY.');
@@ -132,26 +166,17 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         return { ...point, hit: document.elementFromPoint(point.x, point.y)?.getAttribute('class') };
     })()`);
     assert.equal(wirePoint.hit, 'line-hit', 'connector strokes outside the 1px SVG box must receive pointer events');
-    win.webContents.sendInputEvent({ type: 'mouseDown', x: wirePoint.x, y: wirePoint.y, button: 'left', clickCount: 1 });
-    win.webContents.sendInputEvent({ type: 'mouseUp', x: wirePoint.x, y: wirePoint.y, button: 'left', clickCount: 1 });
+    await sendInput(win, click(wirePoint));
     assert.deepEqual(await win.webContents.executeJavaScript('[...selection]'), ['wire']);
     const empty = await win.webContents.executeJavaScript(`(() => { ${toScreen} setTool('note'); return toScreen({ x: 160, y: 700 }); })()`);
-    win.webContents.sendInputEvent({ type: 'mouseDown', ...empty, button: 'left', clickCount: 1 });
-    win.webContents.sendInputEvent({ type: 'mouseUp', ...empty, button: 'left', clickCount: 1 });
+    await sendInput(win, click(empty));
     assert.equal(await win.webContents.executeJavaScript('document.activeElement?.className'), 'item-editor', 'a new sticky note opens for typing');
-    for (const key of ['O', 'k']) {
-        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: key });
-        win.webContents.sendInputEvent({ type: 'char', keyCode: key });
-        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: key });
-    }
-    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
-    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await sendInput(win, [...key('O', [], true), ...key('k', [], true), ...key('Escape')]);
     const created = await win.webContents.executeJavaScript('({ item: workspace.items.at(-1), editing, tool: activeTool })');
     assert.deepEqual({ type: created.item.type, text: created.item.text, editing: created.editing, tool: created.tool }, { type: 'note', text: 'Ok', editing: null, tool: 'select' },
         'typing reaches the note editor without triggering tool shortcuts');
     await win.webContents.executeJavaScript('select("box"); select("ring", { additive: true })');
-    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'G', modifiers: ['control'] });
-    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'G', modifiers: ['control'] });
+    await sendInput(win, key('G', ['control']));
     const grouped = await win.webContents.executeJavaScript('({ box: findItem("box").group, ring: findItem("ring").group, box2: !document.querySelector("#selection-box").hidden })');
     assert.ok(grouped.box && grouped.box === grouped.ring && grouped.box2, 'Ctrl+G groups the selection');
     // Everything the renderer builds must pass the desktop host's validation, or autosave would fail.
