@@ -28,8 +28,19 @@ test('lines resolve free points and attached elements', () => {
     assert.equal(free.end.x, 0, 'attached end sits on the border facing the free point');
 });
 
+test('nested groups select as their outermost group and unwrap one level at a time', () => {
+    const elements = [{ id: 'a', groups: ['outer', 'inner'] }, { id: 'b', groups: ['outer', 'inner'] }, { id: 'c', groups: ['outer'] }, { id: 'd' }];
+    assert.deepEqual([...G.expandGroups(new Set(['a']), elements)].sort(), ['a', 'b', 'c'], 'an inner member selects the whole outer group');
+    assert.deepEqual([...G.selectionUnits(elements)].sort(), ['element:d', 'outer']);
+    assert.deepEqual(G.groupPaths(elements, 'top'), [['top', 'outer', 'inner'], ['top', 'outer', 'inner'], ['top', 'outer'], ['top']]);
+    assert.deepEqual(G.ungroupPaths(elements), [['inner'], ['inner'], [], []]);
+    const afterUngroup = elements.map((e, i) => ({ ...e, groups: G.ungroupPaths(elements)[i] }));
+    assert.deepEqual([...G.expandGroups(new Set(['a']), afterUngroup)].sort(), ['a', 'b'], 'the inner group survives');
+    assert.deepEqual(G.pruneGroupPaths([{ id: 'a', groups: ['g', 'solo'] }, { id: 'b', groups: ['g'] }, { id: 'c', groups: ['lonely'] }]), [['g'], ['g'], []]);
+});
+
 test('groups expand to every member and leave ungrouped elements alone', () => {
-    const elements = [{ id: 'a', group: 'g1' }, { id: 'b', group: 'g1' }, { id: 'c' }, { id: 'd', group: 'g2' }];
+    const elements = [{ id: 'a', groups: ['g1'] }, { id: 'b', groups: ['g1'] }, { id: 'c' }, { id: 'd', groups: ['g2'] }];
     assert.deepEqual([...G.expandGroups(new Set(['a']), elements)].sort(), ['a', 'b']);
     assert.deepEqual([...G.expandGroups(new Set(['c']), elements)], ['c']);
     assert.deepEqual([...G.expandGroups(new Set(['b', 'd']), elements)].sort(), ['a', 'b', 'd']);

@@ -236,7 +236,8 @@ function applySelection(raise, focusTerminal = raise) {
 function renderSelectionBox() {
     const box = $('#selection-box');
     const chosen = [...selection].map(findElement).filter(Boolean);
-    const grouped = chosen.length > 0 && chosen.every(e => e.group && e.group === chosen[0].group);
+    const outer = chosen.length ? Geometry.outerGroup(chosen[0]) : null;
+    const grouped = !!outer && chosen.every(e => Geometry.outerGroup(e) === outer);
     if (chosen.length < 2 && !grouped) { box.hidden = true; return; }
     const b = Geometry.unionBounds(chosen.map(boundsOf));
     Object.assign(box.style, { left: `${b.x - 8}px`, top: `${b.y - 8}px`, width: `${b.w + 16}px`, height: `${b.h + 16}px` });
@@ -273,15 +274,21 @@ function startMove(event, id, handle) {
         renderLines(); renderSelectionBox();
     }, moved => { if (moved) { renderMinimap(); changed(); } });
 }
+// Grouping wraps whole groups in a new outer group; ungrouping removes only the outermost level.
 function groupSelection() {
     const chosen = [...selection].map(findElement).filter(Boolean);
-    if (chosen.length < 2) return toast('Select two or more items to group them.');
-    const group = newId();
-    for (const e of chosen) e.group = group;
+    if (Geometry.selectionUnits(chosen).size < 2) return toast('Select two or more items or groups to group them.');
+    if (chosen.some(e => (e.groups?.length || 0) >= GROUP_DEPTH)) return toast(`Groups can be nested up to ${GROUP_DEPTH} levels deep.`);
+    const paths = Geometry.groupPaths(chosen, newId());
+    chosen.forEach((e, index) => setGroups(e, paths[index]));
     renderSelectionBox(); changed();
 }
 function ungroupSelection() {
-    for (const e of [...selection].map(findElement)) if (e) delete e.group;
+    const chosen = [...selection].map(findElement).filter(e => e?.groups);
+    if (!chosen.length) return;
+    const paths = Geometry.ungroupPaths(chosen);
+    chosen.forEach((e, index) => setGroups(e, paths[index]));
+    pruneGroups();
     renderSelectionBox(); changed();
 }
 // Keyboard deletion never closes terminals; their close button handles running processes.
@@ -412,6 +419,7 @@ function mount(card) {
             if (focused === card.id) setFocus(null);
             detachConnectors([card.id]);
             dispose(card.id); workspace.cards = workspace.cards.filter(c => c.id !== card.id);
+            pruneGroups();
             selection.delete(card.id);
             if (selected === card.id) selected = [...selection].at(-1) ?? null;
             renderLines(); applySelection(false); changed();
@@ -542,6 +550,11 @@ function loadWorkspace(board) {
     if (editing) document.activeElement?.blur();
     workspace = board;
     workspace.items = Array.isArray(board.items) ? board.items : [];
+    // The browser preview stores unvalidated layouts, which may still use format 2's single group.
+    for (const e of [...workspace.cards, ...workspace.items]) {
+        if (e.group && !e.groups) e.groups = [e.group];
+        delete e.group;
+    }
     setFocus(null);
     for (const id of sessions.keys()) dispose(id);
     for (const id of [...itemViews.keys()]) disposeItem(id);

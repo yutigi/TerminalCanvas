@@ -177,7 +177,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         'typing reaches the note editor without triggering tool shortcuts');
     await win.webContents.executeJavaScript('select("box"); select("ring", { additive: true })');
     await sendInput(win, key('G', ['control']));
-    const grouped = await win.webContents.executeJavaScript('({ box: findItem("box").group, ring: findItem("ring").group, box2: !document.querySelector("#selection-box").hidden })');
+    const grouped = await win.webContents.executeJavaScript('({ box: findItem("box").groups?.[0], ring: findItem("ring").groups?.[0], box2: !document.querySelector("#selection-box").hidden })');
     assert.ok(grouped.box && grouped.box === grouped.ring && grouped.box2, 'Ctrl+G groups the selection');
     // Everything the renderer builds must pass the desktop host's validation, or autosave would fail.
     const saved = validateWorkspace(await win.webContents.executeJavaScript('JSON.parse(JSON.stringify(workspace))'));

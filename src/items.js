@@ -5,6 +5,7 @@ const Geometry = window.TerminalCanvasGeometry;
 const itemViews = new Map();
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ITEM_LIMIT = 1000;
+const GROUP_DEPTH = 8;
 const CREATION_TOOLS = Object.freeze(['text', 'note', 'rect', 'ellipse', 'frame', 'line', 'arrow']);
 const ITEM_DEFAULTS = Object.freeze({
     text: { w: 220, h: 40, min: [40, 24] },
@@ -36,7 +37,16 @@ function boundsOf(e) {
     return Geometry.boundsOfPoints([start, end]);
 }
 function elementRecords() {
-    return [...workspace.cards, ...workspace.items].map(e => ({ id: e.id, group: e.group, bounds: boundsOf(e), z: zOf(e.id), line: e.type === 'line' }));
+    return [...workspace.cards, ...workspace.items].map(e => ({ id: e.id, groups: e.groups, bounds: boundsOf(e), z: zOf(e.id), line: e.type === 'line' }));
+}
+function setGroups(e, path) {
+    if (path.length) e.groups = path;
+    else delete e.groups;
+}
+// Removing elements can leave a group with one member; such a group no longer groups anything.
+function pruneGroups() {
+    const elements = [...workspace.cards, ...workspace.items];
+    Geometry.pruneGroupPaths(elements).forEach((path, index) => setGroups(elements[index], path));
 }
 function attachableAt(point, exclude) {
     return Geometry.topmostAt(point, elementRecords().filter(r => !r.line && r.id !== exclude))?.id || null;
@@ -151,6 +161,7 @@ function removeItems(ids) {
     detachConnectors(targets);
     for (const id of targets) { disposeItem(id); selection.delete(id); }
     workspace.items = workspace.items.filter(item => !targets.includes(item.id));
+    pruneGroups();
     if (targets.includes(selected)) selected = [...selection].at(-1) ?? null;
     applySelection(); renderLines(); changed();
 }

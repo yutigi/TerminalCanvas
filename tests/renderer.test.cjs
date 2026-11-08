@@ -271,7 +271,7 @@ test('grouped items select and move together until ungrouped', async () => {
     const { context } = await boot(workspace);
     vm.runInContext('select("a"); select("b", { additive: true }); groupSelection(); setSelection([]); select("a")', context);
     assert.deepEqual(json(context, '[...selection].sort()'), ['a', 'b']);
-    assert.equal(json(context, 'workspace.items[0].group'), json(context, 'workspace.items[1].group'));
+    assert.deepEqual(json(context, 'workspace.items[0].groups'), json(context, 'workspace.items[1].groups'));
     const element = vm.runInContext('itemViews.get("a").element', context);
     element.dispatch('pointerdown', { clientX: 10, clientY: 10 });
     element.dispatch('pointermove', { clientX: 110, clientY: 60 });
@@ -279,13 +279,31 @@ test('grouped items select and move together until ungrouped', async () => {
     assert.deepEqual(json(context, 'workspace.items.map(i => [i.x, i.y])'), [[100, 50], [400, 50], [600, 0]]);
     vm.runInContext('ungroupSelection(); select("a")', context);
     assert.deepEqual(json(context, '[...selection]'), ['a']);
-    assert.equal(json(context, 'workspace.items.some(i => i.group)'), false);
+    assert.equal(json(context, 'workspace.items.some(i => i.groups)'), false);
+});
+test('grouping groups nests them, and ungrouping unwraps one level at a time', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push(note('a', 0, 0), note('b', 300, 0), note('c', 600, 0), note('d', 900, 0));
+    const { elements, context } = await boot(workspace);
+    vm.runInContext('select("a"); select("b", { additive: true }); groupSelection()', context);
+    const inner = json(context, 'workspace.items[0].groups[0]');
+    vm.runInContext('select("a"); groupSelection()', context);
+    assert.match(elements.get('#toast').textContent, /two or more items or groups/, 'one group alone is not grouped again');
+    vm.runInContext('select("c", { additive: true }); groupSelection(); setSelection([]); select("b")', context);
+    assert.deepEqual(json(context, '[...selection].sort()'), ['a', 'b', 'c'], 'a nested member selects the whole outer group');
+    const outer = json(context, 'workspace.items[2].groups[0]');
+    assert.deepEqual(json(context, 'workspace.items.map(i => i.groups)'), [[outer, inner], [outer, inner], [outer], null]);
+    vm.runInContext('ungroupSelection(); setSelection([]); select("a")', context);
+    assert.deepEqual(json(context, '[...selection].sort()'), ['a', 'b'], 'the inner group remains after one ungroup');
+    assert.deepEqual(json(context, 'workspace.items.map(i => i.groups)'), [[inner], [inner], null, null]);
+    vm.runInContext('select("b"); deleteSelection()', context);
+    assert.equal(json(context, 'workspace.items.some(i => i.groups)'), false, 'a group left with one member is removed');
 });
 test('clicking a grouped terminal still focuses it for typing, while Shift additions do not', async () => {
     const workspace = createWorkspace();
-    const card = { ...createCard(), group: 'pair' };
+    const card = { ...createCard(), groups: ['pair'] };
     workspace.cards.push(card);
-    workspace.items.push(note('a', 900, 0, { group: 'pair' }), note('b', 1300, 0));
+    workspace.items.push(note('a', 900, 0, { groups: ['pair'] }), note('b', 1300, 0));
     const { elements, context } = await boot(workspace);
     vm.runInContext('for (const s of sessions.values()) { s.status = "running"; s.focusCount = 0; s.terminal = { focus() { s.focusCount++; } }; }', context);
     const cardElement = elements.get('#world').children[0];
