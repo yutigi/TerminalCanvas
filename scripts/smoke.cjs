@@ -54,7 +54,19 @@ function inputWaiter(events) {
         window.addEventListener(${JSON.stringify(type)}, listener, true);
     }); undefined`;
 }
+// Native keys reach the focused element only while the page has focus, and another window (or the person
+// using the machine) can take it mid-run. Take it back before each batch of input.
+async function ensureFocus(win, attempts = 20) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        if (await win.webContents.executeJavaScript('document.hasFocus()')) return;
+        win.focus(); win.webContents.focus();
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error('The smoke window could not take focus for native input.');
+}
+exports.ensureFocus = ensureFocus;
 async function sendInput(win, events) {
+    await ensureFocus(win);
     await win.webContents.executeJavaScript(inputWaiter(events));
     for (const event of events) win.webContents.sendInputEvent(event);
     await win.webContents.executeJavaScript('window.__smokeInput');

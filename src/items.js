@@ -299,7 +299,7 @@ function finishEditing(id) {
     // Typing refits a label as it goes; an edit that ends with the original text keeps the original height.
     if (item.type === 'text') {
         if (edited) fitTextHeight(item, view.editor);
-        else if (session.h) item.h = session.h;
+        else if (session.h && item.h !== session.h) { item.h = session.h; renderItem(item); renderLines(); renderSelectionBox(); }
     }
     view.editor.remove(); view.editor = null;
     view.text.hidden = false; view.element.classList.remove('editing');

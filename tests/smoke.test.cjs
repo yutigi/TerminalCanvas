@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { hasOutputLine, captureScreenshot, inputWaiter } = require('../scripts/smoke.cjs');
+const { hasOutputLine, captureScreenshot, inputWaiter, ensureFocus } = require('../scripts/smoke.cjs');
 
 test('smoke recognizes Windows output followed by cursor positioning and a prompt', () => {
     const output = '\x1b[?25lC:\\project>echo marker\r\nmarker\x1b[7;1HC:\\project>\x1b[?25h';
@@ -112,4 +112,26 @@ test('smoke input counts repeated final events and times out when input never ar
     await lost.flush();
     assert.equal(lost.state(), 'Native keyup did not reach the renderer.');
     assert.throws(() => inputWaiter([{ type: 'mouseMove', x: 0, y: 0 }]), /must end with/);
+});
+
+function focusWindow(focusedAfter) {
+    const calls = { checks: 0, focus: 0 };
+    return {
+        calls,
+        focus() { calls.focus++; },
+        webContents: {
+            async executeJavaScript(code) { assert.equal(code, 'document.hasFocus()'); return ++calls.checks > focusedAfter; },
+            focus() {}
+        }
+    };
+}
+
+test('smoke input takes focus back when another window took it', async () => {
+    const focused = focusWindow(0);
+    await ensureFocus(focused);
+    assert.deepEqual(focused.calls, { checks: 1, focus: 0 }, 'a focused window is left alone');
+    const lost = focusWindow(2);
+    await ensureFocus(lost);
+    assert.deepEqual(lost.calls, { checks: 3, focus: 2 });
+    await assert.rejects(ensureFocus(focusWindow(Infinity), 3), /could not take focus/);
 });

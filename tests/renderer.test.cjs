@@ -829,7 +829,9 @@ test('ending a text label edit with its original text keeps its original height'
     const workspace = createWorkspace();
     workspace.items.push({ id: 't', type: 'text', x: 0, y: 0, w: 220, h: 40, text: 'Short' });
     const { context } = await boot(workspace);
-    vm.runInContext('startEditing("t"); workspace.items[0].h = 300', context);
+    vm.runInContext('startEditing("t"); workspace.items[0].h = 300; var redrawn = 0; const drawLines = renderLines; renderLines = () => { redrawn++; drawLines(); }', context);
     vm.runInContext('itemViews.get("t").editor', context).blur();
     assert.deepEqual(json(context, '[workspace.items[0].h, boardHistory.undo.length]'), [40, 0]);
+    assert.equal(json(context, 'itemViews.get("t").element.style.height'), '40px');
+    assert.equal(json(context, 'redrawn'), 1, 'connectors attached to the label follow its restored height');
 });
