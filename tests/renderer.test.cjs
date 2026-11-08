@@ -609,3 +609,11 @@ test('image cleanup keeps images used by the workspace, history, and clipboard, 
     assert.match(elements.get('#toast').textContent, /finish importing/);
     assert.equal(calls.filter(c => c.action === 'unused-images').length, 3, 'no request while an import is in progress');
 });
+test('layouts saved by the browser preview in format 2 load their single groups as group paths', async () => {
+    const workspace = { ...createWorkspace(), version: 2 };
+    workspace.items.push(note('a', 0, 0, { group: 'pair' }), note('b', 300, 0, { group: 'pair' }));
+    const { context } = await boot(workspace);
+    assert.deepEqual(json(context, 'workspace.items.map(i => [i.groups, "group" in i])'), [[['pair'], false], [['pair'], false]]);
+    vm.runInContext('select("a")', context);
+    assert.deepEqual(json(context, '[...selection].sort()'), ['a', 'b']);
+});
