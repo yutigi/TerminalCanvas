@@ -18,6 +18,33 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     }
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
+    const overviewCards = ['shell', 'claude', 'codex', 'gemini'].map((profile, index) => createCard({
+        profile, title: ['Project shell', 'Backend agent', 'Frontend agent', 'Review agent'][index],
+        x: index % 2 * 700, y: Math.floor(index / 2) * 470
+    }));
+    await win.webContents.executeJavaScript(`loadWorkspace(${JSON.stringify({ version: 1, name: 'Minimap smoke workspace', camera: { x: 50, y: 40, z: .65 }, cards: overviewCards })}); select(workspace.cards[0].id);`);
+    const overview = await win.webContents.executeJavaScript(`(() => {
+        const map = document.querySelector('#minimap-map').getBoundingClientRect();
+        const toolbar = document.querySelector('.canvas-toolbar').getBoundingClientRect();
+        const panel = document.querySelector('#minimap').getBoundingClientRect();
+        return { hidden: document.querySelector('#minimap').hidden, cards: document.querySelectorAll('.minimap-card').length,
+            overlap: panel.left < toolbar.right && panel.right > toolbar.left && panel.top < toolbar.bottom && panel.bottom > toolbar.top,
+            x: Math.round(map.left + 175), y: Math.round(map.top + 60), cameraX: workspace.camera.x };
+    })()`);
+    assert.equal(overview.hidden, false);
+    assert.equal(overview.cards, 4);
+    assert.equal(overview.overlap, false, 'minimap must not cover canvas tools');
+    win.webContents.sendInputEvent({ type: 'mouseDown', x: overview.x, y: overview.y, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: overview.x - 20, y: overview.y - 10 });
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: overview.x - 20, y: overview.y - 10, button: 'left', clickCount: 1 });
+    // A renderer round trip flushes the preceding native input events.
+    const navigation = await win.webContents.executeJavaScript('({ x: workspace.camera.x, z: workspace.camera.z, dragging: !!minimapDrag })');
+    assert.notEqual(navigation.x, overview.cameraX);
+    assert.equal(navigation.z, .65);
+    assert.equal(navigation.dragging, false);
+    await win.webContents.executeJavaScript('setFocus(workspace.cards[0].id)');
+    assert.equal(await win.webContents.executeJavaScript('document.querySelector("#minimap").hidden'), true);
+    await win.webContents.executeJavaScript('setFocus(null); fitCanvas()');
     const card = createCard({ title: 'Smoke terminal', cwd: app.getPath('home') });
     const marker = `terminal-canvas-${Date.now()}`;
     const originalEmit = terminals.emit;
@@ -44,7 +71,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         const screenshot = path.resolve(__dirname, '../.cache/smoke.png');
         await fs.mkdir(path.dirname(screenshot), { recursive: true });
         await fs.writeFile(screenshot, (await win.webContents.capturePage()).toPNG());
-        console.log(`Desktop smoke passed: renderer, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
+        console.log(`Desktop smoke passed: renderer, minimap navigation, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
     } finally { terminals.emit = originalEmit; terminals.stopAll(); }
     app.quit();
 };

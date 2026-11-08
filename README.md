@@ -33,6 +33,7 @@ For a dependency-free **layout preview**, run `npm run dev` and visit [localhost
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
+- Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
 - Use the card's stop/start controls to end or relaunch its shell. Closing a running card asks before stopping it.
 - Copy/paste with Ctrl + Shift + C/V. Ctrl + C remains the shell interrupt. Paste respects the terminal's bracketed-paste mode.
 
@@ -59,10 +60,10 @@ Restored cards are stopped until explicitly started. A saved command is never ex
 | `npm run dev` | Serve the layout preview on loopback port 4174 |
 | `npm run rebuild` | Verify the Windows native binary in Electron, or rebuild when needed |
 | `npm run check` | Check JavaScript syntax and the package manifest |
-| `npm test` | Run dependency-free workspace, terminal-manager, rebuild, renderer, and smoke-output tests |
-| `npm run test:smoke` | Check the desktop renderer, real PTY output, resize, and cleanup; save `.cache/smoke.png` |
+| `npm test` | Run dependency-free workspace, minimap, terminal-manager, rebuild, renderer, and smoke-output tests |
+| `npm run test:smoke` | Check the desktop renderer, minimap navigation, real PTY output, resize, and cleanup; save `.cache/smoke.png` |
 | `npm run build` | Package an unsigned Windows portable executable in `release/` |
 
-Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Windows validation passed syntax checks, all 21 automated tests, the default rebuild command, and the desktop smoke test. The smoke test emitted a node-pty `AttachConsole failed` message during terminal shutdown despite completing successfully; shutdown diagnostics need further investigation. Forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. Packaging remains unverified.
+Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Windows validation passed syntax checks, all 30 automated tests, the default rebuild command, and the desktop smoke test. The smoke test emitted a node-pty `AttachConsole failed` message during terminal shutdown despite completing successfully; shutdown diagnostics need further investigation. Forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. Packaging remains unverified.
 
 Source lives in `src/`, scripts in `scripts/`, tests in `tests/`, and design notes in [docs/architecture.md](docs/architecture.md). `AGENTS.md` is preserved as requested; this README records the tooling added since that guide was created.

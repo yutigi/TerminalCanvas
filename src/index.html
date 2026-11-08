@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="./styles.css">
     <script src="../node_modules/@xterm/xterm/lib/xterm.js" defer></script>
     <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js" defer></script>
+    <script src="./minimap.js" defer></script>
     <script src="./renderer.js" defer></script>
 </head>
 <body>
@@ -46,7 +47,14 @@
                 <button id="empty-add" class="button primary"><span data-icon="plus"></span>Create your first terminal<span class="shortcut-key">Ctrl ⇧ N</span></button>
                 <div class="empty-features"><span><span data-icon="terminal"></span>Real interactive shells</span><span><span data-icon="move"></span>An open canvas</span><span><span data-icon="lock"></span>Stored locally</span></div>
             </div>
-            <div class="canvas-toolbar" role="toolbar" aria-label="Canvas tools"><button id="select-tool" class="active" title="Select terminals" aria-label="Select terminals"><span data-icon="pointer"></span></button><button id="hand-tool" title="Pan canvas" aria-label="Pan canvas"><span data-icon="hand"></span></button><span class="bar-divider"></span><button id="zoom-out" aria-label="Zoom out"><span data-icon="minus"></span></button><button id="zoom-reset" title="Reset zoom">100%</button><button id="zoom-in" aria-label="Zoom in"><span data-icon="plus"></span></button></div>
+            <div class="canvas-toolbar" role="toolbar" aria-label="Canvas tools"><button id="select-tool" class="active" title="Select terminals" aria-label="Select terminals"><span data-icon="pointer"></span></button><button id="hand-tool" title="Pan canvas" aria-label="Pan canvas"><span data-icon="hand"></span></button><span class="bar-divider"></span><button id="zoom-out" aria-label="Zoom out"><span data-icon="minus"></span></button><button id="zoom-reset" title="Reset zoom">100%</button><button id="zoom-in" aria-label="Zoom in"><span data-icon="plus"></span></button><span class="bar-divider"></span><button id="minimap-toggle" title="Toggle minimap" aria-label="Show minimap" aria-controls="minimap" aria-pressed="true"><span data-icon="canvas"></span></button></div>
+            <aside id="minimap" class="minimap" aria-label="Canvas overview" hidden>
+                <div class="minimap-heading"><span>MINIMAP</span><span>Click or drag</span></div>
+                <div id="minimap-map" class="minimap-map" tabindex="0" role="group" aria-label="Navigate canvas. Click or drag to pan; arrow keys move the view." title="Click or drag to navigate · Arrow keys to pan">
+                    <div id="minimap-cards" aria-hidden="true"></div>
+                    <div id="minimap-viewport" class="minimap-viewport" aria-hidden="true"></div>
+                </div>
+            </aside>
             <button id="exit-focus" class="button exit-focus" hidden><span data-icon="minimize"></span>Back to canvas<span>Ctrl ⇧ F</span></button>
         </section>
         <footer><div><span class="footer-brand" data-icon="terminal"></span><span id="footer-hint">Drag to explore · Ctrl + scroll to zoom</span></div><div><span id="terminal-total">0 terminals</span><span class="bar-divider"></span><span id="runtime-label">Desktop workspace</span><i class="status-dot"></i></div></footer>
