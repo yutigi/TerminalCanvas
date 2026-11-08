@@ -21,6 +21,9 @@ window.terminalCanvas = {
         if (action === 'autosave') { localStorage.setItem('terminal-canvas-preview', JSON.stringify(payload)); return { ok: true }; }
         if (action === 'new') return { workspace: structuredClone(empty) };
         if (action === 'stop') return { ok: true };
+        if (action === 'clipboard-write') {
+            try { await navigator.clipboard.writeText(payload); return { ok: true }; } catch { return { error: 'Clipboard unavailable.' }; }
+        }
         return { error: 'This feature requires the desktop app. Run npm install, npm run rebuild, then npm start.' };
     },
     onEvent() { return () => {}; }, input() {}, resize() {}, acknowledge() {}

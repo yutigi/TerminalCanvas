@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hasOutputLine, captureScreenshot } = require('../scripts/smoke.cjs');
+const vm = require('node:vm');
+const { hasOutputLine, captureScreenshot, inputWaiter, ensureFocus } = require('../scripts/smoke.cjs');
 
 test('smoke recognizes Windows output followed by cursor positioning and a prompt', () => {
     const output = '\x1b[?25lC:\\project>echo marker\r\nmarker\x1b[7;1HC:\\project>\x1b[?25h';
@@ -64,4 +65,73 @@ test('smoke screenshot rejects an empty image', async () => {
     const win = captureWindow(() => ({ isEmpty: () => true }));
     await assert.rejects(captureScreenshot(win), /Smoke screenshot must not be empty/);
     assert.deepEqual(win.calls, { captures: 1, repaints: 0 });
+});
+
+// Runs the generated waiter against a fake page so the test controls which events arrive.
+function waiterPage(events) {
+    const listeners = new Map(), timers = new Map();
+    let nextTimer = 0;
+    const window = {
+        addEventListener(type, listener) { listeners.set(type, listener); },
+        removeEventListener(type) { listeners.delete(type); }
+    };
+    const context = vm.createContext({ window, setTimeout(fn, ms) { timers.set(++nextTimer, { fn, ms }); return nextTimer; }, clearTimeout(id) { timers.delete(id); } });
+    vm.runInContext(inputWaiter(events), context);
+    let state = 'pending';
+    window.__smokeInput.then(() => { state = 'resolved'; }, error => { state = error.message; });
+    const flush = async () => {
+        for (const [id, timer] of timers) if (timer.ms === 0) { timers.delete(id); timer.fn(); }
+        await new Promise(resolve => setImmediate(resolve));
+    };
+    return { listeners, timers, flush, state: () => state };
+}
+
+test('smoke input waits until the renderer dispatches the final native event', async () => {
+    const page = waiterPage([{ type: 'mouseDown', x: 10, y: 20 }, { type: 'mouseUp', x: 10, y: 20 }]);
+    const pointerup = page.listeners.get('pointerup');
+    assert.ok(pointerup, 'listens for the DOM counterpart of the last event');
+    pointerup({ clientX: 300, clientY: 300 });
+    await page.flush();
+    assert.equal(page.state(), 'pending', 'stray pointer input elsewhere is ignored');
+    pointerup({ clientX: 10, clientY: 20 });
+    await page.flush();
+    assert.equal(page.state(), 'resolved');
+    assert.equal(page.listeners.has('pointerup'), false);
+});
+
+test('smoke input counts repeated final events and times out when input never arrives', async () => {
+    const keys = waiterPage([{ type: 'keyDown', keyCode: 'O' }, { type: 'keyUp', keyCode: 'O' }, { type: 'keyDown', keyCode: 'Escape' }, { type: 'keyUp', keyCode: 'Escape' }]);
+    keys.listeners.get('keyup')({});
+    await keys.flush();
+    assert.equal(keys.state(), 'pending');
+    keys.listeners.get('keyup')({});
+    await keys.flush();
+    assert.equal(keys.state(), 'resolved');
+    const lost = waiterPage([{ type: 'keyDown', keyCode: 'G' }, { type: 'keyUp', keyCode: 'G' }]);
+    [...lost.timers.values()].find(timer => timer.ms === 5000).fn();
+    await lost.flush();
+    assert.equal(lost.state(), 'Native keyup did not reach the renderer.');
+    assert.throws(() => inputWaiter([{ type: 'mouseMove', x: 0, y: 0 }]), /must end with/);
+});
+
+function focusWindow(focusedAfter) {
+    const calls = { checks: 0, focus: 0 };
+    return {
+        calls,
+        focus() { calls.focus++; },
+        webContents: {
+            async executeJavaScript(code) { assert.equal(code, 'document.hasFocus()'); return ++calls.checks > focusedAfter; },
+            focus() {}
+        }
+    };
+}
+
+test('smoke input takes focus back when another window took it', async () => {
+    const focused = focusWindow(0);
+    await ensureFocus(focused);
+    assert.deepEqual(focused.calls, { checks: 1, focus: 0 }, 'a focused window is left alone');
+    const lost = focusWindow(2);
+    await ensureFocus(lost);
+    assert.deepEqual(lost.calls, { checks: 3, focus: 2 });
+    await assert.rejects(ensureFocus(focusWindow(Infinity), 3), /could not take focus/);
 });

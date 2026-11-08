@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { nativeImage, shell } = require('electron');
+const { nativeImage, clipboard, ClipboardItem, shell } = require('electron');
 const { storeImage } = require('../src/assets.cjs');
 const { validateWorkspace } = require('../src/workspace.cjs');
 function hasOutputLine(output, expected) {
@@ -31,6 +31,100 @@ async function captureScreenshot(win) {
     }
 }
 exports.captureScreenshot = captureScreenshot;
+// Native input and executeJavaScript travel on separate channels, so a script can run before earlier
+// input reaches the page. Wait until the renderer has dispatched the last event, and its handlers ran.
+// Pointer events stand in for mouse buttons because a canceled pointerdown suppresses mousedown/mouseup.
+const DOM_EVENTS = Object.freeze({ mouseDown: 'pointerdown', mouseUp: 'pointerup', keyDown: 'keydown', keyUp: 'keyup' });
+function inputWaiter(events) {
+    const last = events.at(-1);
+    const type = DOM_EVENTS[last.type];
+    if (!type) throw new Error(`Native input must end with one of: ${Object.keys(DOM_EVENTS).join(', ')}.`);
+    const count = events.filter(event => event.type === last.type).length;
+    const point = 'x' in last ? { x: last.x, y: last.y } : null;
+    return `window.__smokeInput = new Promise((resolve, reject) => {
+        const point = ${JSON.stringify(point)};
+        let seen = 0;
+        const done = () => { window.removeEventListener(${JSON.stringify(type)}, listener, true); clearTimeout(timer); };
+        const listener = event => {
+            // Ignore stray pointer input, such as the real mouse moving over the smoke window.
+            if (point && (Math.abs(event.clientX - point.x) > 1 || Math.abs(event.clientY - point.y) > 1)) return;
+            if (++seen === ${count}) { done(); setTimeout(resolve, 0); }
+        };
+        const timer = setTimeout(() => { done(); reject(new Error('Native ${type} did not reach the renderer.')); }, 5000);
+        window.addEventListener(${JSON.stringify(type)}, listener, true);
+    }); undefined`;
+}
+// Native keys reach the focused element only while the page has focus, and another window (or the person
+// using the machine) can take it mid-run. Take it back before each batch of input.
+async function ensureFocus(win, attempts = 20) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        if (await win.webContents.executeJavaScript('document.hasFocus()')) return;
+        win.focus(); win.webContents.focus();
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error('The smoke window could not take focus for native input.');
+}
+exports.ensureFocus = ensureFocus;
+async function sendInput(win, events) {
+    await ensureFocus(win);
+    await win.webContents.executeJavaScript(inputWaiter(events));
+    for (const event of events) win.webContents.sendInputEvent(event);
+    await win.webContents.executeJavaScript('window.__smokeInput');
+}
+const click = (point, modifiers = []) => [
+    { type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1, modifiers },
+    { type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1, modifiers }
+];
+const key = (keyCode, modifiers = [], char = false) => [
+    { type: 'keyDown', keyCode, modifiers }, ...(char ? [{ type: 'char', keyCode, modifiers }] : []), { type: 'keyUp', keyCode, modifiers }
+];
+exports.inputWaiter = inputWaiter;
+// Clipboard checks use the real system clipboard, so they put back whatever the user had copied.
+// Every format is read before the task runs, because clipboard items read their data lazily.
+async function withSavedClipboard(task) {
+    // An empty clipboard can still report an item with no formats; there is nothing to restore from it.
+    const saved = (await Promise.all((await clipboard.read()).map(async item =>
+        Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))))
+        .filter(data => Object.keys(data).length);
+    try { return await task(); } finally {
+        try {
+            if (saved.length) await clipboard.write(saved.map(data => new ClipboardItem(data)));
+            else clipboard.clear();
+        } catch (error) { console.warn(`Could not restore the clipboard: ${error.message}`); }
+    }
+}
+const clipboardText = async () => (await clipboard.readText()).replace(/\r\n/g, '\n');
+// Ctrl+C writes the copied note's text to the system clipboard; Ctrl+V on the non-editable canvas then
+// arrives as a paste event and pastes a copy with a new ID.
+async function copyAndPasteNatively(win) {
+    const expected = 'Write the\nrelease notes';
+    await withSavedClipboard(async () => {
+        await win.webContents.executeJavaScript('select("note"); viewport.focus()');
+        await sendInput(win, key('C', ['control']));
+        const deadline = Date.now() + 2000;
+        while (await clipboardText() !== expected) {
+            if (Date.now() > deadline) throw new Error('Ctrl+C did not write the copied items to the clipboard.');
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        const count = await win.webContents.executeJavaScript('workspace.items.length');
+        await sendInput(win, key('V', ['control']));
+        const pasted = await win.webContents.executeJavaScript('({ count: workspace.items.length, item: workspace.items.at(-1), selected: [...selection] })');
+        assert.equal(pasted.count, count + 1, 'Ctrl+V pastes the copied note');
+        assert.equal(pasted.item.text, expected);
+        assert.notEqual(pasted.item.id, 'note');
+        assert.deepEqual(pasted.selected, [pasted.item.id]);
+    });
+}
+// Terminal copy and paste go through these desktop commands.
+async function checkClipboardBridge(win) {
+    const marker = `terminal-canvas-clipboard-${Date.now()}\nsecond line`;
+    await withSavedClipboard(async () => {
+        await win.webContents.executeJavaScript(`invoke('clipboard-write', ${JSON.stringify(marker)})`);
+        assert.equal(await clipboardText(), marker, 'clipboard-write reaches the system clipboard');
+        const read = await win.webContents.executeJavaScript("invoke('clipboard-read').then(result => result.text)");
+        assert.equal(read.replace(/\r\n/g, '\n'), marker, 'clipboard-read returns the clipboard text');
+    });
+}
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(read, accept, message, timeout = 2000) {
     const deadline = Date.now() + timeout;
@@ -216,7 +310,7 @@ async function checkTerminalLinks({ win, createCard, openedLinks }) {
 }
 exports.checkTerminalLinks = checkTerminalLinks;
 exports.run = async ({ app, win, terminals, createCard }) => {
-    // Longer native checks can be occluded by another app; keep animation-frame checks running.
+    // Native shell helpers can background the window; frame-based checks must keep running.
     win.webContents.setBackgroundThrottling(false);
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError|Content Security Policy/.test(message || '')) errors.push(message); });
@@ -229,12 +323,18 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
     await require('./smoke-creation.cjs').checkCreationWorkflows({ app, win, terminals, createCard, captureScreenshot });
+    await require('./smoke-clipboard.cjs').run({ win, terminals, createCard, hasOutputLine, capture: async () => {
+        const screenshot = path.resolve(__dirname, '../.cache/smoke-clipboard.png');
+        await fs.mkdir(path.dirname(screenshot), { recursive: true });
+        await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
+    } });
     // Intercept only the OS launch so routine smoke runs do not spawn a browser.
     const openExternal = shell.openExternal;
     const openedLinks = [];
     shell.openExternal = async url => { openedLinks.push(url); };
     try { await checkTerminalLinks({ win, createCard, openedLinks }); }
     finally { shell.openExternal = openExternal; }
+    await checkClipboardBridge(win);
     const overviewCards = ['shell', 'claude', 'codex', 'gemini'].map((profile, index) => createCard({
         profile, title: ['Project shell', 'Backend agent', 'Frontend agent', 'Review agent'][index],
         x: index % 2 * 700, y: Math.floor(index / 2) * 470
@@ -251,10 +351,11 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     assert.equal(overview.hidden, false);
     assert.equal(overview.cards, 4);
     assert.equal(overview.overlap, false, 'minimap must not cover canvas tools');
-    win.webContents.sendInputEvent({ type: 'mouseDown', x: overview.x, y: overview.y, button: 'left', clickCount: 1 });
-    win.webContents.sendInputEvent({ type: 'mouseMove', x: overview.x - 20, y: overview.y - 10 });
-    win.webContents.sendInputEvent({ type: 'mouseUp', x: overview.x - 20, y: overview.y - 10, button: 'left', clickCount: 1 });
-    // A renderer round trip flushes the preceding native input events.
+    await sendInput(win, [
+        { type: 'mouseDown', x: overview.x, y: overview.y, button: 'left', clickCount: 1 },
+        { type: 'mouseMove', x: overview.x - 20, y: overview.y - 10 },
+        { type: 'mouseUp', x: overview.x - 20, y: overview.y - 10, button: 'left', clickCount: 1 }
+    ]);
     const navigation = await win.webContents.executeJavaScript('({ x: workspace.camera.x, z: workspace.camera.z, dragging: !!minimapDrag })');
     assert.notEqual(navigation.x, overview.cameraX);
     assert.equal(navigation.z, .65);
@@ -276,14 +377,11 @@ exports.run = async ({ app, win, terminals, createCard }) => {
                 const rect = sessions.get(workspace.cards[${index}].id).element.querySelector('.xterm-screen').getBoundingClientRect();
                 return { x: Math.round(rect.left + 30), y: Math.round(rect.top + 30) };
             })()`);
-            win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
-            win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+            await sendInput(win, click(point));
             assert.equal(await win.webContents.executeJavaScript(`document.activeElement === sessions.get(workspace.cards[${index}].id).terminal.textarea`), true,
                 'one click must focus the terminal input');
             const before = inputs.length;
-            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K' });
-            win.webContents.sendInputEvent({ type: 'char', keyCode: 'k' });
-            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K' });
+            await sendInput(win, [{ type: 'keyDown', keyCode: 'K' }, { type: 'char', keyCode: 'k' }, { type: 'keyUp', keyCode: 'K' }]);
             const inputDeadline = Date.now() + 2000;
             while (!inputs.slice(before).some(input => input.id === inputCards[index].id && input.data === 'k')) {
                 if (Date.now() > inputDeadline) throw new Error('First-click keyboard input did not reach the selected PTY.');
@@ -301,15 +399,15 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     const asset = await storeImage(path.join(app.getPath('userData'), 'assets'), nativeImage.createFromBitmap(bitmap, { width: 64, height: 48 }).toPNG());
     const boardCard = createCard({ title: 'Board terminal', x: 1100, y: 0 });
     const board = {
-        version: 2, name: 'Board smoke workspace', camera: { x: 40, y: 60, z: .6 }, cards: [boardCard],
+        version: 3, name: 'Board smoke workspace', camera: { x: 40, y: 60, z: .6 }, cards: [boardCard],
         items: [
             { id: 'frame', type: 'frame', x: -40, y: -40, w: 1020, h: 560, title: 'Sprint board' },
-            { id: 'label', type: 'text', x: 0, y: 0, w: 300, h: 40, text: 'Release plan' },
-            { id: 'note', type: 'note', x: 0, y: 80, w: 200, h: 200, text: 'Write the\nrelease notes' },
+            { id: 'label', type: 'text', x: 0, y: 0, w: 300, h: 50, text: 'Release plan', fontSize: 'large' },
+            { id: 'note', type: 'note', x: 0, y: 80, w: 200, h: 200, text: 'Write the\nrelease notes', color: 'green' },
             { id: 'box', type: 'shape', shape: 'rect', x: 380, y: 80, w: 180, h: 110, text: 'Review' },
-            { id: 'ring', type: 'shape', shape: 'ellipse', x: 700, y: 80, w: 150, h: 150, text: 'Ship' },
+            { id: 'ring', type: 'shape', shape: 'ellipse', x: 700, y: 80, w: 150, h: 150, text: 'Ship', color: 'purple' },
             { id: 'pic', type: 'image', x: 380, y: 300, w: 192, h: 144, asset },
-            { id: 'wire', type: 'line', start: { id: 'note' }, end: { id: 'box' }, arrow: true },
+            { id: 'wire', type: 'line', start: { id: 'note' }, end: { id: 'box' }, arrow: true, color: 'blue' },
             { id: 'to-terminal', type: 'line', start: { id: 'ring' }, end: { id: boardCard.id }, arrow: true }
         ]
     };
@@ -320,6 +418,17 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         if (Date.now() > imageDeadline) throw new Error('Board image did not load.');
         await new Promise(resolve => setTimeout(resolve, 50));
     }
+    // Image cleanup deletes stored images the board no longer uses, through the desktop commands.
+    // The smoke profile has its own assets folder, so this never touches the user's images.
+    const assets = path.join(app.getPath('userData'), 'assets');
+    const orphan = await storeImage(assets, nativeImage.createFromBitmap(Buffer.alloc(8 * 8 * 4, 0x7f), { width: 8, height: 8 }).toPNG());
+    const cleanup = await win.webContents.executeJavaScript(`(async () => {
+        const found = await invoke('unused-images', { keep: referencedImages() });
+        return { found, result: await invoke('delete-unused-images', { keep: referencedImages() }) };
+    })()`);
+    assert.ok(cleanup.found.count >= 1 && cleanup.result.deleted === cleanup.found.count, 'unused images are found and deleted');
+    assert.deepEqual(await fs.readdir(assets), [asset], 'only the image on the board remains');
+    assert.notEqual(orphan, asset);
     const toScreen = `const toScreen = p => { const r = viewport.getBoundingClientRect(), c = workspace.camera; return { x: Math.round(r.left + c.x + p.x * c.z), y: Math.round(r.top + c.y + p.y * c.z) }; };`;
     const wirePoint = await win.webContents.executeJavaScript(`(() => { ${toScreen}
         const { start, end } = linePoints(findItem('wire'));
@@ -327,31 +436,27 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         return { ...point, hit: document.elementFromPoint(point.x, point.y)?.getAttribute('class') };
     })()`);
     assert.equal(wirePoint.hit, 'line-hit', 'connector strokes outside the 1px SVG box must receive pointer events');
-    win.webContents.sendInputEvent({ type: 'mouseDown', x: wirePoint.x, y: wirePoint.y, button: 'left', clickCount: 1 });
-    win.webContents.sendInputEvent({ type: 'mouseUp', x: wirePoint.x, y: wirePoint.y, button: 'left', clickCount: 1 });
+    await sendInput(win, click(wirePoint));
     assert.deepEqual(await win.webContents.executeJavaScript('[...selection]'), ['wire']);
     const empty = await win.webContents.executeJavaScript(`(() => { ${toScreen} setTool('note'); return toScreen({ x: 160, y: 700 }); })()`);
-    win.webContents.sendInputEvent({ type: 'mouseDown', ...empty, button: 'left', clickCount: 1 });
-    win.webContents.sendInputEvent({ type: 'mouseUp', ...empty, button: 'left', clickCount: 1 });
+    await sendInput(win, click(empty));
     assert.equal(await win.webContents.executeJavaScript('document.activeElement?.className'), 'item-editor', 'a new sticky note opens for typing');
-    for (const key of ['O', 'k']) {
-        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: key });
-        win.webContents.sendInputEvent({ type: 'char', keyCode: key });
-        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: key });
-    }
-    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
-    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await sendInput(win, [...key('O', [], true), ...key('k', [], true), ...key('Escape')]);
     const created = await win.webContents.executeJavaScript('({ item: workspace.items.at(-1), editing, tool: activeTool })');
     assert.deepEqual({ type: created.item.type, text: created.item.text, editing: created.editing, tool: created.tool }, { type: 'note', text: 'Ok', editing: null, tool: 'select' },
         'typing reaches the note editor without triggering tool shortcuts');
     await win.webContents.executeJavaScript('select("box"); select("ring", { additive: true })');
-    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'G', modifiers: ['control'] });
-    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'G', modifiers: ['control'] });
-    const grouped = await win.webContents.executeJavaScript('({ box: findItem("box").group, ring: findItem("ring").group, box2: !document.querySelector("#selection-box").hidden })');
+    await sendInput(win, key('G', ['control']));
+    const grouped = await win.webContents.executeJavaScript('({ box: findItem("box").groups?.[0], ring: findItem("ring").groups?.[0], box2: !document.querySelector("#selection-box").hidden })');
     assert.ok(grouped.box && grouped.box === grouped.ring && grouped.box2, 'Ctrl+G groups the selection');
+    await sendInput(win, key('Z', ['control']));
+    assert.equal(await win.webContents.executeJavaScript('findItem("box").groups ?? null'), null, 'Ctrl+Z undoes the grouping');
+    await sendInput(win, key('Z', ['control', 'shift']));
+    assert.deepEqual(await win.webContents.executeJavaScript('findItem("box").groups'), [grouped.box], 'Ctrl+Shift+Z redoes it');
+    await copyAndPasteNatively(win);
     // Everything the renderer builds must pass the desktop host's validation, or autosave would fail.
     const saved = validateWorkspace(await win.webContents.executeJavaScript('JSON.parse(JSON.stringify(workspace))'));
-    assert.equal(saved.items.length, board.items.length + 1);
+    assert.equal(saved.items.length, board.items.length + 2);
     const boardScreenshot = path.resolve(__dirname, '../.cache/smoke-board.png');
     await win.webContents.executeJavaScript('setSelection([]); fitCanvas()');
     await fs.writeFile(boardScreenshot, (await captureScreenshot(win)).toPNG());

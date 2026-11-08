@@ -5,6 +5,8 @@ const Geometry = window.TerminalCanvasGeometry;
 const itemViews = new Map();
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ITEM_LIMIT = 1000;
+// Palettes and the nesting limit come from item-styles.js, which the host's validation also uses.
+const { COLORS: ITEM_COLORS, FONT_SIZES: ITEM_FONT_SIZES, COLORED_TYPES, TEXT_TYPES, GROUP_DEPTH } = window.TerminalCanvasItemStyles;
 const CREATION_TOOLS = Object.freeze(['text', 'note', 'rect', 'ellipse', 'frame', 'line', 'arrow']);
 const ITEM_DEFAULTS = Object.freeze({
     text: { w: 220, h: 40, min: [40, 24] },
@@ -24,11 +26,12 @@ const findCard = id => workspace.cards.find(card => card.id === id);
 const findElement = id => findCard(id) || findItem(id);
 const elementNode = id => sessions.get(id)?.element || itemViews.get(id)?.element;
 const zOf = id => Number(elementNode(id)?.style.zIndex) || 0;
-function attachTarget(id) {
-    const e = findElement(id);
+// What a connector end needs from the element it attaches to. Lines cannot be attached to.
+function attachGeometry(e) {
     if (!e || e.type === 'line') return null;
     return { bounds: { x: e.x, y: e.y, w: e.w, h: e.h }, ellipse: e.type === 'shape' && e.shape === 'ellipse' };
 }
+const attachTarget = id => attachGeometry(findElement(id));
 const linePoints = line => Geometry.resolveLine(line, attachTarget);
 function boundsOf(e) {
     if (e.type !== 'line') return { x: e.x, y: e.y, w: e.w, h: e.h };
@@ -36,7 +39,16 @@ function boundsOf(e) {
     return Geometry.boundsOfPoints([start, end]);
 }
 function elementRecords() {
-    return [...workspace.cards, ...workspace.items].map(e => ({ id: e.id, group: e.group, bounds: boundsOf(e), z: zOf(e.id), line: e.type === 'line' }));
+    return [...workspace.cards, ...workspace.items].map(e => ({ id: e.id, groups: e.groups, bounds: boundsOf(e), z: zOf(e.id), line: e.type === 'line' }));
+}
+function setGroups(e, path) {
+    if (path.length) e.groups = path;
+    else delete e.groups;
+}
+// Removing elements can leave a group with one member; such a group no longer groups anything.
+function pruneGroups() {
+    const elements = [...workspace.cards, ...workspace.items];
+    Geometry.pruneGroupPaths(elements).forEach((path, index) => setGroups(elements[index], path));
 }
 function attachableAt(point, exclude) {
     return Geometry.topmostAt(point, elementRecords().filter(r => !r.line && r.id !== exclude))?.id || null;
@@ -44,6 +56,11 @@ function attachableAt(point, exclude) {
 function toWorld(event) {
     const rect = viewport.getBoundingClientRect(), { x, y, z } = workspace.camera;
     return { x: clampCoordinate((event.clientX - rect.left - x) / z), y: clampCoordinate((event.clientY - rect.top - y) / z) };
+}
+// The part of the world the viewport shows.
+function visibleWorld() {
+    const { x, y, z } = workspace.camera;
+    return { x: -x / z, y: -y / z, w: viewport.clientWidth / z, h: viewport.clientHeight / z };
 }
 function viewportCenterWorld() {
     const { x, y, z } = workspace.camera;
@@ -106,10 +123,16 @@ function mountLine(item) {
     renderLine(item);
     return view;
 }
+function applyItemStyle(item, element) {
+    element.classList.toggle('colored', !!item.color);
+    for (const color of ITEM_COLORS) element.classList.toggle(`color-${color}`, item.color === color);
+    for (const size of ITEM_FONT_SIZES) element.classList.toggle(`size-${size}`, item.fontSize === size);
+}
 function renderItem(item) {
     const view = itemViews.get(item.id);
     if (!view) return;
     if (item.type === 'line') return renderLine(item);
+    applyItemStyle(item, view.element);
     Object.assign(view.element.style, { left: `${item.x}px`, top: `${item.y}px`, width: `${item.w}px`, height: `${item.h}px` });
     // Larger frames sit further back so a frame drawn around smaller ones never hides them.
     if (item.type === 'frame') { view.element.style.zIndex = String(-1 - Math.round(item.w * item.h / 100)); view.title.textContent = item.title; }
@@ -119,6 +142,7 @@ function renderLine(item) {
     const view = itemViews.get(item.id);
     if (!view) return;
     const { start, end } = linePoints(item);
+    applyItemStyle(item, view.element);
     const path = `M${start.x} ${start.y}L${end.x} ${end.y}`;
     view.hit.setAttribute('d', path);
     view.stroke.setAttribute('d', path);
@@ -151,18 +175,24 @@ function removeItems(ids) {
     detachConnectors(targets);
     for (const id of targets) { disposeItem(id); selection.delete(id); }
     workspace.items = workspace.items.filter(item => !targets.includes(item.id));
+    pruneGroups();
     if (targets.includes(selected)) selected = [...selection].at(-1) ?? null;
     applySelection(); renderLines(); changed();
 }
-function addItem(item, { edit = false } = {}) {
-    if (workspace.items.length >= ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
-    workspace.items.push(item);
-    mountItem(item);
-    select(item.id);
-    changed();
-    if (edit) startEditing(item.id);
-    return item;
+// Adds items as one undoable step and selects them. `edit` opens a single new item for typing.
+function addItems(list, { edit = false } = {}) {
+    if (workspace.items.length + list.length > ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
+    const before = snapshotBoard();
+    commitHistory(before);
+    workspace.items.push(...list);
+    list.forEach(mountItem);
+    if (list.length === 1) select(list[0].id);
+    else setSelection(list.map(item => item.id));
+    renderLines(); changed();
+    if (edit && list.length === 1) startEditing(list[0].id, { created: before });
+    return list;
 }
+function addItem(item, options) { return addItems([item], options)?.[0] ?? null; }
 function makeItem(kind, rect) {
     const item = { id: newId(), x: clampCoordinate(rect.x), y: clampCoordinate(rect.y), w: rect.w, h: rect.h };
     if (kind === 'rect' || kind === 'ellipse') return { ...item, type: 'shape', shape: kind, text: '' };
@@ -175,6 +205,7 @@ function beginCreate(event) {
     if (workspace.items.length >= ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
     if (kind === 'line' || kind === 'arrow') {
         const from = attachableAt(start);
+        recordHistory();
         const line = { id: newId(), type: 'line', start: from ? { id: from } : start, end: { ...start }, arrow: kind === 'arrow' };
         workspace.items.push(line);
         mountLine(line);
@@ -206,23 +237,26 @@ function resizeItem(event, item, handle) {
         item.w = clampSize(start.w + dx / z, min[0]);
         item.h = item.type === 'image' ? clampSize(item.w / ratio, min[1]) : clampSize(start.h + dy / z, min[1]);
         renderItem(item); renderLines(); renderSelectionBox();
-    }, moved => { if (moved) { renderMinimap(); changed(); } });
+    }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
 }
 function dragEndpoint(event, line, which, handle) {
     if (event.button !== 0 || focused) return;
     const other = which === 'start' ? 'end' : 'start';
+    const original = line[which];
     beginDrag(handle, event, (_dx, _dy, e) => { line[which] = toWorld(e); renderLine(line); renderSelectionBox(); }, (moved, e) => {
-        if (!moved) return;
+        if (!moved) { line[which] = original; renderLine(line); return; }
         const target = attachableAt(toWorld(e), line[other].id);
         if (target) line[which] = { id: target };
         renderLine(line); renderSelectionBox(); renderMinimap(); changed();
-    });
+    }, { history: true });
 }
 // Text, note, and shape content is plain text edited in place; empty text labels are removed.
-function startEditing(id) {
+// `created` is the history step that added a new item, so typing its first text is part of that step.
+function startEditing(id, { created = null } = {}) {
     const item = findItem(id), view = itemViews.get(id);
     if (!item || !view?.text || editing) return;
     editing = id;
+    view.session = { created, before: created ? null : snapshotBoard(), h: item.h };
     const editor = document.createElement('textarea');
     editor.className = 'item-editor'; editor.value = item.text; editor.maxLength = 10000;
     editor.setAttribute('aria-label', item.type === 'note' ? 'Sticky note text' : item.type === 'shape' ? 'Shape text' : 'Text label');
@@ -238,6 +272,15 @@ function startEditing(id) {
     editor.addEventListener('blur', () => finishEditing(id), { once: true });
     editor.focus(); editor.select();
 }
+// A text label's height follows its content when its text size changes.
+function fitTextLabel(item) {
+    const element = itemViews.get(item.id)?.element;
+    if (!element || item.type !== 'text') return;
+    element.style.height = 'auto';
+    const height = element.offsetHeight;
+    if (height) item.h = clampSize(Math.ceil(height), ITEM_DEFAULTS.text.min[1]);
+    renderItem(item);
+}
 function fitTextHeight(item, editor) {
     editor.style.height = '0px';
     const height = editor.scrollHeight;
@@ -248,17 +291,31 @@ function finishEditing(id) {
     const item = findItem(id), view = itemViews.get(id);
     editing = null;
     if (!item || !view?.editor) return;
-    item.text = view.editor.value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f]/g, '');
-    if (item.type === 'text') fitTextHeight(item, view.editor);
+    const session = view.session || {};
+    view.session = null;
+    const text = view.editor.value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f]/g, '');
+    const edited = text !== item.text;
+    item.text = text;
+    // Typing refits a label as it goes; an edit that ends with the original text keeps the original height.
+    if (item.type === 'text') {
+        if (edited) fitTextHeight(item, view.editor);
+        else if (session.h && item.h !== session.h) { item.h = session.h; renderItem(item); renderLines(); renderSelectionBox(); }
+    }
     view.editor.remove(); view.editor = null;
     view.text.hidden = false; view.element.classList.remove('editing');
-    if (item.type === 'text' && !item.text.trim()) return removeItems([id]);
+    if (item.type === 'text' && !item.text.trim()) {
+        if (session.created) discardHistory(session.created);
+        else if (session.before) commitHistory(session.before);
+        return removeItems([id]);
+    }
+    if (edited && session.before) commitHistory(session.before);
     renderItem(item); changed();
 }
 function editFrameTitle(item) {
     const view = itemViews.get(item.id);
     if (!view || editing) return;
     editing = item.id;
+    const before = snapshotBoard();
     const input = document.createElement('input');
     input.className = 'frame-title-editor'; input.value = item.title; input.maxLength = 100;
     input.setAttribute('aria-label', 'Frame title');
@@ -267,7 +324,9 @@ function editFrameTitle(item) {
     input.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Enter' || event.key === 'Escape') { event.preventDefault(); input.blur(); } });
     input.addEventListener('blur', () => {
         editing = null;
-        item.title = input.value.replace(/[\x00-\x1f]/g, ' ').trim() || 'Frame';
+        const title = input.value.replace(/[\x00-\x1f]/g, ' ').trim() || 'Frame';
+        if (title !== item.title) commitHistory(before);
+        item.title = title;
         input.remove(); view.title.hidden = false;
         renderItem(item); changed();
     }, { once: true });
@@ -279,20 +338,97 @@ function placeImage(asset, point) {
         const finish = (width, height) => {
             const scale = Math.min(1, 480 / Math.max(width, height));
             const w = clampSize(Math.round(width * scale), ITEM_DEFAULTS.image.min[0]), h = clampSize(Math.round(height * scale), ITEM_DEFAULTS.image.min[1]);
-            resolve(addItem({ id: newId(), type: 'image', asset, x: clampCoordinate(point.x - w / 2), y: clampCoordinate(point.y - h / 2), w, h }));
+            // An import can finish mid-gesture: wait for any drag, and finish a text edit first.
+            whenBoardIdle().then(() => {
+                if (editing) document.activeElement?.blur();
+                resolve(addItem({ id: newId(), type: 'image', asset, x: clampCoordinate(point.x - w / 2), y: clampCoordinate(point.y - h / 2), w, h }));
+            });
         };
         probe.onload = () => finish(probe.naturalWidth || ITEM_DEFAULTS.image.w, probe.naturalHeight || ITEM_DEFAULTS.image.h);
         probe.onerror = () => finish(ITEM_DEFAULTS.image.w, ITEM_DEFAULTS.image.h);
         probe.src = assetUrl(asset);
     });
 }
+// Counts imports between storing an image and placing it, when cleanup would see it as unused.
+let imageImports = 0;
+async function importing(task) {
+    imageImports++;
+    try { return await task(); } finally { imageImports--; }
+}
 // Image bytes go to the desktop host, which validates and stores them; the workspace keeps only the name.
-async function importImageFiles(files, point) {
-    const images = [...files].filter(file => /^image\//.test(file.type));
-    for (const [index, file] of images.entries()) {
-        if (file.size > 15 * 1024 * 1024) { toast(`${file.name || 'Image'} is larger than 15 MB.`); continue; }
-        const { asset } = await invoke('import-image', { bytes: new Uint8Array(await file.arrayBuffer()) });
-        await placeImage(asset, { x: point.x + index * 24, y: point.y + index * 24 });
-    }
-    return images.length;
+function importImageFiles(files, point) {
+    return importing(async () => {
+        const images = [...files].filter(file => /^image\//.test(file.type));
+        for (const [index, file] of images.entries()) {
+            if (file.size > 15 * 1024 * 1024) { toast(`${file.name || 'Image'} is larger than 15 MB.`); continue; }
+            const { asset } = await invoke('import-image', { bytes: new Uint8Array(await file.arrayBuffer()) });
+            await placeImage(asset, { x: point.x + index * 24, y: point.y + index * 24 });
+        }
+        return images.length;
+    });
+}
+// Images still in use: the workspace, its undo and redo steps, and copied items waiting to be pasted.
+function referencedImages() {
+    const names = new Set();
+    const add = items => { for (const item of items) if (item.type === 'image') names.add(item.asset); };
+    add(workspace.items);
+    for (const step of [...boardHistory.undo, ...boardHistory.redo]) for (const name of step.assets) names.add(name);
+    if (boardClipboard) add(boardClipboard.items);
+    return [...names];
+}
+const formatBytes = bytes => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+async function cleanUpImages() {
+    if (imageImports) return toast('Wait for images to finish importing, then try again.');
+    const { count, bytes } = await invoke('unused-images', { keep: referencedImages() });
+    if (!count) return toast('No unused images to delete.');
+    const plural = count === 1 ? '' : 's';
+    if (!await confirmAction(`Delete ${count} unused image${plural}?`,
+        `This frees ${formatBytes(bytes)}. They are not used by this workspace, its undo history, or copied items. Workspace files you saved earlier, other than portable copies, will show them as unavailable.`,
+        `Delete image${plural}`)) return;
+    if (imageImports) return toast('Wait for images to finish importing, then try again.');
+    const result = await invoke('delete-unused-images', { keep: referencedImages() });
+    const skipped = result.failed ? ` ${result.failed} could not be deleted because another program is using ${result.failed === 1 ? 'it' : 'them'}.` : '';
+    toast(`Deleted ${result.deleted} unused image${result.deleted === 1 ? '' : 's'} (${formatBytes(result.bytes)}).${skipped}`);
+}
+// The style toolbar edits the color of selected items and the text size of those that hold text.
+const selectedItems = types => [...selection].map(findItem).filter(item => item && types.includes(item.type));
+function renderStyleToolbar() {
+    const bar = $('#style-toolbar');
+    const colored = ready && !focused ? selectedItems(COLORED_TYPES) : [];
+    const texts = colored.filter(item => TEXT_TYPES.includes(item.type));
+    bar.hidden = !colored.length;
+    $('#style-sizes').hidden = $('#style-divider').hidden = !texts.length;
+    if (bar.hidden) return;
+    const shared = (list, key, fallback) => (list.every(item => (item[key] || fallback) === (list[0][key] || fallback)) ? list[0][key] || fallback : null);
+    const color = shared(colored, 'color', 'default'), size = texts.length ? shared(texts, 'fontSize', 'medium') : null;
+    bar.querySelectorAll('[data-color]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.color === color)));
+    bar.querySelectorAll('[data-font-size]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fontSize === size)));
+}
+function setItemColor(color) {
+    if (boardBusy()) return;
+    const items = selectedItems(COLORED_TYPES);
+    if (!items.length || (color !== 'default' && !ITEM_COLORS.includes(color))) return;
+    recordChange(() => {
+        for (const item of items) {
+            if (color === 'default') delete item.color;
+            else item.color = color;
+            renderItem(item);
+        }
+    });
+    renderStyleToolbar(); changed();
+}
+function setItemFontSize(size) {
+    if (boardBusy()) return;
+    // Items already at this size are left alone, so a text label keeps a height the user chose.
+    const items = selectedItems(TEXT_TYPES).filter(item => (item.fontSize || 'medium') !== size);
+    if (!items.length || (size !== 'medium' && !ITEM_FONT_SIZES.includes(size))) return;
+    recordChange(() => {
+        for (const item of items) {
+            if (size === 'medium') delete item.fontSize;
+            else item.fontSize = size;
+            renderItem(item);
+            fitTextLabel(item);
+        }
+    });
+    renderLines(); renderSelectionBox(); renderStyleToolbar(); renderMinimap(); changed();
 }

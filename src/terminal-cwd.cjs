@@ -86,8 +86,10 @@ function global:prompt {
     $tcPrompt
 }
 `;
+// Windows PowerShell defaults to Restricted, which blocks npm.ps1 and similar shims.
+// A process-scoped RemoteSigned policy fixes that for this shell only; Group Policy still wins.
 function powershellArgs() {
-    return ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(powershellBootstrap, 'utf16le').toString('base64')];
+    return ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', Buffer.from(powershellBootstrap, 'utf16le').toString('base64')];
 }
 
 async function processDirectory(pid, platform, { readlink = fs.readlink, run = runFile } = {}) {
