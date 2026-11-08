@@ -439,17 +439,23 @@ function dispose(id) {
     const s = sessions.get(id); if (!s) return;
     s.observer?.disconnect(); s.terminal?.dispose(); s.element.remove(); sessions.delete(id);
 }
+function showDirectory(s, cwd) {
+    s.cwd = cwd;
+    const label = cwd || 'Current directory unavailable';
+    s.element.querySelector('.card-directory span').textContent = label;
+    s.element.querySelector('.card-directory').title = label;
+}
 async function start(card) {
     const s = sessions.get(card.id);
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
-    s.terminal.reset(); fitTerminal(s); setStatus(card, 'starting');
+    s.terminal.reset(); fitTerminal(s); showDirectory(s, null); setStatus(card, 'starting');
     try {
         await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows });
         if (sessions.get(card.id) !== s) return;
         if (s.status === 'starting') setStatus(card, 'running');
         s.terminal.focus();
-    } catch (error) { setStatus(card, 'idle', error.message); throw error; }
+    } catch (error) { showDirectory(s, card.cwd || 'Home directory'); setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
 function beginDrag(element, event, move, end) {
@@ -533,7 +539,7 @@ async function duplicateTerminal(source) {
             return;
         }
         if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
-        const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: source.x + 40, y: source.y + 40 });
+        const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
@@ -679,6 +685,7 @@ if (bridge) {
             if (s?.terminal) s.terminal.write(event.data, () => bridge.acknowledge(event.id, event.data.length));
             else bridge.acknowledge(event.id, event.data.length);
         }
+        if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
         if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); setStatus(workspace.cards.find(c => c.id === event.id), 'exited'); }
         if (event.type === 'error') toast(event.message);
         if (event.type === 'closing') run(async () => {

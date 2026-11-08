@@ -1,18 +1,20 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
-const { isDirectory, fallbackDirectory, DirectoryReporter } = require('./directories.cjs');
+const { isDirectory, fallbackDirectory } = require('./directories.cjs');
 const { validateCard, LIMITS } = require('./workspace.cjs');
+const { directoryReports, powershellArgs, watchDirectory, processDirectory } = require('./terminal-cwd.cjs');
 
 // Terminal processes belong to the desktop host; renderers only receive this lifecycle API.
 class TerminalManager {
-    constructor({ spawn, emit, platform = process.platform, env = process.env, home = os.homedir() }) {
+    constructor({ spawn, emit, platform = process.platform, env = process.env, home = os.homedir(), watchCwd = watchDirectory, readCwd = processDirectory }) {
         this.spawn = spawn;
         this.emit = emit;
         this.platform = platform;
         this.env = env;
         this.home = home;
+        this.watchCwd = watchCwd;
+        this.readCwd = readCwd;
         this.sessions = new Map();
     }
     start(raw, cols = 80, rows = 24) {
@@ -23,28 +25,38 @@ class TerminalManager {
         const cwd = card.cwd || this.home;
         if (!fs.statSync(cwd).isDirectory()) throw new Error('Working directory must be a folder.');
         const windows = this.platform === 'win32';
-        const shell = windows
+        let shell = windows
             ? path.win32.join(this.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
             : (this.env.SHELL || '/bin/bash');
-        const token = randomUUID();
-        const script = windows ? fs.readFileSync(path.join(__dirname, 'shell-integration.ps1'), 'utf8') : '';
-        const args = windows ? ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')] : ['-l'];
+        let args = windows ? powershellArgs() : ['-l'];
+        let command = card.command;
+        // An explicit plain shell launcher can be integrated directly. More complex
+        // launch commands keep their existing PowerShell execution semantics.
+        if (windows && /^(?:pwsh|powershell|cmd)(?:\.exe)?$/i.test(command.trim())) {
+            shell = /\.exe$/i.test(command.trim()) ? command.trim() : command.trim() + '.exe'; command = '';
+            args = /^cmd/i.test(shell) ? [] : powershellArgs();
+        }
         const env = { ...this.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERMINAL_CANVAS: '1' };
         delete env.ELECTRON_RUN_AS_NODE;
-        if (windows) env.TERMINAL_CANVAS_CWD_TOKEN = token;
+        if (windows) env.PROMPT = '$E]9;9;$P$E\\' + (env.PROMPT || '$P$G');
         const terminal = this.spawn(shell, args, { name: 'xterm-256color', cwd, cols, rows, env });
-        const entry = { terminal, reporter: windows ? new DirectoryReporter(token, Boolean(card.command)) : null, pending: 0, paused: false, subscriptions: [] };
+        const entry = { terminal, cwd: undefined, ready: false, pending: 0, paused: false, subscriptions: [] };
         this.sessions.set(card.id, entry);
+        const report = cwd => {
+            if (this.sessions.get(card.id) !== entry || entry.cwd === cwd) return;
+            entry.cwd = cwd;
+            this.emit({ type: 'cwd', id: card.id, cwd });
+        };
+        const observe = directoryReports(this.platform, report, ready => { entry.ready = ready; });
         entry.subscriptions.push(terminal.onData(data => {
             if (this.sessions.get(card.id) !== entry) return;
-            data = entry.reporter ? entry.reporter.read(data) : data;
-            if (!data) return;
             entry.pending += data.length;
             if (entry.pending > 256000 && !entry.paused) {
                 entry.paused = true;
                 terminal.pause();
             }
             this.emit({ type: 'data', id: card.id, data });
+            if (windows) observe(data);
         }));
         entry.subscriptions.push(terminal.onExit(({ exitCode, signal }) => {
             if (this.sessions.get(card.id) !== entry) return;
@@ -52,23 +64,23 @@ class TerminalManager {
             this.dispose(entry);
             this.emit({ type: 'exit', id: card.id, exitCode, signal });
         }));
+        if (!windows) entry.subscriptions.push(this.watchCwd(terminal.pid, this.platform, report));
         try {
-            if (card.command) terminal.write(card.command + '\r');
+            if (command) this.write(card.id, command + '\r');
         } catch (error) {
             this.stop(card.id);
             throw error;
         }
         return { id: card.id, pid: terminal.pid, cwd, shell };
     }
-    directory(raw) {
+    async directory(raw) {
         const card = validateCard(raw);
         const entry = this.sessions.get(card.id);
         let current;
         if (entry) {
-            if (this.platform === 'win32') current = entry.reporter.cwd;
-            else if (this.platform === 'linux') {
-                try { current = fs.readlinkSync(`/proc/${entry.terminal.pid}/cwd`); } catch { /* Process may have exited. */ }
-            }
+            if (this.platform === 'win32') current = entry.ready ? entry.cwd : null;
+            else current = await this.readCwd(entry.terminal.pid, this.platform);
+            if (this.sessions.get(card.id) !== entry) current = null;
         }
         if (isDirectory(current)) return { cwd: current };
         const cwd = fallbackDirectory(card.cwd, this.home, process.cwd());
@@ -81,11 +93,8 @@ class TerminalManager {
     write(id, data) {
         if (typeof data !== 'string' || data.length > 65536) throw new Error('Input exceeds 64 KB.');
         const entry = this.sessions.get(id);
-        // A submitted command can enter a nested shell or change location before its next prompt.
-        if (entry?.reporter && /[\r\n]/.test(data)) {
-            entry.reporter.cwd = null;
-            if (!entry.reporter.hasReport) entry.reporter.skipFirstReport = true;
-        }
+        // Keep the displayed path, but require a fresh idle prompt before duplicating.
+        if (entry && /[\r\n]/.test(data)) entry.ready = false;
         entry?.terminal.write(data);
     }
     resize(id, cols, rows) {

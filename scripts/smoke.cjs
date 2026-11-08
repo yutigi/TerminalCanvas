@@ -81,6 +81,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         if (Date.now() > deadline) throw new Error('Renderer did not initialize.');
         await new Promise(resolve => setTimeout(resolve, 100));
     }
+    await require('./smoke-cwd.cjs').run({ win, terminals, createCard });
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
     await require('./smoke-creation.cjs').checkCreationWorkflows({ app, win, terminals, createCard, captureScreenshot });
