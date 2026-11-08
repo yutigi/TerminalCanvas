@@ -24,6 +24,7 @@ flowchart LR
 - `preload.cjs` exposes explicit methods while keeping Node.js unavailable to renderer code.
 - `renderer.js` owns canvas navigation, card UI, selection, tools, and xterm emulators. A terminal's running state reflects its shell process, rather than an inferred AI activity state.
 - `items.js` renders and edits board items (text labels, sticky notes, shapes, frames, images, and lines), their colors and text sizes, and image import and cleanup. It loads before `renderer.js` and uses the renderer's state when its functions run.
+- `item-styles.js` defines the color and text-size palettes and the group nesting limit. The renderer and the host's workspace validation load the same file, so they cannot disagree.
 - `history.js` holds undo and redo. `clipboard.js` copies, cuts, pastes, and duplicates board items. Both load after `items.js` in the same way.
 - `canvas-geometry.js` holds pure geometry shared by the renderer and tests: connector clipping to rectangles and ellipses, frame containment, nested group expansion and grouping paths, marquee selection, and hit testing.
 - `assets.cjs` validates image bytes by signature, stores them content-addressed in the user-data `assets` folder, embeds or extracts them for portable exports, and finds and deletes unused ones.

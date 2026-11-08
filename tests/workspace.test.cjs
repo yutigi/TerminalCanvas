@@ -123,3 +123,22 @@ test('item colors and text sizes are kept only where they apply, and defaults ar
         { color: 'purple', fontSize: undefined }, { color: undefined, fontSize: undefined }, { color: 'gray', fontSize: undefined }
     ]);
 });
+
+test('the palettes the renderer offers are the ones validation accepts and the stylesheet defines', () => {
+    const fs = require('node:fs'), path = require('node:path');
+    const styles = require('../src/item-styles.js');
+    const css = fs.readFileSync(path.join(__dirname, '../src/styles.css'), 'utf8');
+    const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
+    const note = sampleItems()[1];
+    for (const color of styles.COLORS) {
+        assert.equal(validateItem({ ...note, color }).color, color);
+        assert.ok(css.includes(`.color-${color}{`), `styles.css defines ${color}`);
+        assert.ok(html.includes(`data-color="${color}"`), `the style bar offers ${color}`);
+    }
+    for (const size of styles.FONT_SIZES) {
+        assert.equal(validateItem({ ...note, fontSize: size }).fontSize, size);
+        for (const type of styles.TEXT_TYPES) assert.ok(css.includes(`.item-${type}.size-${size}{`), `styles.css sizes ${type} ${size}`);
+        assert.ok(html.includes(`data-font-size="${size}"`), `the style bar offers ${size}`);
+    }
+    assert.equal(LIMITS.groupDepth, styles.GROUP_DEPTH);
+});

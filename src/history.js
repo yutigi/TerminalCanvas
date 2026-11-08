@@ -81,10 +81,7 @@ function restoreBoard(snapshot) {
     for (const id of current.keys()) if (!kept.has(id)) disposeItem(id);
     workspace.items = next;
     // A terminal closed since the snapshot leaves its connectors with free ends where it was.
-    const lookup = id => {
-        const e = findElement(id) || remembered.get(id);
-        return e ? { bounds: { x: e.x, y: e.y, w: e.w, h: e.h }, ellipse: e.type === 'shape' && e.shape === 'ellipse' } : null;
-    };
+    const lookup = id => attachGeometry(findElement(id) || remembered.get(id));
     for (const line of next.filter(item => item.type === 'line')) {
         const lost = ['start', 'end'].filter(end => line[end].id && !findElement(line[end].id));
         if (!lost.length) continue;

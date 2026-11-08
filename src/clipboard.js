@@ -31,10 +31,7 @@ function clipboardItems() {
     });
 }
 function clipboardBounds(items) {
-    const lookup = id => {
-        const e = items.find(item => item.id === id);
-        return e ? { bounds: { x: e.x, y: e.y, w: e.w, h: e.h }, ellipse: e.type === 'shape' && e.shape === 'ellipse' } : null;
-    };
+    const lookup = id => attachGeometry(items.find(item => item.id === id));
     return Geometry.unionBounds(items.map(item => {
         if (item.type !== 'line') return { x: item.x, y: item.y, w: item.w, h: item.h };
         const { start, end } = Geometry.resolveLine(item, lookup);

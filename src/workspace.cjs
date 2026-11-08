@@ -1,16 +1,12 @@
 const { randomUUID } = require('node:crypto');
+const { COLORS, FONT_SIZES, COLORED_TYPES, TEXT_TYPES, GROUP_DEPTH } = require('./item-styles.js');
 
-const LIMITS = Object.freeze({ cards: 24, items: 1000, bytes: 64 * 1024 * 1024, coordinate: 100000, text: 10000, groupDepth: 8 });
+const LIMITS = Object.freeze({ cards: 24, items: 1000, bytes: 64 * 1024 * 1024, coordinate: 100000, text: 10000, groupDepth: GROUP_DEPTH });
 const VERSION = 3;
 const ITEM_TYPES = Object.freeze(['text', 'note', 'shape', 'frame', 'image', 'line']);
 const SHAPES = Object.freeze(['rect', 'ellipse']);
 const ITEM_SIZE = Object.freeze({ min: 8, max: 8000 });
 const ASSET_NAME = /^[a-f0-9]{64}\.(?:png|jpg|gif|webp)$/;
-// Items pick from fixed palettes; the default look is stored as an absent field.
-const COLORS = Object.freeze(['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray']);
-const FONT_SIZES = Object.freeze(['small', 'large', 'huge']);
-const COLORED_TYPES = Object.freeze(['text', 'note', 'shape', 'frame', 'line']);
-const TEXT_TYPES = Object.freeze(['text', 'note', 'shape']);
 const PROFILES = Object.freeze([
     { id: 'shell', name: 'Terminal', command: '', color: '#94a3b8', initials: '>_' },
     { id: 'claude', name: 'Claude Code', command: 'claude', color: '#d6a181', initials: 'CC' },

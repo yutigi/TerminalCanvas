@@ -5,7 +5,8 @@ const Geometry = window.TerminalCanvasGeometry;
 const itemViews = new Map();
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ITEM_LIMIT = 1000;
-const GROUP_DEPTH = 8;
+// Palettes and the nesting limit come from item-styles.js, which the host's validation also uses.
+const { COLORS: ITEM_COLORS, FONT_SIZES: ITEM_FONT_SIZES, COLORED_TYPES, TEXT_TYPES, GROUP_DEPTH } = window.TerminalCanvasItemStyles;
 const CREATION_TOOLS = Object.freeze(['text', 'note', 'rect', 'ellipse', 'frame', 'line', 'arrow']);
 const ITEM_DEFAULTS = Object.freeze({
     text: { w: 220, h: 40, min: [40, 24] },
@@ -15,11 +16,6 @@ const ITEM_DEFAULTS = Object.freeze({
     frame: { w: 720, h: 460, min: [120, 80] },
     image: { w: 320, h: 240, min: [24, 24] }
 });
-// Fixed palettes; an absent `color` or `fontSize` is the default look.
-const ITEM_COLORS = Object.freeze(['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray']);
-const ITEM_FONT_SIZES = Object.freeze(['small', 'large', 'huge']);
-const COLORED_TYPES = Object.freeze(['text', 'note', 'shape', 'frame', 'line']);
-const TEXT_TYPES = Object.freeze(['text', 'note', 'shape']);
 const itemKind = item => (item.type === 'shape' ? item.shape : item.type);
 const clampCoordinate = n => Math.max(-100000, Math.min(100000, n));
 const clampSize = (n, min) => Math.max(min, Math.min(8000, n));
@@ -30,11 +26,12 @@ const findCard = id => workspace.cards.find(card => card.id === id);
 const findElement = id => findCard(id) || findItem(id);
 const elementNode = id => sessions.get(id)?.element || itemViews.get(id)?.element;
 const zOf = id => Number(elementNode(id)?.style.zIndex) || 0;
-function attachTarget(id) {
-    const e = findElement(id);
+// What a connector end needs from the element it attaches to. Lines cannot be attached to.
+function attachGeometry(e) {
     if (!e || e.type === 'line') return null;
     return { bounds: { x: e.x, y: e.y, w: e.w, h: e.h }, ellipse: e.type === 'shape' && e.shape === 'ellipse' };
 }
+const attachTarget = id => attachGeometry(findElement(id));
 const linePoints = line => Geometry.resolveLine(line, attachTarget);
 function boundsOf(e) {
     if (e.type !== 'line') return { x: e.x, y: e.y, w: e.w, h: e.h };
