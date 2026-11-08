@@ -94,3 +94,54 @@ test('PowerShell integration preserves the custom prompt, failed status and nati
     directoryReports('win32', cwd => reports.push(cwd))(result.stdout);
     assert.deepEqual(reports, [process.cwd()]);
 });
+
+test('OSC 7 preserves local-machine and localhost UNC shares without changing drive or Unix paths', () => {
+    const hostname = require('node:os').hostname().toLowerCase();
+    const suffix = '/share/a%20folder/%25literal/%23name/%E5%AD%90';
+    for (const host of [hostname, 'localhost', 'LOCALHOST']) {
+        const stream = `\x1b]7;file://${host}${suffix}\x07`;
+        const expected = '\\\\' + host.toLowerCase() + String.raw`\share\a folder\%literal\#name\子`;
+        for (let split = 0; split <= stream.length; split++) {
+            const reports = [], observe = directoryReports('win32', cwd => reports.push(cwd));
+            observe(stream.slice(0, split)); observe(stream.slice(split));
+            assert.deepEqual(reports, [expected], `UNC host ${host}, split ${split}`);
+        }
+    }
+    const reports = [], observe = directoryReports('win32', cwd => reports.push(cwd));
+    observe('\x1b]7;file://localhost/C:/a%20folder\x07');
+    observe('\x1b]7;file://localhost/share/encoded%5cseparator\x07');
+    assert.deepEqual(reports, [String.raw`C:\a folder`, null]);
+    const unix = [];
+    directoryReports('linux', cwd => unix.push(cwd))(`\x1b]7;file://${hostname}/a%20folder\x07`);
+    assert.deepEqual(unix, ['/a folder']);
+});
+
+for (const executable of ['powershell.exe', 'pwsh.exe']) {
+    test(`${executable} prompt supports strict mode with missing and existing LASTEXITCODE`, { skip: process.platform !== 'win32' }, t => {
+        const { spawnSync } = require('node:child_process');
+        const { powershellArgs } = require('../src/terminal-cwd.cjs');
+        const bootstrap = Buffer.from(powershellArgs()[3], 'base64').toString('utf16le');
+        const script = `Set-StrictMode -Version Latest
+            $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
+            Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Ignore
+            function global:prompt { "CUSTOM:$?>" }
+            ${bootstrap}
+            Write-Error 'expected failure' -ErrorAction SilentlyContinue
+            $result = prompt
+            $exists = $null -ne (Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Ignore)
+            Write-Output ('RESULT=' + $result + ';EXISTS=' + $exists)
+            $global:LASTEXITCODE = 37
+            Write-Error 'expected failure' -ErrorAction SilentlyContinue
+            $result = prompt
+            Write-Output ('RESULT2=' + $result + ';LAST=' + $global:LASTEXITCODE)`;
+        const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+        if (executable === 'pwsh.exe' && result.error?.code === 'ENOENT') return t.skip('PowerShell 7 is not installed.');
+        assert.equal(result.status, 0, result.error?.message || result.stderr);
+        assert.equal(result.stderr, '');
+        assert.match(result.stdout, /RESULT=CUSTOM:False>;EXISTS=False/);
+        assert.match(result.stdout, /RESULT2=CUSTOM:False>;LAST=37/);
+        const reports = [];
+        directoryReports('win32', cwd => reports.push(cwd))(result.stdout);
+        assert.deepEqual(reports, [process.cwd(), process.cwd()]);
+    });
+}

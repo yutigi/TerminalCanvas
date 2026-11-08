@@ -22,12 +22,20 @@ function directoryReports(platform, report) {
             report(validDirectory(value, platform));
         } else if (!overflow && payload.startsWith('7;')) {
             try {
-                const url = new URL(payload.slice(2));
+                const uri = payload.slice(2);
+                const url = new URL(uri);
                 const localHost = !url.hostname || ['localhost', os.hostname().toLowerCase()].includes(url.hostname.toLowerCase());
                 if (url.protocol === 'file:' && (localHost || platform === 'win32')) {
-                    // A non-local file host on Windows represents a UNC share.
-                    if (localHost) url.hostname = '';
-                    report(validDirectory(fileURLToPath(url, { windows: platform === 'win32' }), platform));
+                    // Windows file authorities remain UNC hosts, even on this machine.
+                    if (localHost && platform !== 'win32') url.hostname = '';
+                    let directory;
+                    if (platform === 'win32' && /^file:\/\/localhost\//i.test(uri) && !/^\/[a-z]:/i.test(url.pathname)) {
+                        // WHATWG URLs erase localhost. Keep its UNC meaning for a
+                        // share path, while file://localhost/C:/... stays a drive path.
+                        if (/%5c/i.test(url.pathname)) throw new TypeError('Encoded path separator.');
+                        directory = '\\\\localhost' + fileURLToPath(url, { windows: false }).replaceAll('/', '\\');
+                    } else directory = fileURLToPath(url, { windows: platform === 'win32' });
+                    report(validDirectory(directory, platform));
                 }
             } catch { report(null); }
         }
@@ -56,14 +64,16 @@ const powershellBootstrap = `
 $global:__TerminalCanvasPrompt = $function:prompt
 function global:prompt {
     $tcPrompt = & $global:__TerminalCanvasPrompt
-    $tcExitCode = $global:LASTEXITCODE
+    $tcExitVariable = Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Ignore
+    $tcExitCode = $null
+    if ($null -ne $tcExitVariable) { $tcExitCode = $tcExitVariable.Value }
     $tcDirectory = ''
     try {
         $tcLocation = $executionContext.SessionState.Path.CurrentLocation
         if ($tcLocation.Provider.Name -eq 'FileSystem') { $tcDirectory = ([System.Uri]$tcLocation.ProviderPath).AbsoluteUri }
     } catch { }
     try { [Console]::Write(([char]27).ToString() + ']7;' + $tcDirectory + [char]7) } catch { }
-    $global:LASTEXITCODE = $tcExitCode
+    if ($null -ne $tcExitVariable) { $global:LASTEXITCODE = $tcExitCode }
     $tcPrompt
 }
 `;
