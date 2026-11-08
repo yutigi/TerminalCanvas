@@ -365,3 +365,32 @@ test('shift-dragging empty canvas selects enclosed items; clicking empty canvas 
     viewport.dispatch('pointerup', { clientX: 900, clientY: 900 });
     assert.deepEqual(json(context, '[...selection]'), []);
 });
+test('the style toolbar colors selected items and sizes only items that hold text', async () => {
+    const workspace = createWorkspace();
+    const card = createCard({ x: 0, y: 900 });
+    workspace.cards.push(card);
+    workspace.items.push(
+        note('a', 0, 0), { id: 'box', type: 'shape', shape: 'rect', x: 300, y: 0, w: 180, h: 110, text: 'Hi' },
+        { id: 'frame', type: 'frame', x: -50, y: -50, w: 900, h: 500, title: 'Plan' },
+        { id: 'pic', type: 'image', x: 0, y: 400, w: 100, h: 100, asset: `${'a'.repeat(64)}.png` },
+        { id: 'wire', type: 'line', start: { id: 'a' }, end: { id: 'box' } }
+    );
+    const { elements, context } = await boot(workspace);
+    const bar = elements.get('#style-toolbar'), sizes = elements.get('#style-sizes');
+    assert.equal(bar.hidden, true, 'nothing selected');
+    vm.runInContext(`select(${JSON.stringify(card.id)}); select("pic", { additive: true })`, context);
+    assert.equal(bar.hidden, true, 'terminals and images have no style');
+    vm.runInContext('select("frame"); select("wire", { additive: true })', context);
+    assert.deepEqual([bar.hidden, sizes.hidden], [false, true], 'frames and lines take a color but no text size');
+    vm.runInContext('select("a"); select("box", { additive: true }); select("wire", { additive: true }); select("pic", { additive: true })', context);
+    assert.deepEqual([bar.hidden, sizes.hidden], [false, false]);
+    vm.runInContext('setItemColor("blue"); setItemFontSize("huge")', context);
+    const style = () => json(context, 'workspace.items.map(i => [i.id, i.color ?? null, i.fontSize ?? null])');
+    assert.deepEqual(style(), [['a', 'blue', 'huge'], ['box', 'blue', 'huge'], ['frame', null, null], ['pic', null, null], ['wire', 'blue', null]]);
+    vm.runInContext('setItemColor("magenta"); setItemFontSize("12px")', context);
+    assert.deepEqual(style()[0], ['a', 'blue', 'huge'], 'values outside the palettes are ignored');
+    vm.runInContext('setItemColor("default"); setItemFontSize("medium")', context);
+    assert.deepEqual(style(), [['a', null, null], ['box', null, null], ['frame', null, null], ['pic', null, null], ['wire', null, null]], 'defaults are stored as absent fields');
+    vm.runInContext(`setFocus(${JSON.stringify(card.id)})`, context);
+    assert.equal(bar.hidden, true, 'focus mode hides the style toolbar');
+});

@@ -231,7 +231,7 @@ function applySelection(raise, focusTerminal = raise) {
     if (raise && item && !['frame', 'line'].includes(item.type)) itemViews.get(item.id).element.style.zIndex = String(++topCardZIndex);
     // Board shortcuts need focus outside the terminal, which would otherwise receive Delete and Ctrl+G.
     if (selected && !(s && focusTerminal) && document.activeElement?.closest?.('.xterm')) viewport.focus({ preventScroll: true });
-    renderSelectionBox(); refresh();
+    renderSelectionBox(); renderStyleToolbar(); refresh();
 }
 function renderSelectionBox() {
     const box = $('#selection-box');
@@ -328,7 +328,7 @@ function setFocus(id) {
     viewport.classList.toggle('focus-mode', !!id);
     $('#exit-focus').hidden = !id;
     for (const [key, s] of sessions) s.element.classList.toggle('focused', key === id);
-    renderCamera();
+    renderCamera(); renderStyleToolbar();
     if (id) select(id);
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
@@ -475,7 +475,7 @@ function drag(element, allowed, move, initial) {
         beginDrag(element, event, (dx, dy) => move(dx, dy, data), () => changed());
     });
 }
-const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .minimap, .exit-focus');
+const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus');
 // Capture phase: finish in-place edits, and let creation tools draw over existing elements.
 viewport.addEventListener('pointerdown', event => {
     if (editing && !event.target.closest('.item-editor, .frame-title-editor')) document.activeElement?.blur();
@@ -596,6 +596,8 @@ function setTool(name) {
     });
 }
 document.querySelectorAll('[data-tool]').forEach(button => button.onclick = () => { if (ready) setTool(button.dataset.tool); });
+document.querySelectorAll('[data-color]').forEach(button => button.onclick = () => { if (ready) setItemColor(button.dataset.color); });
+document.querySelectorAll('[data-font-size]').forEach(button => button.onclick = () => { if (ready) setItemFontSize(button.dataset.fontSize); });
 $('#image-tool').onclick = () => run(async () => {
     if (!ready || focused) return;
     const result = await invoke('pick-image');
@@ -674,7 +676,7 @@ if (bridge) {
             button.onclick = () => openLaunch(p.id); $('#profile-list').append(button);
         }
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
-        loadWorkspace(initial.workspace); ready = true;
+        loadWorkspace(initial.workspace); ready = true; renderStyleToolbar();
         if (initial.warning) toast(initial.warning);
     });
 } else toast('Desktop bridge unavailable. Run npm start or npm run dev for the layout preview.');

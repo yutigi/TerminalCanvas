@@ -15,6 +15,11 @@ const ITEM_DEFAULTS = Object.freeze({
     frame: { w: 720, h: 460, min: [120, 80] },
     image: { w: 320, h: 240, min: [24, 24] }
 });
+// Fixed palettes; an absent `color` or `fontSize` is the default look.
+const ITEM_COLORS = Object.freeze(['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray']);
+const ITEM_FONT_SIZES = Object.freeze(['small', 'large', 'huge']);
+const COLORED_TYPES = Object.freeze(['text', 'note', 'shape', 'frame', 'line']);
+const TEXT_TYPES = Object.freeze(['text', 'note', 'shape']);
 const itemKind = item => (item.type === 'shape' ? item.shape : item.type);
 const clampCoordinate = n => Math.max(-100000, Math.min(100000, n));
 const clampSize = (n, min) => Math.max(min, Math.min(8000, n));
@@ -116,10 +121,16 @@ function mountLine(item) {
     renderLine(item);
     return view;
 }
+function applyItemStyle(item, element) {
+    element.classList.toggle('colored', !!item.color);
+    for (const color of ITEM_COLORS) element.classList.toggle(`color-${color}`, item.color === color);
+    for (const size of ITEM_FONT_SIZES) element.classList.toggle(`size-${size}`, item.fontSize === size);
+}
 function renderItem(item) {
     const view = itemViews.get(item.id);
     if (!view) return;
     if (item.type === 'line') return renderLine(item);
+    applyItemStyle(item, view.element);
     Object.assign(view.element.style, { left: `${item.x}px`, top: `${item.y}px`, width: `${item.w}px`, height: `${item.h}px` });
     // Larger frames sit further back so a frame drawn around smaller ones never hides them.
     if (item.type === 'frame') { view.element.style.zIndex = String(-1 - Math.round(item.w * item.h / 100)); view.title.textContent = item.title; }
@@ -129,6 +140,7 @@ function renderLine(item) {
     const view = itemViews.get(item.id);
     if (!view) return;
     const { start, end } = linePoints(item);
+    applyItemStyle(item, view.element);
     const path = `M${start.x} ${start.y}L${end.x} ${end.y}`;
     view.hit.setAttribute('d', path);
     view.stroke.setAttribute('d', path);
@@ -249,6 +261,15 @@ function startEditing(id) {
     editor.addEventListener('blur', () => finishEditing(id), { once: true });
     editor.focus(); editor.select();
 }
+// A text label's height follows its content when its text size changes.
+function fitTextLabel(item) {
+    const element = itemViews.get(item.id)?.element;
+    if (!element || item.type !== 'text') return;
+    element.style.height = 'auto';
+    const height = element.offsetHeight;
+    if (height) item.h = clampSize(Math.ceil(height), ITEM_DEFAULTS.text.min[1]);
+    renderItem(item);
+}
 function fitTextHeight(item, editor) {
     editor.style.height = '0px';
     const height = editor.scrollHeight;
@@ -306,4 +327,39 @@ async function importImageFiles(files, point) {
         await placeImage(asset, { x: point.x + index * 24, y: point.y + index * 24 });
     }
     return images.length;
+}
+// The style toolbar edits the color of selected items and the text size of those that hold text.
+const selectedItems = types => [...selection].map(findItem).filter(item => item && types.includes(item.type));
+function renderStyleToolbar() {
+    const bar = $('#style-toolbar');
+    const colored = ready && !focused ? selectedItems(COLORED_TYPES) : [];
+    const texts = colored.filter(item => TEXT_TYPES.includes(item.type));
+    bar.hidden = !colored.length;
+    $('#style-sizes').hidden = $('#style-divider').hidden = !texts.length;
+    if (bar.hidden) return;
+    const shared = (list, key, fallback) => (list.every(item => (item[key] || fallback) === (list[0][key] || fallback)) ? list[0][key] || fallback : null);
+    const color = shared(colored, 'color', 'default'), size = texts.length ? shared(texts, 'fontSize', 'medium') : null;
+    bar.querySelectorAll('[data-color]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.color === color)));
+    bar.querySelectorAll('[data-font-size]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fontSize === size)));
+}
+function setItemColor(color) {
+    const items = selectedItems(COLORED_TYPES);
+    if (!items.length || (color !== 'default' && !ITEM_COLORS.includes(color))) return;
+    for (const item of items) {
+        if (color === 'default') delete item.color;
+        else item.color = color;
+        renderItem(item);
+    }
+    renderStyleToolbar(); changed();
+}
+function setItemFontSize(size) {
+    const items = selectedItems(TEXT_TYPES);
+    if (!items.length || (size !== 'medium' && !ITEM_FONT_SIZES.includes(size))) return;
+    for (const item of items) {
+        if (size === 'medium') delete item.fontSize;
+        else item.fontSize = size;
+        renderItem(item);
+        fitTextLabel(item);
+    }
+    renderLines(); renderSelectionBox(); renderStyleToolbar(); renderMinimap(); changed();
 }

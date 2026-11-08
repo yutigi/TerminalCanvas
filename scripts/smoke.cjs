@@ -140,15 +140,15 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     const asset = await storeImage(path.join(app.getPath('userData'), 'assets'), nativeImage.createFromBitmap(bitmap, { width: 64, height: 48 }).toPNG());
     const boardCard = createCard({ title: 'Board terminal', x: 1100, y: 0 });
     const board = {
-        version: 2, name: 'Board smoke workspace', camera: { x: 40, y: 60, z: .6 }, cards: [boardCard],
+        version: 3, name: 'Board smoke workspace', camera: { x: 40, y: 60, z: .6 }, cards: [boardCard],
         items: [
             { id: 'frame', type: 'frame', x: -40, y: -40, w: 1020, h: 560, title: 'Sprint board' },
-            { id: 'label', type: 'text', x: 0, y: 0, w: 300, h: 40, text: 'Release plan' },
-            { id: 'note', type: 'note', x: 0, y: 80, w: 200, h: 200, text: 'Write the\nrelease notes' },
+            { id: 'label', type: 'text', x: 0, y: 0, w: 300, h: 50, text: 'Release plan', fontSize: 'large' },
+            { id: 'note', type: 'note', x: 0, y: 80, w: 200, h: 200, text: 'Write the\nrelease notes', color: 'green' },
             { id: 'box', type: 'shape', shape: 'rect', x: 380, y: 80, w: 180, h: 110, text: 'Review' },
-            { id: 'ring', type: 'shape', shape: 'ellipse', x: 700, y: 80, w: 150, h: 150, text: 'Ship' },
+            { id: 'ring', type: 'shape', shape: 'ellipse', x: 700, y: 80, w: 150, h: 150, text: 'Ship', color: 'purple' },
             { id: 'pic', type: 'image', x: 380, y: 300, w: 192, h: 144, asset },
-            { id: 'wire', type: 'line', start: { id: 'note' }, end: { id: 'box' }, arrow: true },
+            { id: 'wire', type: 'line', start: { id: 'note' }, end: { id: 'box' }, arrow: true, color: 'blue' },
             { id: 'to-terminal', type: 'line', start: { id: 'ring' }, end: { id: boardCard.id }, arrow: true }
         ]
     };
