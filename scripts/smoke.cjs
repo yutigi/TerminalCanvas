@@ -80,6 +80,27 @@ async function withSavedClipboard(task) {
     }
 }
 const clipboardText = async () => (await clipboard.readText()).replace(/\r\n/g, '\n');
+// Ctrl+C writes the copied note's text to the system clipboard; Ctrl+V on the non-editable canvas then
+// arrives as a paste event and pastes a copy with a new ID.
+async function copyAndPasteNatively(win) {
+    const expected = 'Write the\nrelease notes';
+    await withSavedClipboard(async () => {
+        await win.webContents.executeJavaScript('select("note"); viewport.focus()');
+        await sendInput(win, key('C', ['control']));
+        const deadline = Date.now() + 2000;
+        while (await clipboardText() !== expected) {
+            if (Date.now() > deadline) throw new Error('Ctrl+C did not write the copied items to the clipboard.');
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        const count = await win.webContents.executeJavaScript('workspace.items.length');
+        await sendInput(win, key('V', ['control']));
+        const pasted = await win.webContents.executeJavaScript('({ count: workspace.items.length, item: workspace.items.at(-1), selected: [...selection] })');
+        assert.equal(pasted.count, count + 1, 'Ctrl+V pastes the copied note');
+        assert.equal(pasted.item.text, expected);
+        assert.notEqual(pasted.item.id, 'note');
+        assert.deepEqual(pasted.selected, [pasted.item.id]);
+    });
+}
 // Terminal copy and paste go through these desktop commands.
 async function checkClipboardBridge(win) {
     const marker = `terminal-canvas-clipboard-${Date.now()}\nsecond line`;
@@ -207,9 +228,10 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     assert.equal(await win.webContents.executeJavaScript('findItem("box").groups ?? null'), null, 'Ctrl+Z undoes the grouping');
     await sendInput(win, key('Z', ['control', 'shift']));
     assert.deepEqual(await win.webContents.executeJavaScript('findItem("box").groups'), [grouped.box], 'Ctrl+Shift+Z redoes it');
+    await copyAndPasteNatively(win);
     // Everything the renderer builds must pass the desktop host's validation, or autosave would fail.
     const saved = validateWorkspace(await win.webContents.executeJavaScript('JSON.parse(JSON.stringify(workspace))'));
-    assert.equal(saved.items.length, board.items.length + 1);
+    assert.equal(saved.items.length, board.items.length + 2);
     const boardScreenshot = path.resolve(__dirname, '../.cache/smoke-board.png');
     await win.webContents.executeJavaScript('setSelection([]); fitCanvas()');
     await fs.writeFile(boardScreenshot, (await captureScreenshot(win)).toPNG());

@@ -627,10 +627,7 @@ $('#export-workspace').onclick = () => run(async () => {
 });
 document.addEventListener('paste', event => {
     if (!ready || focused || document.querySelector('dialog[open]') || event.target?.closest?.('input,textarea,.xterm')) return;
-    const files = [...(event.clipboardData?.files || [])];
-    if (!files.some(file => /^image\//.test(file.type))) return;
-    event.preventDefault();
-    run(() => importImageFiles(files, viewportCenterWorld()));
+    if (pasteFromClipboard(event.clipboardData)) event.preventDefault();
 });
 viewport.addEventListener('dragover', event => {
     if (!ready || focused || ![...(event.dataTransfer?.types || [])].includes('Files')) return;
@@ -644,7 +641,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy / paste terminal text</span><kbd>Ctrl Shift C / V</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy / paste terminal text</span><kbd>Ctrl Shift C / V</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;
@@ -658,6 +655,9 @@ document.addEventListener('keydown', event => {
         if (key === 'g' && onBoard) { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }
         if (((key === 'z' && event.shiftKey) || (key === 'y' && !event.shiftKey)) && onBoard) { event.preventDefault(); redo(); }
         else if (key === 'z' && onBoard) { event.preventDefault(); undo(); }
+        // Ctrl+V arrives as a paste event, which also carries images from other apps.
+        if (!event.shiftKey && onBoard && (key === 'c' || key === 'x') && copySelection({ cut: key === 'x' })) event.preventDefault();
+        if (!event.shiftKey && onBoard && key === 'd') { event.preventDefault(); duplicateSelection(); }
         return;
     }
     if (event.altKey || event.target.closest('input,textarea,select,.xterm')) return;

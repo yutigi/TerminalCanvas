@@ -505,3 +505,65 @@ test('undo waits until a drag or text edit finishes', async () => {
     vm.runInContext('undo(); undo()', context);
     assert.deepEqual(json(context, 'workspace.items.map(i => [i.x, i.color ?? null])'), [[0, null], [400, null]]);
 });
+
+test('copy and paste clone items with new IDs, keep internal connectors, and free external ones', async () => {
+    const workspace = createWorkspace();
+    workspace.camera = { x: 0, y: 0, z: 1 };
+    const card = createCard({ x: 0, y: 600 });
+    const lone = createCard({ x: 900, y: 600 });
+    workspace.cards.push({ ...card, groups: ['mixed'] }, lone);
+    workspace.items.push(
+        note('a', 0, 0, { groups: ['pair'], color: 'green' }), note('b', 300, 0, { groups: ['pair'] }), note('far', 2000, 0, { groups: ['mixed'] }),
+        { id: 'inner', type: 'line', start: { id: 'a' }, end: { id: 'b' }, groups: ['pair'] },
+        { id: 'out', type: 'line', start: { id: 'b' }, end: { id: card.id }, groups: ['pair'] }
+    );
+    const { elements, context } = await boot(workspace);
+    vm.runInContext(`select(${JSON.stringify(lone.id)})`, context);
+    assert.equal(vm.runInContext('copySelection()', context), false);
+    assert.match(elements.get('#toast').textContent, /Terminals cannot be copied/);
+    vm.runInContext(`select(${JSON.stringify(card.id)}); duplicateSelection()`, context);
+    const fromTerminalGroup = json(context, 'workspace.items.at(-1)');
+    assert.deepEqual([fromTerminalGroup.x, fromTerminalGroup.groups], [2024, undefined], 'only the items of a terminal\'s group are copied');
+    vm.runInContext('undo()', context);
+    vm.runInContext('select("a"); copySelection()', context);
+    assert.deepEqual(json(context, 'boardClipboard.items.map(i => i.id)'), ['a', 'b', 'inner', 'out'], 'selecting one member copies the whole group');
+    assert.equal(json(context, 'boardClipboard.marker'), '4 canvas items');
+    assert.equal(vm.runInContext('pasteFromClipboard({ files: [], getData: () => "something else" })', context), false, 'other clipboard text wins');
+    assert.equal(vm.runInContext('pasteFromClipboard({ files: [], getData: () => "4 canvas items\\r\\n" })', context), true);
+    const pasted = json(context, 'workspace.items.slice(5)');
+    assert.equal(pasted.length, 4);
+    assert.equal(new Set(pasted.map(i => i.id)).size, 4);
+    assert.ok(pasted.every(i => !['a', 'b', 'inner', 'out'].includes(i.id)), 'fresh IDs');
+    const [a2, b2, inner2, out2] = pasted;
+    assert.deepEqual([a2.x, a2.y, a2.color], [24, 24, 'green']);
+    assert.deepEqual([inner2.start, inner2.end], [{ id: a2.id }, { id: b2.id }], 'connectors inside the copy attach to the copies');
+    assert.equal(out2.start.id, b2.id);
+    assert.deepEqual(Object.keys(out2.end).sort(), ['x', 'y'], 'a connector to an uncopied terminal gets a free end');
+    assert.ok(pasted.every(i => i.groups?.length === 1 && i.groups[0] === a2.groups[0] && a2.groups[0] !== 'pair'), 'the group is cloned');
+    assert.deepEqual(json(context, '[...selection].length'), 4, 'the paste is selected');
+    vm.runInContext('pasteBoardItems()', context);
+    assert.deepEqual(json(context, '[workspace.items[9].x, workspace.items[9].y]'), [48, 48], 'repeated pastes step further away');
+    vm.runInContext('undo()', context);
+    assert.equal(json(context, 'workspace.items.length'), 9, 'a paste is one undo step');
+});
+test('duplicate, cut, frames, and pasting out of sight', async () => {
+    const workspace = createWorkspace();
+    workspace.camera = { x: 0, y: 0, z: 1 };
+    workspace.items.push(
+        { id: 'frame', type: 'frame', x: 0, y: 0, w: 600, h: 400, title: 'Plan' }, note('inside', 50, 50, { text: 'Inside' }),
+        note('solo', 5000, 5000, { groups: ['lonely'] })
+    );
+    const { context } = await boot(workspace);
+    vm.runInContext('select("frame"); duplicateSelection()', context);
+    assert.deepEqual(json(context, 'workspace.items.slice(3).map(i => [i.type, i.x, i.y])'), [['frame', 24, 24], ['note', 74, 74]], 'a frame copies with its contents');
+    vm.runInContext('undo()', context);
+    vm.runInContext('select("frame"); copySelection({ cut: true })', context);
+    assert.deepEqual(json(context, 'workspace.items.map(i => i.id).filter(id => ["frame", "inside"].includes(id))'), [], 'cut removes the copied items');
+    assert.equal(json(context, 'boardClipboard.marker'), 'Plan\n\nInside');
+    vm.runInContext('undo()', context);
+    assert.equal(json(context, 'workspace.items.filter(i => i.id === "frame" || i.id === "inside").length'), 2, 'cut is undoable');
+    vm.runInContext('select("solo"); copySelection(); workspace.camera = { x: 0, y: 0, z: 1 }; pasteBoardItems()', context);
+    const copy = json(context, 'workspace.items.at(-1)');
+    assert.deepEqual([copy.x + copy.w / 2, copy.y + copy.h / 2], [550, 360], 'lands in the middle of the view');
+    assert.equal(copy.groups, undefined, 'a one-member group is not kept');
+});
