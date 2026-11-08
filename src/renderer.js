@@ -5,6 +5,7 @@ const paths = {
     canvas: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 9v12"/>',
     terminal: '<rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 4 3-4 3m7 0h5"/>',
     folder: '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>',
+    copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>', minus: '<path d="M5 12h14"/>',
     search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
     puzzle: '<path d="M8 3h3a3 3 0 1 1 6 0h4v7a3 3 0 1 0 0 6v5h-6a3 3 0 1 0-6 0H3v-6a3 3 0 1 0 0-6V3h5Z"/>',
@@ -40,7 +41,7 @@ const minimap = $('#minimap');
 const minimapMap = $('#minimap-map');
 const sessions = new Map();
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
-let ready = false, formBusy = false;
+let ready = false, formBusy = false, duplicateBusy = false;
 let topCardZIndex = 0;
 let minimapVisible = true, minimapLayout, minimapDrag;
 // `selection` holds every selected terminal and item; `selected` is the primary one.
@@ -359,7 +360,7 @@ function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
     el.querySelector('.card-directory span').textContent = card.cwd || 'Home directory';
@@ -386,7 +387,7 @@ function mount(card) {
         s.terminal.onResize(({ cols, rows }) => { if (['running', 'starting'].includes(s.status)) bridge.resize(card.id, cols, rows); });
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
-            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f'].includes(key)))) return false;
+            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd'].includes(key)))) return false;
             if ((event.ctrlKey || event.metaKey) && event.shiftKey && ['c', 'v'].includes(event.key.toLowerCase())) {
                 if (event.type === 'keydown') run(async () => {
                     if (event.key.toLowerCase() === 'c') await invoke('clipboard-write', s.terminal.getSelection());
@@ -407,6 +408,7 @@ function mount(card) {
     });
     el.querySelectorAll('[data-action]').forEach(button => button.onclick = () => run(async () => {
         const action = button.dataset.action;
+        if (action === 'duplicate') await duplicateTerminal(card);
         if (action === 'focus') setFocus(focused ? null : card.id);
         if (action === 'start') await start(card);
         if (action === 'toggle') {
@@ -516,6 +518,29 @@ viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault(); const rect = viewport.getBoundingClientRect(); zoom(Math.exp(-event.deltaY * .002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
 }, { passive: false });
+async function duplicateTerminal(source) {
+    if (!ready || duplicateBusy || document.querySelector('dialog[open]')) return;
+    if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
+    duplicateBusy = true;
+    try {
+        const result = await invoke('duplicate-directory', source);
+        if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
+        if (result.warning) {
+            openLaunch('shell');
+            $('#cwd').value = result.cwd;
+            $('#launch-error').textContent = result.warning;
+            $('#launch-error').hidden = false;
+            return;
+        }
+        if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
+        const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: source.x + 40, y: source.y + 40 });
+        if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
+        if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
+        workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
+        if (focused) setFocus(card.id);
+        await start(card);
+    } finally { duplicateBusy = false; }
+}
 function openLaunch(profileId = 'shell') {
     if (!ready || document.querySelector('dialog[open]')) return;
     if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
@@ -524,7 +549,7 @@ function openLaunch(profileId = 'shell') {
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
 }
 $('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); $('#terminal-title').value = p.name; $('#command').value = p.command; };
-$('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder'); if (result.path) $('#cwd').value = result.path; });
+$('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
 $('#launch-form').onsubmit = event => {
     event.preventDefault(); if (formBusy) return;
     formBusy = true; $('#launch-submit').disabled = true;
@@ -621,7 +646,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy / paste terminal text</span><kbd>Ctrl Shift C / V</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy / paste terminal text</span><kbd>Ctrl Shift C / V</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;
@@ -629,6 +654,10 @@ document.addEventListener('keydown', event => {
         const key = event.key.toLowerCase();
         if (key === 's') { event.preventDefault(); run(save); }
         if (key === 'o') { event.preventDefault(); $('#open-workspace').click(); }
+        if (key === 'd' && event.shiftKey && !event.altKey && !event.repeat && !event.target.closest('input,select,textarea:not(.xterm-helper-textarea),[contenteditable="true"]')) {
+            const card = findCard(event.target.closest('.terminal-card')?.dataset.id || selected);
+            if (card) { event.preventDefault(); run(() => duplicateTerminal(card)); }
+        }
         if (key === 'n' && event.shiftKey) { event.preventDefault(); openLaunch(); }
         if (key === 'f' && event.shiftKey) { event.preventDefault(); if (findCard(selected)) setFocus(focused ? null : selected); }
         if (key === 'g' && !focused && !event.target.closest('input,textarea,select,.xterm')) { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }

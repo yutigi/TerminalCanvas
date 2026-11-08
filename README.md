@@ -34,6 +34,8 @@ For a dependency-free **layout preview**, run `npm run dev` and visit [localhost
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
 - Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
+- Use **Duplicate** in a card header or **Ctrl + Shift + D** to start a fresh plain shell in that terminal's current directory. It gets a separate process and empty output; the source launch command and AI session are not copied. Ctrl + D keeps its normal terminal behavior.
+- **Browse** opens at the valid folder displayed in the creation dialog. Invalid or unavailable paths fall back to home, then the app's working directory; canceling preserves the input.
 - Use the card's stop/start controls to end or relaunch its shell. Closing a running card asks before stopping it.
 - Click a terminal hyperlink to open its HTTP/HTTPS destination directly in your default browser. Unsupported schemes and URLs containing credentials are blocked. Plain-text URL detection is not included.
 - Copy/paste with Ctrl + Shift + C/V. Ctrl + C remains the shell interrupt. Paste respects the terminal's bracketed-paste mode.
@@ -58,6 +60,7 @@ On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by def
 | Shortcut | Action |
 | --- | --- |
 | Ctrl + Shift + N | New terminal |
+| Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
 | / outside a terminal or input | Search terminals |
@@ -68,6 +71,12 @@ On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by def
 | Delete / Backspace | Delete selected board items |
 
 Single-key and board shortcuts apply only when focus is outside a terminal or text field, so they never reach a running shell.
+
+### Directory tracking and fallback
+
+Windows PowerShell reports its FileSystem location at each prompt, including after `cd`, `Set-Location`, and `Push-Location`. The integration preserves the profile's prompt and PSReadLine reader. Reports are private to each managed session and are removed before rendering. A submitted command invalidates the previous report; while a command/AI CLI or nested shell is running, before the first prompt, after replacing the integration functions, or in a non-filesystem provider such as `HKCU:`, the current directory may be unavailable. Duplicate then opens the New terminal dialog with an explanation and the first available folder: the source launch directory, home, then the app's working directory. Review or browse before starting; no fallback shell launches automatically. Deleted/inaccessible reported directories follow the same flow. Stopped cards also require review.
+
+Linux reads the managed shell's live directory through `/proc/<pid>/cwd`; this has not been validated on a Linux desktop. Directories belonging to independently launched child shells are not tracked. macOS and other platforms currently use the review dialog because live directory lookup is not implemented. Native folder-picker behavior outside Windows has not been validated.
 
 ## Persistence and process lifecycle
 
@@ -89,10 +98,14 @@ Restored cards are stopped until explicitly started. A saved command is never ex
 | `npm run icons` | Regenerate native PNG/ICO icons from `src/assets/logo.svg` using Electron |
 | `npm run check` | Check JavaScript syntax and the package manifest |
 | `npm test` | Run dependency-free icon, workspace, board geometry, image asset, minimap, terminal-manager, rebuild, renderer, and smoke-output/capture tests |
-| `npm run test:smoke` | Check the desktop renderer, native hyperlink clicks without confirmation (with the OS launch intercepted), minimap navigation, first-click terminal typing, board items (image loading, connector hit testing, note typing, grouping), real PTY output, resize, and cleanup; save `.cache/smoke-links.png`, `.cache/smoke.png`, `.cache/smoke-first-click.png`, and `.cache/smoke-board.png` |
+| `npm run test:smoke` | Check real directory changes, Duplicate button/shortcut and process isolation, fallback review, folder-picker paths/cancellation, the desktop renderer, native hyperlink clicks without confirmation (with the OS launch intercepted), minimap navigation, first-click terminal typing, board items (image loading, connector hit testing, note typing, grouping), real PTY output, resize, and cleanup; save `.cache/smoke-creation.png`, `.cache/smoke-links.png`, `.cache/smoke.png`, `.cache/smoke-first-click.png`, and `.cache/smoke-board.png` |
 | `npm run build` | Package an unsigned Windows portable executable in `release/` |
 
-Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Screenshot capture retries transient `UnknownVizError` failures up to five times, requesting a repaint and waiting 100 ms between attempts. Persistent failures, unrelated errors, and empty captures still fail the test. Current Windows validation passed syntax checks and all 67 automated tests; the desktop smoke test, including native GitHub hyperlink clicks and unsafe-scheme rejection, passed. A separate native-click check successfully launched the real default browser without confirmation. The board and hyperlink screenshots were visually inspected. In 14 desktop smoke runs on this machine, every run that reached the board checks passed them, but 5 runs failed earlier at the first-click terminal focus assertion. That assertion fails at the same rate on `main` without the board changes (4 of 8 runs), so it is a pre-existing intermittent failure. The native icon comparison against the SVG passed previously. The smoke test still emits a node-pty `AttachConsole failed` message during shutdown despite completing successfully. The default rebuild command passed previously; forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. Packaging remains unverified.
+Core tests use a controlled PTY substitute; the Windows prompt-hook test also runs the built-in PowerShell. The smoke test requires installed desktop dependencies and checks the real native integration. Screenshot capture retries transient `UnknownVizError` failures up to five times; unrelated errors and empty captures fail immediately. The smoke harness disables background throttling so animation-frame checks keep running when another window covers the app.
+
+Terminal-creation validation passed `npm run check`, all 79 automated tests, `npm run rebuild`, and the complete Windows desktop smoke suite. Coverage includes nested folders, spaces, apostrophes, Unicode, multiple source terminals, missing/file paths, split directory reports, queued commands, canceled pickers, and fallback review. The real Windows picker was inspected through the app's `pick-folder` command and opened at a nested folder with spaces. The creation screenshot was visually inspected.
+
+The existing hyperlink native-click assertion failed on one smoke run and passed on rerun; first-click focus also has a previously recorded intermittent failure on `main`. The native PTY helper still emits `AttachConsole failed` during shutdown despite a successful smoke result. `npm run build` was attempted and remains blocked by `MSB8040: Spectre-mitigated libraries are required for this project`; no packaged executable was produced. The source-build prerequisites are described above.
 
 Source lives in `src/`, scripts in `scripts/`, tests in `tests/`, and design notes in [docs/architecture.md](docs/architecture.md). `AGENTS.md` is preserved as requested; this README records the tooling added since that guide was created.
 

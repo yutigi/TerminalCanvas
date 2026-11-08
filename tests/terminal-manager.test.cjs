@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { TerminalManager } = require('../src/terminal-manager.cjs');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createCard } = require('../src/workspace.cjs');
 
 function harness(options = {}) {
@@ -26,7 +29,8 @@ test('does not launch anything until explicitly started; sends selected command 
     manager.start(card, 100, 30);
     assert.deepEqual(processes[0].writes, ['codex\r']);
     assert.equal(launches[0][0], 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-    assert.deepEqual(launches[0][1], ['-NoLogo']);
+    assert.deepEqual(launches[0][1].slice(0, 3), ['-NoLogo', '-NoExit', '-EncodedCommand']);
+    assert.match(Buffer.from(launches[0][1][3], 'base64').toString('utf16le'), /function global:prompt/);
     assert.equal(launches[0][2].env.ELECTRON_RUN_AS_NODE, undefined);
     assert.equal(launches[0][2].env.SAMPLE, 'yes');
     assert.equal(launches[0][2].cwd, process.cwd());
@@ -36,7 +40,8 @@ test('uses Windows PowerShell from SystemRoot for a plain terminal', () => {
     const result = manager.start(createCard());
     assert.equal(result.shell, 'D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
     assert.equal(launches[0][0], result.shell);
-    assert.deepEqual(launches[0][1], ['-NoLogo']);
+    assert.deepEqual(launches[0][1].slice(0, 3), ['-NoLogo', '-NoExit', '-EncodedCommand']);
+    assert.match(Buffer.from(launches[0][1][3], 'base64').toString('utf16le'), /function global:prompt/);
     assert.deepEqual(processes[0].writes, []);
 });
 
@@ -98,4 +103,64 @@ test('failed launch commands kill the just-created terminal', () => {
     manager.spawn = (...args) => { const p = originalSpawn(...args); p.write = () => { throw new Error('write failed'); }; return p; };
     assert.throws(() => manager.start(createCard({ command: 'echo hi' })), /write failed/);
     assert.equal(manager.sessions.size, 0); assert.equal(processes[0].killed, true);
+});
+function report(launch, cwd) {
+    return `\x1b]777;tc-cwd;${launch[2].env.TERMINAL_CANVAS_CWD_TOKEN};${Buffer.from(cwd).toString('base64')}\x07`;
+}
+test('tracks changed directories per Windows session without sending commands or copying an AI process', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-directory-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const nested = path.join(root, 'nested space', "project's 日本語");
+    fs.mkdirSync(nested, { recursive: true });
+    const { manager, launches, processes, events } = harness({ home: root });
+    const a = createCard({ profile: 'codex', cwd: root }), b = createCard({ cwd: root });
+    manager.start(a); manager.start(b);
+    processes[0].data(report(launches[0], root));
+    assert.ok(manager.directory(a).warning, 'a queued AI launch must not reuse the startup prompt');
+    processes[0].data(report(launches[0], nested));
+    processes[1].data(report(launches[1], root));
+    assert.equal(manager.directory(a).cwd, nested);
+    assert.equal(manager.directory(b).cwd, root);
+    const duplicate = createCard({ profile: 'shell', command: '', cwd: manager.directory(a).cwd });
+    manager.start(duplicate);
+    assert.equal(launches[2][2].cwd, nested);
+    assert.notEqual(processes[2].pid, processes[0].pid);
+    assert.deepEqual(processes[0].writes, ['codex\r']);
+    assert.deepEqual(processes[2].writes, []);
+    assert.deepEqual(events, [], 'directory metadata is not terminal output');
+    manager.write(a.id, 'cd somewhere\r');
+    assert.match(manager.directory(a).warning, /could not be determined/);
+    processes[0].data(report(launches[0], root));
+    assert.equal(manager.directory(a).warning, undefined);
+    manager.stop(a.id);
+    assert.match(manager.directory(a).warning, /stopped/);
+    manager.start(a);
+    assert.match(manager.directory(a).warning, /could not be determined/, 'restarts must not reuse a previous directory');
+});
+
+test('missing or non-filesystem current directories offer the launch folder then home for review', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fallback-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const launch = path.join(root, 'launch'), current = path.join(root, 'deleted directory');
+    fs.mkdirSync(launch); fs.mkdirSync(current);
+    const { manager, launches, processes } = harness({ home: root });
+    const card = createCard({ cwd: launch }); manager.start(card);
+    processes[0].data(report(launches[0], current));
+    fs.rmdirSync(current);
+    assert.equal(manager.directory(card).cwd, launch);
+    assert.match(manager.directory(card).warning, /no longer available/);
+    fs.rmdirSync(launch);
+    assert.equal(manager.directory(card).cwd, root);
+    processes[0].data(report(launches[0], ''));
+    assert.match(manager.directory(card).warning, /could not be determined/);
+});
+
+test('Linux resolves the live shell process directory and unsupported platforms offer review', () => {
+    const linux = harness({ platform: 'linux' });
+    const card = createCard(); linux.manager.start(card);
+    linux.processes[0].pid = process.pid;
+    if (process.platform === 'linux') assert.equal(linux.manager.directory(card).cwd, process.cwd());
+    else assert.ok(linux.manager.directory(card).warning);
+    const mac = harness({ platform: 'darwin' }); mac.manager.start(card);
+    assert.ok(mac.manager.directory(card).warning);
 });

@@ -72,6 +72,8 @@ async function checkTerminalLinks({ win, createCard, openedLinks }) {
 }
 exports.checkTerminalLinks = checkTerminalLinks;
 exports.run = async ({ app, win, terminals, createCard }) => {
+    // Longer native checks can be occluded by another app; keep animation-frame checks running.
+    win.webContents.setBackgroundThrottling(false);
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError|Content Security Policy/.test(message || '')) errors.push(message); });
     const deadline = Date.now() + 15000;
@@ -81,6 +83,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     }
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
+    await require('./smoke-creation.cjs').checkCreationWorkflows({ app, win, terminals, createCard, captureScreenshot });
     // Intercept only the OS launch so routine smoke runs do not spawn a browser.
     const openExternal = shell.openExternal;
     const openedLinks = [];
