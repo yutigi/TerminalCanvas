@@ -39,6 +39,8 @@ const world = $('#world');
 const minimap = $('#minimap');
 const minimapMap = $('#minimap-map');
 const sessions = new Map();
+// Terminals sit inside the zoomed world; xterm needs mouse coordinates without that scale.
+window.TerminalCanvasPointer?.install(window);
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
 let ready = false, formBusy = false;
 let topCardZIndex = 0;
