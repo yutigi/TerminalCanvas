@@ -32,6 +32,7 @@ const minimapMap = $('#minimap-map');
 const sessions = new Map();
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
 let ready = false, formBusy = false;
+let topCardZIndex = 0;
 let minimapVisible = true, minimapLayout, minimapDrag;
 const mark = profile => {
     const el = document.createElement('span');
@@ -186,7 +187,11 @@ function select(id) {
     selected = id;
     for (const [key, s] of sessions) s.element.classList.toggle('selected', key === id);
     const s = sessions.get(id);
-    if (s) { world.append(s.element); if (s.status === 'running') s.terminal?.focus(); }
+    if (s) {
+        // Reparenting during pointerdown interrupts the browser's terminal focus handling.
+        s.element.style.zIndex = String(++topCardZIndex);
+        if (s.status === 'running') s.terminal?.focus();
+    }
     refresh();
 }
 function centerCard(card) {
@@ -257,6 +262,7 @@ function setStatus(card, value, message) {
 function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
+    el.style.zIndex = String(++topCardZIndex);
     el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
@@ -396,6 +402,7 @@ function loadWorkspace(board) {
     workspace = board;
     setFocus(null);
     for (const id of sessions.keys()) dispose(id);
+    topCardZIndex = 0;
     selected = null; $('#workspace-name').value = board.name;
     board.cards.forEach(mount); renderCamera(); refresh();
 }

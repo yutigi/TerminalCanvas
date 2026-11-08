@@ -154,3 +154,22 @@ test('renderer restores terminal cards without executing commands and supports c
     elements.get('#zoom-reset').onclick();
     assert.equal(elements.get('#zoom-reset').textContent, '100%');
 });
+
+test('selecting terminal cards raises them without moving their DOM nodes', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard(), createCard());
+    const { elements, context } = await boot(workspace);
+    const world = elements.get('#world');
+    const cards = [...world.children];
+    vm.runInContext(`for (const s of sessions.values()) {
+        s.status = 'running'; s.focusCount = 0;
+        s.terminal = { focus() { s.focusCount++; } };
+    }`, context);
+    for (const index of [0, 1, 0]) {
+        cards[index].dispatch('pointerdown');
+        assert.deepEqual(world.children, cards, 'selection must keep terminal nodes attached in place');
+        assert.ok(Number(cards[index].style.zIndex) > Number(cards[1 - index].style.zIndex), 'selected card is on top');
+        assert.equal(vm.runInContext('selected', context), workspace.cards[index].id);
+    }
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).focusCount', context), 2);
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[1].id).focusCount', context), 1);
+});

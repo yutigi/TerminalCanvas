@@ -65,6 +65,39 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     await win.webContents.executeJavaScript('setFocus(workspace.cards[0].id)');
     assert.equal(await win.webContents.executeJavaScript('document.querySelector("#minimap").hidden'), true);
     await win.webContents.executeJavaScript('setFocus(null); fitCanvas()');
+    // Use native clicks: synthetic dispatchEvent does not run the browser's focus defaults.
+    const inputCards = [0, 1].map(index => createCard({ title: `Input terminal ${index + 1}`, x: index * 700, y: 0 }));
+    await win.webContents.executeJavaScript(`loadWorkspace(${JSON.stringify({ version: 1, name: 'Input smoke workspace', camera: { x: 20, y: 20, z: .65 }, cards: inputCards })});
+        (async () => { for (const card of workspace.cards) await start(card); select(workspace.cards[1].id); })()`);
+    const originalWrite = terminals.write;
+    const inputs = [];
+    terminals.write = function (id, data) { inputs.push({ id, data }); return originalWrite.call(this, id, data); };
+    try {
+        for (const index of [0, 0, 1, 0]) {
+            await win.webContents.executeJavaScript('document.querySelector("#search").focus()');
+            const point = await win.webContents.executeJavaScript(`(() => {
+                const rect = sessions.get(workspace.cards[${index}].id).element.querySelector('.xterm-screen').getBoundingClientRect();
+                return { x: Math.round(rect.left + 30), y: Math.round(rect.top + 30) };
+            })()`);
+            win.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+            win.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+            assert.equal(await win.webContents.executeJavaScript(`document.activeElement === sessions.get(workspace.cards[${index}].id).terminal.textarea`), true,
+                'one click must focus the terminal input');
+            const before = inputs.length;
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K' });
+            win.webContents.sendInputEvent({ type: 'char', keyCode: 'k' });
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K' });
+            const inputDeadline = Date.now() + 2000;
+            while (!inputs.slice(before).some(input => input.id === inputCards[index].id && input.data === 'k')) {
+                if (Date.now() > inputDeadline) throw new Error('First-click keyboard input did not reach the selected PTY.');
+                await new Promise(resolve => setTimeout(resolve, 20));
+            }
+        }
+        const inputScreenshot = path.resolve(__dirname, '../.cache/smoke-first-click.png');
+        await fs.mkdir(path.dirname(inputScreenshot), { recursive: true });
+        await fs.writeFile(inputScreenshot, (await captureScreenshot(win)).toPNG());
+    } finally { terminals.write = originalWrite; terminals.stopAll(); }
+    await win.webContents.executeJavaScript('loadWorkspace({ version: 1, name: "Minimap smoke workspace", camera: { x: 50, y: 40, z: .65 }, cards: ' + JSON.stringify(overviewCards) + ' }); fitCanvas()');
     const card = createCard({ title: 'Smoke terminal', cwd: app.getPath('home') });
     const marker = `terminal-canvas-${Date.now()}`;
     const originalEmit = terminals.emit;
@@ -91,7 +124,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         const screenshot = path.resolve(__dirname, '../.cache/smoke.png');
         await fs.mkdir(path.dirname(screenshot), { recursive: true });
         await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
-        console.log(`Desktop smoke passed: renderer, minimap navigation, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
+        console.log(`Desktop smoke passed: renderer, minimap navigation, first-click typing, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
     } finally { terminals.emit = originalEmit; terminals.stopAll(); }
     app.quit();
 };
