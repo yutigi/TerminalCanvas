@@ -322,6 +322,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     await require('./smoke-cwd.cjs').run({ win, terminals, createCard });
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
+    await require('./smoke-creation.cjs').checkCreationWorkflows({ app, win, terminals, createCard, captureScreenshot });
     await require('./smoke-clipboard.cjs').run({ win, terminals, createCard, hasOutputLine, capture: async () => {
         const screenshot = path.resolve(__dirname, '../.cache/smoke-clipboard.png');
         await fs.mkdir(path.dirname(screenshot), { recursive: true });

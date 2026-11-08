@@ -1,19 +1,21 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { isDirectory, fallbackDirectory } = require('./directories.cjs');
 const { validateCard, LIMITS } = require('./workspace.cjs');
 const { MetadataParser, sessionMetadata } = require('./session-metadata.cjs');
-const { directoryReports, powershellArgs, watchDirectory } = require('./terminal-cwd.cjs');
+const { directoryReports, powershellArgs, watchDirectory, processDirectory } = require('./terminal-cwd.cjs');
 
 // Terminal processes belong to the desktop host; renderers only receive this lifecycle API.
 class TerminalManager {
-    constructor({ spawn, emit, platform = process.platform, env = process.env, home = os.homedir(), integration, watchCwd = watchDirectory }) {
+    constructor({ spawn, emit, platform = process.platform, env = process.env, home = os.homedir(), integration, watchCwd = watchDirectory, readCwd = processDirectory }) {
         this.spawn = spawn;
         this.emit = emit;
         this.platform = platform;
         this.env = env;
         this.home = home;
         this.watchCwd = watchCwd;
+        this.readCwd = readCwd;
         this.sessions = new Map();
         this.stopping = new Set();
         this.metadata = new Map();
@@ -51,7 +53,7 @@ class TerminalManager {
         let terminal;
         try { terminal = this.spawn(shell, args, { name: 'xterm-256color', cwd, cols, rows, env }); }
         catch (error) { integration?.cleanup(); throw error; }
-        const entry = { terminal, integration, cwd: undefined, pending: 0, paused: false, subscriptions: [] };
+        const entry = { terminal, integration, cwd: undefined, ready: false, pending: 0, paused: false, subscriptions: [] };
         this.sessions.set(card.id, entry);
         this.metadata.set(card.id, { cwd, session: card.session || null });
         entry.parser = new MetadataParser({
@@ -75,7 +77,7 @@ class TerminalManager {
             if (cwd) { entry.parser.cwd = cwd; this.updateMetadata(card.id, { cwd }); }
             this.emit({ type: 'cwd', id: card.id, cwd });
         };
-        const observe = directoryReports(this.platform, report);
+        const observe = directoryReports(this.platform, report, ready => { entry.ready = ready; });
         entry.subscriptions.push(terminal.onData(data => {
             if (this.sessions.get(card.id) !== entry) return;
             entry.parser.feed(data);
@@ -96,13 +98,27 @@ class TerminalManager {
         }));
         if (!windows) entry.subscriptions.push(this.watchCwd(terminal.pid, this.platform, report));
         try {
-            if (integration?.command) terminal.write(integration.command + '\r');
-            if (command) terminal.write(command + '\r');
+            if (integration?.command) this.write(card.id, integration.command + '\r');
+            if (command) this.write(card.id, command + '\r');
         } catch (error) {
             this.stop(card.id);
             throw error;
         }
         return { id: card.id, pid: terminal.pid, cwd, shell, ...this.metadata.get(card.id) };
+    }
+    async directory(raw) {
+        const card = validateCard(raw);
+        const entry = this.sessions.get(card.id);
+        let current;
+        if (entry) {
+            if (this.platform === 'win32') current = entry.ready ? entry.cwd : null;
+            else current = await this.readCwd(entry.terminal.pid, this.platform);
+            if (this.sessions.get(card.id) !== entry) current = null;
+        }
+        if (isDirectory(current)) return { cwd: current };
+        const cwd = fallbackDirectory(card.cwd, this.home, process.cwd());
+        const reason = current ? 'The current directory is no longer available.' : 'The current directory could not be determined. The terminal may be busy, stopped, or using a shell without directory reporting.';
+        return { cwd, warning: `${reason} Review the suggested folder before starting a new shell.` };
     }
     updateMetadata(id, patch) {
         const previous = this.metadata.get(id);
@@ -135,7 +151,10 @@ class TerminalManager {
     }
     write(id, data) {
         if (typeof data !== 'string' || data.length > 65536) throw new Error('Input exceeds 64 KB.');
-        this.sessions.get(id)?.terminal.write(data);
+        const entry = this.sessions.get(id);
+        // Keep the displayed path, but require a fresh idle prompt before duplicating.
+        if (entry && /[\r\n]/.test(data)) entry.ready = false;
+        entry?.terminal.write(data);
     }
     resize(id, cols, rows) {
         this.dimensions(cols, rows);

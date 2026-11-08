@@ -117,6 +117,60 @@ test('OSC 7 preserves local-machine and localhost UNC shares without changing dr
 });
 
 for (const executable of ['powershell.exe', 'pwsh.exe']) {
+    test(`${executable} buffered line acceptance clears readiness and preserves reader output/status`, { skip: process.platform !== 'win32' }, t => {
+        const { spawnSync } = require('node:child_process');
+        const { powershellArgs } = require('../src/terminal-cwd.cjs');
+        const bootstrap = Buffer.from(powershellArgs().at(-1), 'base64').toString('utf16le');
+        const script = `$ProgressPreference = 'SilentlyContinue'
+            Set-StrictMode -Version Latest
+            function global:prompt { 'CUSTOM>' }
+            function global:PSConsoleHostReadLine { 'BUFFERED:' + $? + ':' + $global:LASTEXITCODE }
+            ${bootstrap}
+            $global:LASTEXITCODE = 37
+            $result = prompt
+            Write-Error 'expected failure' -ErrorAction SilentlyContinue
+            $line = PSConsoleHostReadLine
+            Write-Output ('LINE=' + $line + ';LAST=' + $global:LASTEXITCODE)
+            $result = prompt
+            $line = PSConsoleHostReadLine
+            Write-Output ('LINE2=' + $line)
+            function global:PSConsoleHostReadLine { throw 'reader failed' }
+            $result = prompt`;
+        const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+        if (executable === 'pwsh.exe' && result.error?.code === 'ENOENT') return t.skip('PowerShell 7 is not installed.');
+        assert.equal(result.status, 0, result.error?.message || result.stderr);
+        assert.equal(result.stderr, '');
+        assert.match(result.stdout, /LINE=BUFFERED:False:37;LAST=37/);
+        assert.match(result.stdout, /LINE2=BUFFERED:True:37/);
+        const readiness = [];
+        directoryReports('win32', () => {}, ready => readiness.push(ready))(result.stdout);
+        assert.deepEqual(readiness, [true, false, true, false, false], 'buffered lines clear each intermediate prompt; a replaced reader requires review');
+    });
+
+    test(`${executable} missing or throwing input readers cannot leave readiness enabled`, { skip: process.platform !== 'win32' }, t => {
+        const { spawnSync } = require('node:child_process');
+        const { powershellArgs } = require('../src/terminal-cwd.cjs');
+        const bootstrap = Buffer.from(powershellArgs().at(-1), 'base64').toString('utf16le');
+        for (const reader of ['', "function global:PSConsoleHostReadLine { throw 'reader failed' }"]) {
+            const script = `$ProgressPreference = 'SilentlyContinue'
+                Set-StrictMode -Version Latest
+                Remove-Item Function:PSConsoleHostReadLine -ErrorAction Ignore
+                function global:prompt { 'CUSTOM>' }
+                ${reader}
+                ${bootstrap}
+                $result = prompt
+                ${reader ? "try { PSConsoleHostReadLine } catch { Write-Output ('CAUGHT=' + $_.Exception.Message) }" : ''}`;
+            const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+            if (executable === 'pwsh.exe' && result.error?.code === 'ENOENT') return t.skip('PowerShell 7 is not installed.');
+            assert.equal(result.status, 0, result.error?.message || result.stderr);
+            assert.equal(result.stderr, '');
+            const readiness = [];
+            directoryReports('win32', () => {}, ready => readiness.push(ready))(result.stdout);
+            assert.deepEqual(readiness, reader ? [true, false] : [false]);
+            if (reader) assert.match(result.stdout, /CAUGHT=reader failed/);
+        }
+    });
+
     test(`${executable} prompt supports strict mode with missing and existing LASTEXITCODE`, { skip: process.platform !== 'win32' }, t => {
         const { spawnSync } = require('node:child_process');
         const { powershellArgs } = require('../src/terminal-cwd.cjs');
@@ -145,3 +199,16 @@ for (const executable of ['powershell.exe', 'pwsh.exe']) {
         assert.deepEqual(reports, [process.cwd(), process.cwd()]);
     });
 }
+
+test('readiness metadata survives every chunk boundary and cannot become a directory', () => {
+    const stream = '\x1b]777;tc-ready;0\x07\x1b]7;file:///C:/project\x07\x1b]777;tc-ready;1\x1b\\';
+    for (let split = 0; split <= stream.length; split++) {
+        const directories = [], readiness = [];
+        const observe = directoryReports('win32', cwd => directories.push(cwd), ready => readiness.push(ready));
+        observe(stream.slice(0, split)); observe(stream.slice(split));
+        assert.deepEqual(directories, ['C:\\project']);
+        assert.deepEqual(readiness, [false, true]);
+        observe('\x1b]777;tc-ready;2\x07');
+        assert.deepEqual(readiness, [false, true]);
+    }
+});

@@ -82,16 +82,17 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
         },
         onEvent(handler) { onEvent = handler; this.event = handler; }, resize() {}, acknowledge() {}, input() {}
     };
+    const documentListeners = new Map();
     const document = Object.assign(new Element(), {
         querySelector: selector => selector === 'dialog[open]' ? [...elements.values()].find(e => e.open) : elements.get(selector),
-        querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element()
+        querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener(type, fn) { documentListeners.set(type, fn); Element.prototype.addEventListener.call(this, type, fn); }
     });
     const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
     const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
     // Load renderer scripts in the same order as index.html.
     for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)" defer>/g)) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', script), 'utf8'), context);
     await new Promise(resolve => setImmediate(resolve));
-    return { elements, calls, context, onEvent, document, window, bridge };
+    return { elements, calls, context, onEvent, document, window, bridge, documentListeners, event: payload => bridge.event(payload) };
 }
 
 test('restored AI sessions offer Resume and a fresh shell without launching anything', async () => {
@@ -1092,6 +1093,118 @@ test('terminal hyperlinks open only on a trusted primary click, without confirma
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(prevented, true);
     assert.deepEqual(opened(), [{ action: 'open-link', payload: uri }]);
+});
+
+
+test('Browse forwards the field including nested spaces and preserves input on cancellation or errors', async () => {
+    const { elements, bridge, calls } = await boot(createWorkspace());
+    const field = elements.get('#cwd'); field.value = 'D:\\nested folder\\project';
+    bridge.invoke = async (action, payload) => { calls.push({ action, payload }); return { path: null }; };
+    elements.get('#browse-folder').onclick(); await flush();
+    assert.equal(calls.at(-1).action, 'pick-folder');
+    assert.equal(calls.at(-1).payload.cwd, field.value);
+    assert.equal(field.value, 'D:\\nested folder\\project');
+    field.value = 'invalid directory';
+    elements.get('#browse-folder').onclick(); await flush();
+    assert.equal(field.value, 'invalid directory');
+    bridge.invoke = async () => ({ error: 'Unavailable picker' });
+    elements.get('#browse-folder').onclick(); await flush();
+    assert.equal(field.value, 'invalid directory');
+    bridge.invoke = async () => ({ path: 'D:\\chosen space' });
+    elements.get('#browse-folder').onclick(); await flush();
+    assert.equal(field.value, 'D:\\chosen space');
+});
+
+test('Duplicate creates and starts only a fresh shell, selects it, and retains focus mode', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ profile: 'codex' }), createCard());
+    const { context, bridge, calls } = await boot(board);
+    // Desktop emulation stays outside this renderer state test.
+    vm.runInContext('start = async card => invoke("start", { card }); setFocus(workspace.cards[0].id)', context);
+    const fresh = createCard({ cwd: 'D:\\nested space\\current' });
+    bridge.invoke = async (action, payload) => {
+        calls.push({ action, payload });
+        if (action === 'duplicate-directory') return { cwd: fresh.cwd };
+        if (action === 'create-card') return { card: fresh };
+        return { ok: true };
+    };
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    const creation = calls.find(c => c.action === 'create-card').payload;
+    assert.deepEqual({ profile: creation.profile, command: creation.command, cwd: creation.cwd }, { profile: 'shell', command: '', cwd: fresh.cwd });
+    assert.equal(json(context, 'workspace.cards.length'), 3);
+    assert.equal(json(context, 'selected'), fresh.id);
+    assert.equal(json(context, 'focused'), fresh.id);
+    assert.equal(calls.filter(c => c.action === 'start').length, 1);
+    assert.equal(calls.find(c => c.action === 'start').payload.card.id, fresh.id);
+    assert.equal(json(context, 'workspace.cards[0].command'), 'codex');
+});
+
+test('Duplicate fallback opens a plain-shell dialog for review and does not launch or create anything', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ profile: 'codex' }));
+    const { context, bridge, calls, elements } = await boot(board);
+    bridge.invoke = async (action, payload) => { calls.push({ action, payload }); return { cwd: 'D:\\launch folder', warning: 'Current directory unavailable. Review folder.' }; };
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    assert.equal(elements.get('#launch-dialog').open, true);
+    assert.equal(elements.get('#cwd').value, 'D:\\launch folder');
+    assert.equal(elements.get('#profile').value, 'shell');
+    assert.equal(elements.get('#command').value, '');
+    assert.equal(elements.get('#launch-error').hidden, false);
+    assert.match(elements.get('#launch-error').textContent, /unavailable/);
+    assert.deepEqual(calls.map(c => c.action), ['initialize', 'duplicate-directory']);
+});
+
+test('Duplicate shortcut targets the focused terminal, preserves Ctrl+D, and ignores text fields and repeats', async () => {
+    let terminalHandler;
+    const terminal = { loadAddon() {}, open() {}, onData() {}, onResize() {}, attachCustomKeyEventHandler(fn) { terminalHandler = fn; } };
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    const { context, documentListeners } = await boot(board, { Terminal: function () { return terminal; }, FitAddon: { FitAddon: class {} } });
+    vm.runInContext('globalThis.duplicated = []; duplicateTerminal = async card => duplicated.push(card.id); selected = workspace.cards[0].id;', context);
+    const keydown = documentListeners.get('keydown');
+    const sourceTarget = { closest(selector) { return selector === '.terminal-card' ? { dataset: { id: board.cards[1].id } } : null; } };
+    const event = { key: 'd', ctrlKey: true, shiftKey: true, target: sourceTarget, preventDefault() {} };
+    assert.equal(terminalHandler({ ...event, shiftKey: false }), true, 'Ctrl+D must reach the shell');
+    assert.equal(terminalHandler(event), false, 'Ctrl+Shift+D must bypass xterm');
+    keydown({ ...event, shiftKey: false }); keydown({ ...event, repeat: true });
+    keydown({ ...event, target: { closest: () => ({}) } });
+    assert.deepEqual(json(context, 'duplicated'), []);
+    keydown(event); await flush();
+    assert.deepEqual(json(context, 'duplicated'), [board.cards[1].id]);
+});
+
+test('Duplicate enforces the card limit and ignores repeats or sources removed during lookup', async () => {
+    const full = createWorkspace(); full.cards = Array.from({ length: 24 }, () => createCard());
+    const limited = await boot(full);
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', limited.context);
+    assert.deepEqual(limited.calls.map(c => c.action), ['initialize']);
+    assert.match(limited.elements.get('#toast').textContent, /24/);
+    const board = createWorkspace(); board.cards.push(createCard());
+    const { context, bridge, calls } = await boot(board);
+    let complete;
+    bridge.invoke = (action, payload) => { calls.push({ action, payload }); return new Promise(resolve => { complete = resolve; }); };
+    const first = vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    assert.equal(calls.filter(c => c.action === 'duplicate-directory').length, 1);
+    vm.runInContext('workspace.cards = []', context);
+    complete({ cwd: 'D:\\current' }); await first;
+    assert.equal(calls.filter(c => c.action === 'create-card').length, 0);
+    assert.equal(vm.runInContext('duplicateBusy', context), false);
+});
+
+test('Duplicate clamps both axes at valid canvas boundaries before host validation', async () => {
+    for (const coordinate of [100000, 99980, -100000]) {
+        const board = createWorkspace(); board.cards.push(createCard({ x: coordinate, y: coordinate }));
+        const { context, bridge } = await boot(board);
+        vm.runInContext('start = async () => {}', context);
+        bridge.invoke = async (action, payload) => {
+            if (action === 'duplicate-directory') return { cwd: process.cwd() };
+            if (action === 'create-card') return { card: createCard(payload) };
+            return { ok: true };
+        };
+        await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+        assert.equal(json(context, 'workspace.cards.length'), 2);
+        const duplicate = json(context, 'workspace.cards[1]');
+        assert.equal(duplicate.x, Math.min(100000, coordinate + 40));
+        assert.equal(duplicate.y, Math.min(100000, coordinate + 40));
+    }
 });
 
 

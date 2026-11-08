@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
 const { LIMITS, PROFILES, validateWorkspace, createWorkspace, createCard } = require('./workspace.cjs');
+const { fallbackDirectory } = require('./directories.cjs');
 const { TerminalManager } = require('./terminal-manager.cjs');
 const { prepareIntegration } = require('./shell-integration.cjs');
 const { WorkspaceRecovery } = require('./workspace-recovery.cjs');
@@ -77,6 +78,7 @@ async function command(action, payload) {
         return { workspace, profiles: PROFILES, home: app.getPath('home'), platform: process.platform, warning };
     }
     if (action === 'create-card') return { card: createCard(payload) };
+    if (action === 'duplicate-directory') return terminals.directory(payload);
     if (action === 'start') {
         const card = recoveryState.rememberCard(payload?.card);
         const result = terminals.start(card, payload?.cols, payload?.rows, payload?.mode);
@@ -86,7 +88,7 @@ async function command(action, payload) {
     }
     if (action === 'stop') { terminals.stop(payload?.id); return { ok: true }; }
     if (action === 'pick-folder') {
-        const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Choose a project folder' });
+        const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Choose a project folder', defaultPath: fallbackDirectory(payload?.cwd, app.getPath('home'), process.cwd()) || undefined });
         return { path: result.canceled ? null : result.filePaths[0] };
     }
     if (action === 'autosave') { await recoveryState.persist(payload); return { ok: true }; }

@@ -13,10 +13,12 @@ function validDirectory(value, platform) {
 
 // Observe metadata without changing the PTY bytes or its backpressure accounting.
 // Bound retained data even if a program emits an unterminated/oversized OSC.
-function directoryReports(platform, report) {
+function directoryReports(platform, report, reportReady = () => {}) {
     let state = 'text', payload = '', overflow = false;
     function finish() {
-        if (!overflow && payload.startsWith('9;9;')) {
+        if (!overflow && /^777;tc-ready;[01]$/.test(payload)) {
+            reportReady(payload.endsWith('1'));
+        } else if (!overflow && payload.startsWith('9;9;')) {
             let value = payload.slice(4);
             if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
             report(validDirectory(value, platform));
@@ -59,9 +61,21 @@ function directoryReports(platform, report) {
 }
 
 // Profiles load normally before -Command runs; wrap the resulting prompt only in
-// this process. No profile files, input handlers, or user commands are rewritten.
+// this process. Keep the existing line reader and its bindings: PSReadLine can
+// buffer pasted input itself, beyond what Console.KeyAvailable can observe.
 const powershellBootstrap = `
 $global:__TerminalCanvasPrompt = $function:prompt
+$global:__TerminalCanvasReadLine = $function:PSConsoleHostReadLine
+$global:__TerminalCanvasReader = $null
+if ($null -ne $global:__TerminalCanvasReadLine) {
+    function global:PSConsoleHostReadLine {
+        try { & $global:__TerminalCanvasReadLine }
+        finally {
+            try { [Console]::Write(([char]27).ToString() + ']777;tc-ready;0' + [char]7) } catch { }
+        }
+    }
+    $global:__TerminalCanvasReader = $function:PSConsoleHostReadLine
+}
 function global:prompt {
     $tcPrompt = & $global:__TerminalCanvasPrompt
     $tcExitVariable = Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction Ignore
@@ -72,7 +86,15 @@ function global:prompt {
         $tcLocation = $executionContext.SessionState.Path.CurrentLocation
         if ($tcLocation.Provider.Name -eq 'FileSystem') { $tcDirectory = ([System.Uri]$tcLocation.ProviderPath).AbsoluteUri }
     } catch { }
-    try { [Console]::Write(([char]27).ToString() + ']7;' + $tcDirectory + [char]7) } catch { }
+    # Every accepted input line invalidates this prompt before execution, even
+    # when PSReadLine already drained the console into its own paste buffer.
+    # Without that reader (or if a profile/tool replaces it), require review.
+    $tcReady = '0'
+    if ($null -ne $global:__TerminalCanvasReader -and $function:PSConsoleHostReadLine -eq $global:__TerminalCanvasReader) { $tcReady = '1' }
+    try {
+        [Console]::Write(([char]27).ToString() + ']7;' + $tcDirectory + [char]7)
+        [Console]::Write(([char]27).ToString() + ']777;tc-ready;' + $tcReady + [char]7)
+    } catch { }
     if ($null -ne $tcExitVariable) { $global:LASTEXITCODE = $tcExitCode }
     $tcPrompt
 }

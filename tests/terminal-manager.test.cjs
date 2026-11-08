@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { TerminalManager } = require('../src/terminal-manager.cjs');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { createCard } = require('../src/workspace.cjs');
 
 function harness(options = {}) {
@@ -237,6 +241,91 @@ test('process lookups are scoped to sessions, disposed on exit, and ignored afte
     assert.equal(events.filter(e => e.type === 'cwd').length, 1);
     assert.equal(watchers[0].disposed, true);
     manager.stopAll(); assert.ok(watchers.every(w => w.disposed));
+});
+
+function report(_launch, cwd, ready = true) {
+    return '\x1b]7;' + (cwd ? pathToFileURL(cwd).href : '') + '\x07\x1b]777;tc-ready;' + (ready ? '1' : '0') + '\x07';
+}
+test('tracks changed directories per Windows session without sending commands or copying an AI process', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-directory-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const nested = path.join(root, 'nested space', "project's 日本語");
+    fs.mkdirSync(nested, { recursive: true });
+    const { manager, launches, processes, events } = harness({ home: root });
+    const a = createCard({ profile: 'codex', cwd: root }), b = createCard({ cwd: root });
+    manager.start(a); manager.start(b);
+    processes[0].data(report(launches[0], root, false));
+    assert.ok((await manager.directory(a)).warning, 'a queued AI launch must not reuse the startup prompt');
+    processes[0].data(report(launches[0], nested));
+    processes[1].data(report(launches[1], root));
+    assert.equal((await manager.directory(a)).cwd, nested);
+    assert.equal((await manager.directory(b)).cwd, root);
+    const duplicate = createCard({ profile: 'shell', command: '', cwd: (await manager.directory(a)).cwd });
+    manager.start(duplicate);
+    assert.equal(launches[2][2].cwd, nested);
+    assert.notEqual(processes[2].pid, processes[0].pid);
+    assert.deepEqual(processes[0].writes, ['codex\r']);
+    assert.deepEqual(processes[2].writes, []);
+    assert.ok(events.some(e => e.type === 'cwd'), 'directory display continues to update');
+    manager.write(a.id, 'cd somewhere\r');
+    assert.match((await manager.directory(a)).warning, /could not be determined/);
+    processes[0].data(report(launches[0], root));
+    assert.equal((await manager.directory(a)).warning, undefined);
+    manager.stop(a.id);
+    assert.match((await manager.directory(a)).warning, /stopped/);
+    manager.start(a);
+    assert.match((await manager.directory(a)).warning, /could not be determined/, 'restarts must not reuse a previous directory');
+});
+
+test('missing or non-filesystem current directories offer the launch folder then home for review', async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fallback-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const launch = path.join(root, 'launch'), current = path.join(root, 'deleted directory');
+    fs.mkdirSync(launch); fs.mkdirSync(current);
+    const { manager, launches, processes } = harness({ home: root });
+    const card = createCard({ cwd: launch }); manager.start(card);
+    processes[0].data(report(launches[0], current));
+    fs.rmdirSync(current);
+    assert.equal((await manager.directory(card)).cwd, launch);
+    assert.match((await manager.directory(card)).warning, /no longer available/);
+    fs.rmdirSync(launch);
+    assert.equal((await manager.directory(card)).cwd, root);
+    processes[0].data(report(launches[0], ''));
+    assert.match((await manager.directory(card)).warning, /could not be determined/);
+});
+
+test('Linux resolves the live shell process directory and unsupported platforms offer review', async () => {
+    const linux = harness({ platform: 'linux' });
+    const card = createCard(); linux.manager.start(card);
+    linux.processes[0].pid = process.pid;
+    if (process.platform === 'linux') assert.equal((await linux.manager.directory(card)).cwd, process.cwd());
+    else assert.ok((await linux.manager.directory(card)).warning);
+    const mac = harness({ platform: 'darwin', readCwd: async () => null }); mac.manager.start(card);
+    assert.ok((await mac.manager.directory(card)).warning);
+});
+
+test('queued Windows input requires an idle prompt even when intermediate directories are valid', async () => {
+    const { manager, processes } = harness();
+    const card = createCard({ cwd: process.cwd() }); manager.start(card);
+    processes[0].data(report(null, process.cwd()));
+    assert.equal((await manager.directory(card)).warning, undefined);
+    manager.write(card.id, 'cd first\rcd second; Start-Sleep 2\r');
+    processes[0].data(report(null, process.cwd(), false));
+    assert.equal(manager.sessions.get(card.id).cwd, process.cwd(), 'live display retains its last report');
+    assert.match((await manager.directory(card)).warning, /could not be determined/);
+    processes[0].data(report(null, process.cwd()));
+    assert.equal((await manager.directory(card)).warning, undefined, 'the final idle prompt restores duplication');
+});
+
+test('fresh process-directory lookups discard results from a stopped or restarted session', async () => {
+    let finish;
+    const { manager } = harness({ platform: 'linux', readCwd: () => new Promise(resolve => { finish = resolve; }) });
+    const card = createCard(); manager.start(card);
+    const lookup = manager.directory(card);
+    manager.stop(card.id); manager.start(card);
+    finish(process.cwd());
+    assert.match((await lookup).warning, /could not be determined/);
+    manager.stopAll();
 });
 
 test('shutdown waits for every killed PTY to finish native exit cleanup', async () => {
