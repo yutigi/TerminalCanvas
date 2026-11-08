@@ -47,8 +47,22 @@ class Element {
     showModal() { this.open = true; }
     close() { this.open = false; }
 }
-// Options other than `initialized` and `respond` are set on the renderer's window.
-async function boot(workspace, { initialized = true, respond, ...windowOverrides } = {}) {
+class KeyboardTerminal {
+    constructor() { this.selection = ''; this.pasted = []; }
+    loadAddon() {}
+    open() {}
+    onData(handler) { this.dataHandler = handler; }
+    onResize() {}
+    attachCustomKeyEventHandler(handler) { this.keyHandler = handler; }
+    getSelection() { return this.selection; }
+    hasSelection() { return !!this.selection; }
+    paste(text) { this.pasted.push(text); }
+    focus() {}
+    reset() { this.selection = ''; }
+    writeln() {}
+    dispose() {}
+}
+async function boot(workspace, { initialized = true, respond, terminals = false, clipboard = { text: '' }, readClipboard, platform = 'win32', ...windowOverrides } = {}) {
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
@@ -60,21 +74,23 @@ async function boot(workspace, { initialized = true, respond, ...windowOverrides
             calls.push({ action, payload });
             const response = respond?.(action, payload);
             if (response) return response;
-            if (action === 'initialize') return initialized ? { workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform: 'win32' } : new Promise(() => {});
+            if (action === 'initialize') return initialized ? { workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform } : new Promise(() => {});
+            if (action === 'clipboard-write') clipboard.text = payload;
+            if (action === 'clipboard-read') return readClipboard ? readClipboard() : { text: clipboard.text };
             return { ok: true };
         },
         onEvent(callback) { this.event = callback; }, resize() {}, acknowledge() {}, input() {}
     };
-    const document = {
+    const document = Object.assign(new Element(), {
         querySelector: selector => selector === 'dialog[open]' ? [...elements.values()].find(e => e.open) : elements.get(selector),
-        querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener() {}
-    };
-    const window = Object.assign(new Element(), { terminalCanvas: bridge }, windowOverrides);
-    const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
+        querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element()
+    });
+    const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
+    const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
     // Load renderer scripts in the same order as index.html.
     for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)" defer>/g)) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', script), 'utf8'), context);
     await new Promise(resolve => setImmediate(resolve));
-    return { elements, calls, context, window, bridge };
+    return { elements, calls, context, document, window, bridge };
 }
 test('renderer initializes an empty workspace and enables the launch dialog', async () => {
     const { elements, calls } = await boot(createWorkspace());
@@ -837,6 +853,117 @@ test('ending a text label edit with its original text keeps its original height'
     assert.equal(json(context, 'redrawn'), 1, 'connectors attached to the label follow its restored height');
 });
 
+
+function shortcut(terminal, key, values = {}) {
+    const event = { type: 'keydown', key, ctrlKey: true, metaKey: false, shiftKey: false, altKey: false,
+        prevented: false, stopped: false,
+        preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; }, ...values };
+    return { event, allowTerminal: terminal.keyHandler(event) };
+}
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+for (const focus of [false, true]) {
+    test(`terminal clipboard shortcuts copy selections and preserve interrupts in ${focus ? 'fullscreen Focus' : 'canvas'} view`, async () => {
+        const workspace = createWorkspace(); workspace.cards.push(createCard());
+        const clipboard = { text: 'keep me' };
+        const { context, calls } = await boot(workspace, { terminals: true, clipboard });
+        vm.runInContext(`sessions.get(workspace.cards[0].id).status = 'running'; ${focus ? 'setFocus(workspace.cards[0].id)' : ''}`, context);
+        const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+        terminal.selection = 'selected\ntext';
+        const copy = shortcut(terminal, 'c');
+        // The browser and xterm must both yield; otherwise copy may also interrupt.
+        assert.equal(copy.allowTerminal, false);
+        assert.equal(copy.event.prevented, true);
+        assert.equal(copy.event.stopped, true);
+        terminal.selection = 'changed before IPC';
+        await flush();
+        assert.equal(clipboard.text, 'selected\ntext', 'capture selection before async work');
+        for (const type of ['keypress', 'keyup']) shortcut(terminal, 'c', { type });
+        await flush();
+        assert.equal(calls.filter(c => c.action === 'clipboard-write').length, 1);
+        terminal.selection = '';
+        assert.equal(shortcut(terminal, 'c').allowTerminal, true, 'xterm must send Ctrl+C to the shell');
+        assert.equal(shortcut(terminal, 'C', { shiftKey: true }).allowTerminal, false);
+        await flush();
+        assert.equal(clipboard.text, 'selected\ntext', 'copy without a selection leaves clipboard intact');
+        for (const shiftKey of [false, true]) {
+            for (const selection of ['', 'selected']) {
+                terminal.selection = selection;
+                clipboard.text = 'first\r\nsecond\nthird';
+                const paste = shortcut(terminal, shiftKey ? 'V' : 'v', { shiftKey });
+                assert.equal(paste.allowTerminal, false);
+                assert.equal(paste.event.prevented, true, 'suppress native paste to avoid duplicates');
+                for (const type of ['keypress', 'keyup']) shortcut(terminal, 'v', { shiftKey, type });
+                await flush();
+            }
+        }
+        assert.deepEqual(terminal.pasted, Array(4).fill('first\r\nsecond\nthird'), 'each gesture uses xterm.paste exactly once');
+    });
+}
+
+test('terminal Command+C/V aliases work without taking over Alt/AltGr, IME, or workspace shortcuts', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard());
+    const clipboard = { text: 'original' };
+    const { context, calls } = await boot(workspace, { terminals: true, clipboard, platform: 'darwin' });
+    vm.runInContext("sessions.get(workspace.cards[0].id).status = 'running'", context);
+    const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+    terminal.selection = 'mac copy';
+    assert.equal(shortcut(terminal, 'c', { ctrlKey: false, metaKey: true }).allowTerminal, false);
+    await flush();
+    assert.equal(clipboard.text, 'mac copy');
+    terminal.selection = '';
+    assert.equal(shortcut(terminal, 'c', { ctrlKey: false, metaKey: true }).allowTerminal, false);
+    shortcut(terminal, 'v', { ctrlKey: false, metaKey: true });
+    await flush();
+    assert.deepEqual(terminal.pasted, ['mac copy']);
+    for (const key of ['c', 'v']) {
+        assert.equal(shortcut(terminal, key, { altKey: true }).allowTerminal, true);
+        assert.equal(shortcut(terminal, key, { isComposing: true }).allowTerminal, true);
+        assert.equal(shortcut(terminal, key, { ctrlKey: false }).allowTerminal, true);
+    }
+    for (const [key, shiftKey] of [['s', false], ['o', false], ['n', true], ['f', true]]) {
+        const result = shortcut(terminal, key, { shiftKey });
+        assert.equal(result.allowTerminal, false, 'workspace shortcuts still bubble out of xterm');
+        assert.equal(result.event.stopped, false);
+    }
+    assert.equal(calls.filter(c => c.action === 'clipboard-write').length, 1);
+});
+
+test('pending paste cannot write to a stopped or disposed terminal and clipboard errors are shown', async () => {
+    for (const state of ['exited', 'disposed', 'running']) {
+        const workspace = createWorkspace(); workspace.cards.push(createCard());
+        let complete;
+        const { context, elements } = await boot(workspace, { terminals: true,
+            readClipboard: () => new Promise(resolve => { complete = resolve; }) });
+        vm.runInContext("sessions.get(workspace.cards[0].id).status = 'running'", context);
+        const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+        shortcut(terminal, 'v');
+        await flush();
+        if (state === 'disposed') vm.runInContext('dispose(workspace.cards[0].id)', context);
+        else vm.runInContext(`sessions.get(workspace.cards[0].id).status = '${state}'`, context);
+        complete(state === 'running' ? { error: 'Paste is limited to 64,000 characters.' } : { text: 'too late' });
+        await flush();
+        assert.deepEqual(terminal.pasted, []);
+        if (state === 'running') assert.equal(elements.get('#toast').textContent, 'Paste is limited to 64,000 characters.');
+        else assert.equal(elements.get('#toast').hidden, true);
+    }
+});
+
+test('clipboard shortcuts outside terminals leave native text editing and canvas handling alone', async () => {
+    const { document, elements, calls } = await boot(createWorkspace(), { terminals: true });
+    for (const target of [elements.get('#search'), elements.get('#workspace-name'), elements.get('#viewport'), new Element()]) {
+        for (const key of ['c', 'v']) {
+            for (const shiftKey of [false, true]) {
+                let prevented = false;
+                document.dispatch('keydown', { target, key, ctrlKey: true, shiftKey, preventDefault() { prevented = true; } });
+                assert.equal(prevented, false);
+            }
+        }
+    }
+    await flush();
+    assert.equal(calls.some(c => c.action.startsWith('clipboard-')), false);
+});
+
 test('live directory events update only the corresponding display and preserve launch folders', async () => {
     const board = createWorkspace();
     board.cards.push(createCard({ cwd: 'C:\\Launch one' }), createCard({ cwd: 'C:\\Launch two' }));
@@ -895,3 +1022,31 @@ test('terminal hyperlinks open only on a trusted primary click, without confirma
     assert.equal(prevented, true);
     assert.deepEqual(opened(), [{ action: 'open-link', payload: uri }]);
 });
+
+
+for (const focus of [false, true]) {
+    test(`pending paste cannot cross a process restart in ${focus ? 'Focus' : 'canvas'} view`, async () => {
+        for (const readPending of [false, true]) {
+            const workspace = createWorkspace(); workspace.cards.push(createCard());
+            let finishRead;
+            const { context, bridge } = await boot(workspace, { terminals: true,
+                readClipboard: () => new Promise(resolve => { finishRead = resolve; }) });
+            await vm.runInContext('start(workspace.cards[0])', context);
+            if (focus) vm.runInContext('setFocus(workspace.cards[0].id)', context);
+            const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+            shortcut(terminal, 'v');
+            if (readPending) await flush();
+            bridge.event({ type: 'exit', id: workspace.cards[0].id, exitCode: 0 });
+            await vm.runInContext('start(workspace.cards[0])', context);
+            await flush();
+            finishRead({ text: 'old process command\r' });
+            await flush();
+            assert.deepEqual(terminal.pasted, [], `discard stale text even when restart ${readPending ? 'follows' : 'precedes'} the clipboard read`);
+            shortcut(terminal, 'v');
+            await flush();
+            finishRead({ text: 'new process text' });
+            await flush();
+            assert.deepEqual(terminal.pasted, ['new process text'], 'the replacement process still accepts its own paste');
+        }
+    });
+}

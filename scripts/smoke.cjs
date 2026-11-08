@@ -310,6 +310,8 @@ async function checkTerminalLinks({ win, createCard, openedLinks }) {
 }
 exports.checkTerminalLinks = checkTerminalLinks;
 exports.run = async ({ app, win, terminals, createCard }) => {
+    // Native shell helpers can background the window; frame-based checks must keep running.
+    win.webContents.setBackgroundThrottling(false);
     const errors = [];
     win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError|Content Security Policy/.test(message || '')) errors.push(message); });
     const deadline = Date.now() + 15000;
@@ -320,6 +322,11 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     await require('./smoke-cwd.cjs').run({ win, terminals, createCard });
     assert.equal(await win.webContents.executeJavaScript('typeof window.Terminal'), 'function');
     assert.equal(await win.webContents.executeJavaScript('typeof window.require'), 'undefined');
+    await require('./smoke-clipboard.cjs').run({ win, terminals, createCard, hasOutputLine, capture: async () => {
+        const screenshot = path.resolve(__dirname, '../.cache/smoke-clipboard.png');
+        await fs.mkdir(path.dirname(screenshot), { recursive: true });
+        await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
+    } });
     // Intercept only the OS launch so routine smoke runs do not spawn a browser.
     const openExternal = shell.openExternal;
     const openedLinks = [];

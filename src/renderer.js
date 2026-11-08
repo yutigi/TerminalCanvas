@@ -382,7 +382,7 @@ function mount(card) {
     el.querySelector('.card-directory span').textContent = card.cwd || 'Home directory';
     el.querySelector('.card-directory').title = card.cwd || 'Home directory';
     el.querySelector('.placeholder-copy').textContent = card.command ? `Ready to run: ${card.command}` : 'Your shell is ready. Start when you are.';
-    const s = { element: el, status: 'idle', terminal: null, fit: null, placeholder: el.querySelector('.terminal-placeholder') };
+    const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
@@ -403,15 +403,28 @@ function mount(card) {
         s.terminal.onResize(({ cols, rows }) => { if (['running', 'starting'].includes(s.status)) bridge.resize(card.id, cols, rows); });
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
+            if (event.altKey || event.isComposing) return true;
             if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f'].includes(key)))) return false;
-            if ((event.ctrlKey || event.metaKey) && event.shiftKey && ['c', 'v'].includes(event.key.toLowerCase())) {
-                if (event.type === 'keydown') run(async () => {
-                    if (event.key.toLowerCase() === 'c') await invoke('clipboard-write', s.terminal.getSelection());
-                    else if (s.status === 'running') s.terminal.paste((await invoke('clipboard-read')).text);
-                });
-                return false;
+            const modified = event.ctrlKey || event.metaKey;
+            const copy = modified && key === 'c' && (event.shiftKey || event.metaKey || s.terminal.hasSelection());
+            const paste = modified && key === 'v';
+            if (!copy && !paste) return true; // Selection-free Ctrl+C remains xterm's shell interrupt.
+            // Returning false only bypasses xterm; cancel Chromium's native clipboard action too.
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.type === 'keydown') {
+                const text = copy ? s.terminal.getSelection() : '';
+                if (copy && text) run(() => invoke('clipboard-write', text));
+                if (paste && s.status === 'running') {
+                    // Capture at keydown: restart can happen before the queued clipboard read begins.
+                    const generation = s.generation;
+                    run(async () => {
+                        const { text } = await invoke('clipboard-read');
+                        if (sessions.get(card.id) === s && s.status === 'running' && s.generation === generation) s.terminal.paste(text);
+                    });
+                }
             }
-            return true;
+            return false;
         });
         s.observer = new ResizeObserver(() => fitTerminal(s));
         s.observer.observe(el.querySelector('.terminal-body'));
@@ -469,6 +482,7 @@ async function start(card) {
     const s = sessions.get(card.id);
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
+    s.generation++;
     s.terminal.reset(); fitTerminal(s); showDirectory(s, null); setStatus(card, 'starting');
     try {
         await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows });
@@ -687,7 +701,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy / paste terminal text</span><kbd>Ctrl Shift C / V</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;
