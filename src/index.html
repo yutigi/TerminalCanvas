@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: tc-asset:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Terminal Canvas</title>
     <link rel="icon" href="./assets/logo.svg" type="image/svg+xml">
     <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
@@ -11,6 +11,8 @@
     <script src="../node_modules/@xterm/xterm/lib/xterm.js" defer></script>
     <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js" defer></script>
     <script src="./minimap.js" defer></script>
+    <script src="./canvas-geometry.js" defer></script>
+    <script src="./items.js" defer></script>
     <script src="./renderer.js" defer></script>
 </head>
 <body>
@@ -21,6 +23,7 @@
         <button class="nav-item active" id="canvas-nav"><span data-icon="canvas"></span>Your canvas<span class="badge" id="card-count">0</span></button>
         <button class="nav-item" id="open-workspace"><span data-icon="folder"></span>Open workspace<kbd>⌃ O</kbd></button>
         <button class="nav-item" id="new-workspace"><span data-icon="plus"></span>New workspace</button>
+        <button class="nav-item" id="export-workspace" title="Save a copy with images embedded so it works on another computer"><span data-icon="package"></span>Export portable copy</button>
         <div class="section-heading"><span class="section-label">LAUNCH A TERMINAL</span><span class="tiny-label">+</span></div>
         <div id="profile-list" class="profile-list"></div>
         <div class="section-heading terminal-heading"><span class="section-label">ON THIS CANVAS</span><span id="outline-count" class="tiny-label">00</span></div>
@@ -38,8 +41,8 @@
             <div class="top-actions"><span id="save-state" class="save-state"><i class="status-dot"></i>Saved locally</span><button class="button" id="save"><span data-icon="save"></span>Save workspace</button><button class="button primary" id="add-terminal"><span data-icon="plus"></span>New terminal</button></div>
         </header>
         <div class="canvas-bar"><div class="canvas-caption"><span class="status-dot"></span><strong id="running-count">0 running</strong><span class="bar-divider"></span><span>Many minds. One workspace.</span></div><div class="bar-actions"><button id="arrange"><span data-icon="grid"></span>Arrange</button><button id="focus-toggle" disabled><span data-icon="maximize"></span>Focus</button><span class="bar-divider"></span><button id="fit"><span data-icon="scan"></span>Fit canvas</button></div></div>
-        <section id="viewport" class="viewport" tabindex="0" aria-label="Terminal canvas. Drag empty space to pan; Control and scroll to zoom.">
-            <div id="world" class="world"></div>
+        <section id="viewport" class="viewport" tabindex="0" aria-label="Terminal canvas. Drag empty space to pan; Shift and drag to select an area; Control and scroll to zoom.">
+            <div id="world" class="world"><svg id="line-layer" class="line-layer" width="1" height="1" aria-hidden="true"><defs><marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="context-stroke"/></marker></defs></svg><div id="draft" class="draft" hidden></div><div id="selection-box" class="selection-box" hidden></div></div>
             <div id="empty-state" class="empty-state">
                 <div class="empty-eyebrow"><span class="status-dot"></span>YOUR NEXT IDEA STARTS HERE</div>
                 <div class="terminal-art" aria-hidden="true"><div class="art-back art-left"><span>CC</span><i></i><i></i><i></i></div><div class="art-back art-right"><span>GM</span><i></i><i></i><i></i></div><div class="art-front"><div><b></b><b></b><b></b><span>terminal canvas</span></div><p><span>❯</span> <em></em></p><i></i><i></i></div></div>
@@ -47,7 +50,8 @@
                 <button id="empty-add" class="button primary"><span data-icon="plus"></span>Create your first terminal<span class="shortcut-key">Ctrl ⇧ N</span></button>
                 <div class="empty-features"><span><span data-icon="terminal"></span>Real interactive shells</span><span><span data-icon="move"></span>An open canvas</span><span><span data-icon="lock"></span>Stored locally</span></div>
             </div>
-            <div class="canvas-toolbar" role="toolbar" aria-label="Canvas tools"><button id="select-tool" class="active" title="Select terminals" aria-label="Select terminals"><span data-icon="pointer"></span></button><button id="hand-tool" title="Pan canvas" aria-label="Pan canvas"><span data-icon="hand"></span></button><span class="bar-divider"></span><button id="zoom-out" aria-label="Zoom out"><span data-icon="minus"></span></button><button id="zoom-reset" title="Reset zoom">100%</button><button id="zoom-in" aria-label="Zoom in"><span data-icon="plus"></span></button><span class="bar-divider"></span><button id="minimap-toggle" title="Toggle minimap" aria-label="Show minimap" aria-controls="minimap" aria-pressed="true"><span data-icon="canvas"></span></button></div>
+            <div class="canvas-toolbar" role="toolbar" aria-label="Canvas tools"><button id="select-tool" class="active" data-tool="select" title="Select (V)" aria-label="Select" aria-pressed="true"><span data-icon="pointer"></span></button><button id="hand-tool" data-tool="hand" title="Pan canvas (H)" aria-label="Pan canvas" aria-pressed="false"><span data-icon="hand"></span></button><span class="bar-divider"></span><button id="zoom-out" aria-label="Zoom out"><span data-icon="minus"></span></button><button id="zoom-reset" title="Reset zoom">100%</button><button id="zoom-in" aria-label="Zoom in"><span data-icon="plus"></span></button><span class="bar-divider"></span><button id="minimap-toggle" title="Toggle minimap" aria-label="Show minimap" aria-controls="minimap" aria-pressed="true"><span data-icon="canvas"></span></button></div>
+            <div class="create-toolbar" role="toolbar" aria-label="Add to canvas" aria-orientation="vertical"><button data-tool="text" title="Text (T)" aria-label="Text label" aria-pressed="false"><span data-icon="type"></span></button><button data-tool="note" title="Sticky note (N)" aria-label="Sticky note" aria-pressed="false"><span data-icon="note"></span></button><span class="bar-divider"></span><button data-tool="rect" title="Rectangle (R)" aria-label="Rectangle" aria-pressed="false"><span data-icon="square"></span></button><button data-tool="ellipse" title="Ellipse (O)" aria-label="Ellipse" aria-pressed="false"><span data-icon="circle"></span></button><button data-tool="line" title="Line (L) · drag between items to connect them" aria-label="Line" aria-pressed="false"><span data-icon="line"></span></button><button data-tool="arrow" title="Arrow (A) · drag between items to connect them" aria-label="Arrow" aria-pressed="false"><span data-icon="arrow"></span></button><span class="bar-divider"></span><button data-tool="frame" title="Frame (F)" aria-label="Frame" aria-pressed="false"><span data-icon="frame"></span></button><button id="image-tool" title="Image · or paste / drop a file" aria-label="Add image"><span data-icon="image"></span></button></div>
             <aside id="minimap" class="minimap" aria-label="Canvas overview" hidden>
                 <div class="minimap-heading"><span>MINIMAP</span><span>Click or drag</span></div>
                 <div id="minimap-map" class="minimap-map" tabindex="0" role="group" aria-label="Navigate canvas. Click or drag to pan; arrow keys move the view." title="Click or drag to navigate · Arrow keys to pan">

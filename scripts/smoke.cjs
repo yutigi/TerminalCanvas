@@ -1,6 +1,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { nativeImage } = require('electron');
+const { storeImage } = require('../src/assets.cjs');
+const { validateWorkspace } = require('../src/workspace.cjs');
 function hasOutputLine(output, expected) {
     const clean = output.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
         .replace(/\x1b\[[\d;]*[Hf]/g, '\n')
@@ -30,7 +33,7 @@ async function captureScreenshot(win) {
 exports.captureScreenshot = captureScreenshot;
 exports.run = async ({ app, win, terminals, createCard }) => {
     const errors = [];
-    win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError/.test(message || '')) errors.push(message); });
+    win.webContents.on('console-message', (_event, _level, message) => { if (/Uncaught|TypeError|ReferenceError|Content Security Policy/.test(message || '')) errors.push(message); });
     const deadline = Date.now() + 15000;
     while (!await win.webContents.executeJavaScript('Boolean(document.querySelector(".profile-button"))')) {
         if (Date.now() > deadline) throw new Error('Renderer did not initialize.');
@@ -97,6 +100,67 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         await fs.mkdir(path.dirname(inputScreenshot), { recursive: true });
         await fs.writeFile(inputScreenshot, (await captureScreenshot(win)).toPNG());
     } finally { terminals.write = originalWrite; terminals.stopAll(); }
+    // Board items: real image loading through tc-asset:, connector hit testing, native creation/typing, and grouping.
+    const bitmap = Buffer.alloc(64 * 48 * 4);
+    for (let i = 0; i < bitmap.length; i += 4) bitmap.set([0x7a + (i % 97), 0xb5, 0x9a, 0xff], i);
+    const asset = await storeImage(path.join(app.getPath('userData'), 'assets'), nativeImage.createFromBitmap(bitmap, { width: 64, height: 48 }).toPNG());
+    const boardCard = createCard({ title: 'Board terminal', x: 1100, y: 0 });
+    const board = {
+        version: 2, name: 'Board smoke workspace', camera: { x: 40, y: 60, z: .6 }, cards: [boardCard],
+        items: [
+            { id: 'frame', type: 'frame', x: -40, y: -40, w: 1020, h: 560, title: 'Sprint board' },
+            { id: 'label', type: 'text', x: 0, y: 0, w: 300, h: 40, text: 'Release plan' },
+            { id: 'note', type: 'note', x: 0, y: 80, w: 200, h: 200, text: 'Write the\nrelease notes' },
+            { id: 'box', type: 'shape', shape: 'rect', x: 380, y: 80, w: 180, h: 110, text: 'Review' },
+            { id: 'ring', type: 'shape', shape: 'ellipse', x: 700, y: 80, w: 150, h: 150, text: 'Ship' },
+            { id: 'pic', type: 'image', x: 380, y: 300, w: 192, h: 144, asset },
+            { id: 'wire', type: 'line', start: { id: 'note' }, end: { id: 'box' }, arrow: true },
+            { id: 'to-terminal', type: 'line', start: { id: 'ring' }, end: { id: boardCard.id }, arrow: true }
+        ]
+    };
+    await win.webContents.executeJavaScript(`loadWorkspace(${JSON.stringify(board)})`);
+    const imageDeadline = Date.now() + 5000;
+    while (!await win.webContents.executeJavaScript('(() => { const img = document.querySelector(".item-image img"); return img.complete && img.naturalWidth > 0; })()')) {
+        if (await win.webContents.executeJavaScript('document.querySelector(".item-image").classList.contains("missing")')) throw new Error('Board image failed to load through tc-asset:.');
+        if (Date.now() > imageDeadline) throw new Error('Board image did not load.');
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const toScreen = `const toScreen = p => { const r = viewport.getBoundingClientRect(), c = workspace.camera; return { x: Math.round(r.left + c.x + p.x * c.z), y: Math.round(r.top + c.y + p.y * c.z) }; };`;
+    const wirePoint = await win.webContents.executeJavaScript(`(() => { ${toScreen}
+        const { start, end } = linePoints(findItem('wire'));
+        const point = toScreen({ x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 });
+        return { ...point, hit: document.elementFromPoint(point.x, point.y)?.getAttribute('class') };
+    })()`);
+    assert.equal(wirePoint.hit, 'line-hit', 'connector strokes outside the 1px SVG box must receive pointer events');
+    win.webContents.sendInputEvent({ type: 'mouseDown', x: wirePoint.x, y: wirePoint.y, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: wirePoint.x, y: wirePoint.y, button: 'left', clickCount: 1 });
+    assert.deepEqual(await win.webContents.executeJavaScript('[...selection]'), ['wire']);
+    const empty = await win.webContents.executeJavaScript(`(() => { ${toScreen} setTool('note'); return toScreen({ x: 160, y: 700 }); })()`);
+    win.webContents.sendInputEvent({ type: 'mouseDown', ...empty, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({ type: 'mouseUp', ...empty, button: 'left', clickCount: 1 });
+    assert.equal(await win.webContents.executeJavaScript('document.activeElement?.className'), 'item-editor', 'a new sticky note opens for typing');
+    for (const key of ['O', 'k']) {
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: key });
+        win.webContents.sendInputEvent({ type: 'char', keyCode: key });
+        win.webContents.sendInputEvent({ type: 'keyUp', keyCode: key });
+    }
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    const created = await win.webContents.executeJavaScript('({ item: workspace.items.at(-1), editing, tool: activeTool })');
+    assert.deepEqual({ type: created.item.type, text: created.item.text, editing: created.editing, tool: created.tool }, { type: 'note', text: 'Ok', editing: null, tool: 'select' },
+        'typing reaches the note editor without triggering tool shortcuts');
+    await win.webContents.executeJavaScript('select("box"); select("ring", { additive: true })');
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'G', modifiers: ['control'] });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'G', modifiers: ['control'] });
+    const grouped = await win.webContents.executeJavaScript('({ box: findItem("box").group, ring: findItem("ring").group, box2: !document.querySelector("#selection-box").hidden })');
+    assert.ok(grouped.box && grouped.box === grouped.ring && grouped.box2, 'Ctrl+G groups the selection');
+    // Everything the renderer builds must pass the desktop host's validation, or autosave would fail.
+    const saved = validateWorkspace(await win.webContents.executeJavaScript('JSON.parse(JSON.stringify(workspace))'));
+    assert.equal(saved.items.length, board.items.length + 1);
+    const boardScreenshot = path.resolve(__dirname, '../.cache/smoke-board.png');
+    await win.webContents.executeJavaScript('setSelection([]); fitCanvas()');
+    await fs.writeFile(boardScreenshot, (await captureScreenshot(win)).toPNG());
+    assert.deepEqual(errors, []);
     await win.webContents.executeJavaScript('loadWorkspace({ version: 1, name: "Minimap smoke workspace", camera: { x: 50, y: 40, z: .65 }, cards: ' + JSON.stringify(overviewCards) + ' }); fitCanvas()');
     const card = createCard({ title: 'Smoke terminal', cwd: app.getPath('home') });
     const marker = `terminal-canvas-${Date.now()}`;
@@ -124,7 +188,7 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         const screenshot = path.resolve(__dirname, '../.cache/smoke.png');
         await fs.mkdir(path.dirname(screenshot), { recursive: true });
         await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
-        console.log(`Desktop smoke passed: renderer, minimap navigation, first-click typing, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
+        console.log(`Desktop smoke passed: renderer, minimap navigation, first-click typing, board items, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
     } finally { terminals.emit = originalEmit; terminals.stopAll(); }
     app.quit();
 };

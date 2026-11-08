@@ -20,7 +20,16 @@ const paths = {
     pointer: '<path d="m5 3 14 9-7 1-3 7-4-17Z"/>',
     hand: '<path d="M8 13V6a2 2 0 0 1 4 0v6-7a2 2 0 0 1 4 0v7-4a2 2 0 0 1 4 0v7c0 5-3 7-7 7-3 0-5-2-7-4l-3-4a2 2 0 0 1 3-2l2 2Z"/>',
     play: '<path d="m8 4 12 8-12 8V4Z"/>', stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
-    x: '<path d="m6 6 12 12M6 18 18 6"/>'
+    x: '<path d="m6 6 12 12M6 18 18 6"/>',
+    type: '<path d="M5 7V5h14v2M12 5v14m-3 0h6"/>',
+    note: '<path d="M4 4h16v10l-6 6H4V4Z"/><path d="M14 20v-6h6"/>',
+    square: '<rect x="4" y="5" width="16" height="14" rx="2"/>',
+    circle: '<ellipse cx="12" cy="12" rx="9" ry="8"/>',
+    line: '<path d="M5 19 19 5"/>',
+    arrow: '<path d="M5 19 19 5M10 5h9v9"/>',
+    frame: '<path d="M7 3v18M17 3v18M3 7h18M3 17h18"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+    package: '<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 8v8l9 5 9-5V8m-9 5v8"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -34,6 +43,8 @@ let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, to
 let ready = false, formBusy = false;
 let topCardZIndex = 0;
 let minimapVisible = true, minimapLayout, minimapDrag;
+// `selection` holds every selected terminal and item; `selected` is the primary one.
+let selection = new Set(), activeTool = 'select', editing = null;
 const mark = profile => {
     const el = document.createElement('span');
     el.className = 'profile-mark';
@@ -78,22 +89,28 @@ function positionMinimapElement(element, rect) {
     Object.assign(element.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
 }
 function renderMinimap() {
-    const hasCards = workspace.cards.length > 0;
-    $('#minimap-toggle').disabled = !hasCards;
+    const hasElements = workspace.cards.length + workspace.items.length > 0;
+    $('#minimap-toggle').disabled = !hasElements;
     $('#minimap-toggle').setAttribute('aria-pressed', String(minimapVisible));
-    minimap.hidden = !minimapVisible || !hasCards || !!focused;
+    minimap.hidden = !minimapVisible || !hasElements || !!focused;
     if (minimap.hidden || minimapMap.clientWidth <= 20 || minimapMap.clientHeight <= 20) return;
-    minimapLayout = minimapDrag?.layout || window.TerminalCanvasMinimap.layout(workspace.cards, workspace.camera,
+    const boardItems = workspace.items.filter(item => item.type !== 'line');
+    minimapLayout = minimapDrag?.layout || window.TerminalCanvasMinimap.layout([...workspace.cards, ...boardItems], workspace.camera,
         { width: viewport.clientWidth, height: viewport.clientHeight }, minimapMap.clientWidth, minimapMap.clientHeight);
     const nodes = workspace.cards.map((card, index) => {
         const node = document.createElement('div');
         const status = sessions.get(card.id)?.status;
-        node.className = `minimap-card${card.id === selected ? ' selected' : ''}${['running', 'starting'].includes(status) ? ' running' : ''}`;
+        node.className = `minimap-card${selection.has(card.id) ? ' selected' : ''}${['running', 'starting'].includes(status) ? ' running' : ''}`;
         node.style.setProperty('--profile-color', profiles.find(profile => profile.id === card.profile).color);
         node.title = card.title;
         positionMinimapElement(node, minimapLayout.cards[index]);
         return node;
-    });
+    }).concat(boardItems.map((item, index) => {
+        const node = document.createElement('div');
+        node.className = `minimap-item minimap-${item.type}${selection.has(item.id) ? ' selected' : ''}`;
+        positionMinimapElement(node, minimapLayout.cards[workspace.cards.length + index]);
+        return node;
+    }));
     $('#minimap-cards').replaceChildren(...nodes);
     const { x, y, z } = workspace.camera;
     positionMinimapElement($('#minimap-viewport'), {
@@ -148,11 +165,13 @@ minimapMap.addEventListener('keydown', event => {
     workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + dy * viewport.clientHeight * amount));
     renderCamera(); changed();
 });
-function renderGeometry(card) {
+function renderCardGeometry(card) {
     const el = sessions.get(card.id)?.element;
     if (!el) return;
     Object.assign(el.style, { left: `${card.x}px`, top: `${card.y}px`, width: `${card.w}px`, height: `${card.h}px` });
-    renderMinimap();
+}
+function renderGeometry(card) {
+    renderCardGeometry(card); renderLines(); renderSelectionBox(); renderMinimap();
 }
 function refresh() {
     renderMinimap();
@@ -161,15 +180,15 @@ function refresh() {
     $('#outline-count').textContent = String(workspace.cards.length).padStart(2, '0');
     $('#running-count').textContent = `${running} running`;
     $('#terminal-total').textContent = `${workspace.cards.length} terminal${workspace.cards.length === 1 ? '' : 's'}`;
-    $('#empty-state').hidden = workspace.cards.length > 0;
-    $('#focus-toggle').disabled = !selected;
+    $('#empty-state').hidden = workspace.cards.length + workspace.items.length > 0;
+    $('#focus-toggle').disabled = !findCard(selected);
     const filter = $('#search').value.toLowerCase();
     const outline = $('#outline');
     outline.replaceChildren();
     workspace.cards.filter(c => `${c.title} ${c.cwd} ${c.profile}`.toLowerCase().includes(filter)).forEach(card => {
         const s = sessions.get(card.id);
         const button = document.createElement('button');
-        button.className = `outline-item ${card.id === selected ? 'selected' : ''} ${s.status === 'running' ? 'running' : ''}`;
+        button.className = `outline-item ${selection.has(card.id) ? 'selected' : ''} ${s.status === 'running' ? 'running' : ''}`;
         button.append(mark(profiles.find(p => p.id === card.profile)));
         const label = document.createElement('span'); label.className = 'label'; label.textContent = card.title;
         const dot = document.createElement('span'); dot.className = 'state-dot'; dot.title = s.status;
@@ -183,16 +202,93 @@ function refresh() {
         outline.append(p);
     }
 }
-function select(id) {
-    selected = id;
-    for (const [key, s] of sessions) s.element.classList.toggle('selected', key === id);
-    const s = sessions.get(id);
-    if (s) {
+// Selecting one element selects its whole group. Shift toggles the group in or out of the selection.
+function select(id, { additive = false } = {}) {
+    const ids = id ? Geometry.expandGroups(new Set([id]), elementRecords()) : new Set();
+    if (additive) {
+        const present = [...ids].every(key => selection.has(key));
+        for (const key of ids) present ? selection.delete(key) : selection.add(key);
+    } else selection = ids;
+    selected = selection.has(id) ? id : [...selection].at(-1) ?? null;
+    applySelection(true, !additive);
+}
+function setSelection(ids) {
+    selection = new Set(ids);
+    if (!selection.has(selected)) selected = [...selection].at(-1) ?? null;
+    applySelection(false);
+}
+// A plain click on a terminal focuses it even inside a group; Shift additions leave the keyboard to the board.
+function applySelection(raise, focusTerminal = raise) {
+    for (const [key, s] of sessions) s.element.classList.toggle('selected', selection.has(key));
+    for (const [key, view] of itemViews) view.element.classList.toggle('selected', selection.has(key));
+    viewport.classList.toggle('single-selection', selection.size === 1);
+    const s = sessions.get(selected), item = findItem(selected);
+    if (raise && s) {
         // Reparenting during pointerdown interrupts the browser's terminal focus handling.
         s.element.style.zIndex = String(++topCardZIndex);
-        if (s.status === 'running') s.terminal?.focus();
+        if (s.status === 'running' && focusTerminal) s.terminal?.focus();
     }
-    refresh();
+    if (raise && item && !['frame', 'line'].includes(item.type)) itemViews.get(item.id).element.style.zIndex = String(++topCardZIndex);
+    // Board shortcuts need focus outside the terminal, which would otherwise receive Delete and Ctrl+G.
+    if (selected && !(s && focusTerminal) && document.activeElement?.closest?.('.xterm')) viewport.focus({ preventScroll: true });
+    renderSelectionBox(); refresh();
+}
+function renderSelectionBox() {
+    const box = $('#selection-box');
+    const chosen = [...selection].map(findElement).filter(Boolean);
+    const grouped = chosen.length > 0 && chosen.every(e => e.group && e.group === chosen[0].group);
+    if (chosen.length < 2 && !grouped) { box.hidden = true; return; }
+    const b = Geometry.unionBounds(chosen.map(boundsOf));
+    Object.assign(box.style, { left: `${b.x - 8}px`, top: `${b.y - 8}px`, width: `${b.w + 16}px`, height: `${b.h + 16}px` });
+    box.classList.toggle('grouped', grouped);
+    box.hidden = false;
+}
+function pointerOnElement(event, id, handle) {
+    if (event.button !== 0 || focused || editing === id) return;
+    if (event.shiftKey) { event.preventDefault(); select(id, { additive: true }); return; }
+    startMove(event, id, handle);
+}
+// What moves with the selection: grouped elements, everything inside a moved frame, and free line ends.
+function movingElements() {
+    const records = elementRecords();
+    let ids = new Set(selection);
+    for (const id of selection) {
+        const frame = findItem(id);
+        if (frame?.type === 'frame') Geometry.frameContents({ id, bounds: boundsOf(frame) }, records).forEach(key => ids.add(key));
+    }
+    ids = Geometry.expandGroups(ids, records);
+    const elements = [...ids].map(findElement).filter(Boolean);
+    return { rects: elements.filter(e => e.type !== 'line'), lines: elements.filter(e => e.type === 'line') };
+}
+function startMove(event, id, handle) {
+    if (event.button !== 0 || focused || event.shiftKey) return;
+    if (!selection.has(id)) select(id);
+    const { rects, lines } = movingElements(), z = workspace.camera.z;
+    const origins = rects.map(e => ({ e, x: e.x, y: e.y }));
+    const ends = lines.map(line => ({ line, start: line.start.id ? null : { ...line.start }, end: line.end.id ? null : { ...line.end } }));
+    const shift = (point, dx, dy) => ({ x: clampCoordinate(point.x + dx / z), y: clampCoordinate(point.y + dy / z) });
+    beginDrag(handle, event, (dx, dy) => {
+        for (const o of origins) { Object.assign(o.e, shift(o, dx, dy)); placeElement(o.e); }
+        for (const o of ends) { if (o.start) o.line.start = shift(o.start, dx, dy); if (o.end) o.line.end = shift(o.end, dx, dy); }
+        renderLines(); renderSelectionBox();
+    }, moved => { if (moved) { renderMinimap(); changed(); } });
+}
+function groupSelection() {
+    const chosen = [...selection].map(findElement).filter(Boolean);
+    if (chosen.length < 2) return toast('Select two or more items to group them.');
+    const group = newId();
+    for (const e of chosen) e.group = group;
+    renderSelectionBox(); changed();
+}
+function ungroupSelection() {
+    for (const e of [...selection].map(findElement)) if (e) delete e.group;
+    renderSelectionBox(); changed();
+}
+// Keyboard deletion never closes terminals; their close button handles running processes.
+function deleteSelection() {
+    const ids = [...selection].filter(id => findItem(id));
+    if (ids.length) removeItems(ids);
+    else if (selection.size) toast('Use a terminal\'s close button to remove it.');
 }
 function centerCard(card) {
     const z = workspace.camera.z;
@@ -202,9 +298,9 @@ function centerCard(card) {
 }
 function fitCanvas() {
     if (focused) setFocus(null);
-    if (!workspace.cards.length) { workspace.camera = { x: 48, y: 48, z: 1 }; renderCamera(); return; }
-    const minX = Math.min(...workspace.cards.map(c => c.x)), minY = Math.min(...workspace.cards.map(c => c.y));
-    const maxX = Math.max(...workspace.cards.map(c => c.x + c.w)), maxY = Math.max(...workspace.cards.map(c => c.y + c.h));
+    const bounds = Geometry.unionBounds([...workspace.cards, ...workspace.items].map(boundsOf));
+    if (!bounds) { workspace.camera = { x: 48, y: 48, z: 1 }; renderCamera(); return; }
+    const minX = bounds.x, minY = bounds.y, maxX = bounds.x + Math.max(1, bounds.w), maxY = bounds.y + Math.max(1, bounds.h);
     const z = Math.max(.35, Math.min(1, (viewport.clientWidth - 80) / (maxX - minX), (viewport.clientHeight - 120) / (maxY - minY)));
     workspace.camera = {
         x: Math.max(-100000, Math.min(100000, (viewport.clientWidth - (maxX - minX) * z) / 2 - minX * z)),
@@ -296,7 +392,11 @@ function mount(card) {
         s.observer.observe(el.querySelector('.terminal-body'));
         requestAnimationFrame(() => fitTerminal(s));
     }
-    el.addEventListener('pointerdown', () => { if (selected !== card.id) select(card.id); });
+    el.addEventListener('pointerdown', event => {
+        if (event.shiftKey) select(card.id, { additive: true });
+        else if (!selection.has(card.id)) select(card.id);
+        else if (selected !== card.id) { selected = card.id; applySelection(true); }
+    });
     el.querySelectorAll('[data-action]').forEach(button => button.onclick = () => run(async () => {
         const action = button.dataset.action;
         if (action === 'focus') setFocus(focused ? null : card.id);
@@ -310,16 +410,15 @@ function mount(card) {
             if (['running', 'starting'].includes(s.status) && !await confirmAction('Close this terminal?', 'Its running shell and child processes will be stopped. Terminal output is not saved.', 'Close terminal')) return;
             await invoke('stop', { id: card.id });
             if (focused === card.id) setFocus(null);
+            detachConnectors([card.id]);
             dispose(card.id); workspace.cards = workspace.cards.filter(c => c.id !== card.id);
-            if (selected === card.id) selected = null;
-            changed(); refresh();
+            selection.delete(card.id);
+            if (selected === card.id) selected = [...selection].at(-1) ?? null;
+            renderLines(); applySelection(false); changed();
         }
     }));
-    drag(el.querySelector('.card-header'), event => !focused && !event.target.closest('button'), (dx, dy, initial) => {
-        card.x = Math.max(-100000, Math.min(100000, initial.x + dx / workspace.camera.z));
-        card.y = Math.max(-100000, Math.min(100000, initial.y + dy / workspace.camera.z));
-        renderGeometry(card);
-    }, () => ({ x: card.x, y: card.y }));
+    const header = el.querySelector('.card-header');
+    header.addEventListener('pointerdown', event => { if (!event.target.closest('button')) startMove(event, card.id, header); });
     drag(el.querySelector('.card-resize'), () => !focused, (dx, dy, initial) => {
         card.w = Math.max(400, Math.min(2400, initial.w + dx / workspace.camera.z));
         card.h = Math.max(280, Math.min(1800, initial.h + dy / workspace.camera.z));
@@ -342,29 +441,68 @@ async function start(card) {
         s.terminal.focus();
     } catch (error) { setStatus(card, 'idle', error.message); throw error; }
 }
+// Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
+function beginDrag(element, event, move, end) {
+    event.preventDefault(); element.setPointerCapture(event.pointerId);
+    const origin = { x: event.clientX, y: event.clientY };
+    let moved = false;
+    const update = e => {
+        if (e.pointerId !== event.pointerId) return;
+        const dx = e.clientX - origin.x, dy = e.clientY - origin.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        move(dx, dy, e);
+    };
+    const finish = e => {
+        if (e.pointerId !== event.pointerId) return;
+        element.removeEventListener('pointermove', update); element.removeEventListener('pointerup', finish); element.removeEventListener('pointercancel', finish);
+        if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId);
+        end?.(moved && e.type !== 'pointercancel', e);
+    };
+    element.addEventListener('pointermove', update); element.addEventListener('pointerup', finish); element.addEventListener('pointercancel', finish);
+}
 function drag(element, allowed, move, initial) {
     element.addEventListener('pointerdown', event => {
         if (event.button !== 0 || !allowed(event)) return;
-        event.preventDefault(); element.setPointerCapture(event.pointerId);
-        const origin = { x: event.clientX, y: event.clientY }, data = initial();
-        const update = e => move(e.clientX - origin.x, e.clientY - origin.y, data);
-        const end = () => {
-            element.removeEventListener('pointermove', update); element.removeEventListener('pointerup', end); element.removeEventListener('pointercancel', end); changed();
-        };
-        element.addEventListener('pointermove', update); element.addEventListener('pointerup', end); element.addEventListener('pointercancel', end);
+        const data = initial();
+        beginDrag(element, event, (dx, dy) => move(dx, dy, data), () => changed());
     });
 }
+const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .minimap, .exit-focus');
+// Capture phase: finish in-place edits, and let creation tools draw over existing elements.
 viewport.addEventListener('pointerdown', event => {
-    if (focused || event.target.closest('button') || event.target.closest('.canvas-toolbar')) return;
-    if (event.button !== 1 && !(event.button === 0 && (hand || event.target === viewport || event.target === world || event.target.closest('.empty-state')))) return;
-    event.preventDefault(); viewport.setPointerCapture(event.pointerId); viewport.classList.add('panning');
-    const x = event.clientX, y = event.clientY, initial = { ...workspace.camera };
-    const move = e => {
-        workspace.camera.x = Math.max(-100000, Math.min(100000, initial.x + e.clientX - x));
-        workspace.camera.y = Math.max(-100000, Math.min(100000, initial.y + e.clientY - y)); renderCamera();
-    };
-    const end = () => { viewport.classList.remove('panning'); viewport.removeEventListener('pointermove', move); viewport.removeEventListener('pointerup', end); viewport.removeEventListener('pointercancel', end); changed(); };
-    viewport.addEventListener('pointermove', move); viewport.addEventListener('pointerup', end); viewport.addEventListener('pointercancel', end);
+    if (editing && !event.target.closest('.item-editor, .frame-title-editor')) document.activeElement?.blur();
+    if (!ready || focused || event.button !== 0 || !CREATION_TOOLS.includes(activeTool) || onCanvasChrome(event.target)) return;
+    event.stopPropagation();
+    beginCreate(event);
+}, true);
+viewport.addEventListener('pointerdown', event => {
+    if (focused || event.target.closest('button') || onCanvasChrome(event.target)) return;
+    const empty = event.target === viewport || event.target === world || !!event.target.closest('.empty-state');
+    if (event.button !== 1 && !(event.button === 0 && (hand || empty))) return;
+    if (event.button === 0 && event.shiftKey && !hand) {
+        // Shift-drag on empty canvas draws a selection rectangle; plain drag keeps panning.
+        const start = toWorld(event), draft = $('#draft');
+        let rect = { ...start, w: 0, h: 0 };
+        draft.classList.add('marquee');
+        beginDrag(viewport, event, (_dx, _dy, e) => {
+            rect = Geometry.rectFromPoints(start, toWorld(e)); draft.hidden = false;
+            Object.assign(draft.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
+        }, moved => {
+            draft.hidden = true; draft.classList.remove('marquee');
+            if (moved) setSelection([...selection, ...Geometry.expandGroups(new Set(Geometry.marquee(rect, elementRecords())), elementRecords())]);
+        });
+        return;
+    }
+    viewport.classList.add('panning');
+    const initial = { ...workspace.camera };
+    beginDrag(viewport, event, (dx, dy) => {
+        workspace.camera.x = clampCoordinate(initial.x + dx);
+        workspace.camera.y = clampCoordinate(initial.y + dy); renderCamera();
+    }, moved => {
+        viewport.classList.remove('panning');
+        if (moved) changed();
+        else if (event.button === 0 && empty) setSelection([]);
+    });
 });
 viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
@@ -399,15 +537,18 @@ $('#launch-form').onsubmit = event => {
 };
 function loadWorkspace(board) {
     clearTimeout(autosaveTimer);
+    if (editing) document.activeElement?.blur();
     workspace = board;
+    workspace.items = Array.isArray(board.items) ? board.items : [];
     setFocus(null);
     for (const id of sessions.keys()) dispose(id);
+    for (const id of [...itemViews.keys()]) disposeItem(id);
     topCardZIndex = 0;
-    selected = null; $('#workspace-name').value = board.name;
-    board.cards.forEach(mount); renderCamera(); refresh();
+    selected = null; selection = new Set(); $('#workspace-name').value = board.name;
+    board.cards.forEach(mount); workspace.items.forEach(mountItem); renderCamera(); applySelection(false);
 }
 async function canReplace() {
-    if (!workspace.cards.length) return true;
+    if (!workspace.cards.length && !workspace.items.length) return true;
     return confirmAction('Replace this workspace?', 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
 }
 async function save() { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.'); }
@@ -429,11 +570,50 @@ $('#fit').onclick = () => { if (ready) fitCanvas(); };
 $('#zoom-in').onclick = () => { if (ready) zoom(1.15); };
 $('#zoom-out').onclick = () => { if (ready) zoom(1 / 1.15); };
 $('#zoom-reset').onclick = () => { if (ready) zoom(1 / workspace.camera.z); };
-function tool(isHand) { hand = isHand; viewport.classList.toggle('hand', hand); $('#hand-tool').classList.toggle('active', hand); $('#select-tool').classList.toggle('active', !hand); }
-$('#hand-tool').onclick = () => tool(true); $('#select-tool').onclick = () => tool(false);
+function setTool(name) {
+    if (editing) document.activeElement?.blur();
+    activeTool = name; hand = name === 'hand';
+    viewport.classList.toggle('hand', hand);
+    viewport.classList.toggle('creating', CREATION_TOOLS.includes(name));
+    document.querySelectorAll('[data-tool]').forEach(button => {
+        button.classList.toggle('active', button.dataset.tool === name);
+        button.setAttribute('aria-pressed', String(button.dataset.tool === name));
+    });
+}
+document.querySelectorAll('[data-tool]').forEach(button => button.onclick = () => { if (ready) setTool(button.dataset.tool); });
+$('#image-tool').onclick = () => run(async () => {
+    if (!ready || focused) return;
+    const result = await invoke('pick-image');
+    if (result.asset) await placeImage(result.asset, viewportCenterWorld());
+});
+$('#export-workspace').onclick = () => run(async () => {
+    if (!ready) return;
+    workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace';
+    const result = await invoke('export', workspace);
+    if (result.canceled) return;
+    const images = `${result.images} image${result.images === 1 ? '' : 's'}`;
+    toast(result.missing ? `Portable copy exported with ${images}. ${result.missing} missing image${result.missing === 1 ? ' was' : 's were'} not included.` : `Portable copy exported${result.images ? ` with ${images} embedded` : ''}.`);
+});
+document.addEventListener('paste', event => {
+    if (!ready || focused || document.querySelector('dialog[open]') || event.target?.closest?.('input,textarea,.xterm')) return;
+    const files = [...(event.clipboardData?.files || [])];
+    if (!files.some(file => /^image\//.test(file.type))) return;
+    event.preventDefault();
+    run(() => importImageFiles(files, viewportCenterWorld()));
+});
+viewport.addEventListener('dragover', event => {
+    if (!ready || focused || ![...(event.dataTransfer?.types || [])].includes('Files')) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
+});
+viewport.addEventListener('drop', event => {
+    if (!ready || focused || !event.dataTransfer?.files?.length) return;
+    event.preventDefault();
+    const point = toWorld(event);
+    run(async () => { if (!await importImageFiles(event.dataTransfer.files, point)) toast('Drop PNG, JPEG, GIF, or WebP images.'); });
+});
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy / paste terminal text</span><kbd>Ctrl Shift C / V</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Workspaces save layouts, folders, and launch commands. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy / paste terminal text</span><kbd>Ctrl Shift C / V</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;
@@ -442,8 +622,17 @@ document.addEventListener('keydown', event => {
         if (key === 's') { event.preventDefault(); run(save); }
         if (key === 'o') { event.preventDefault(); $('#open-workspace').click(); }
         if (key === 'n' && event.shiftKey) { event.preventDefault(); openLaunch(); }
-        if (key === 'f' && event.shiftKey) { event.preventDefault(); if (selected) setFocus(focused ? null : selected); }
-    } else if (event.key === '/' && !event.target.closest('input,textarea,.xterm')) { event.preventDefault(); $('#search').focus(); }
+        if (key === 'f' && event.shiftKey) { event.preventDefault(); if (findCard(selected)) setFocus(focused ? null : selected); }
+        if (key === 'g' && !focused && !event.target.closest('input,textarea,select,.xterm')) { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }
+        return;
+    }
+    if (event.altKey || event.target.closest('input,textarea,select,.xterm')) return;
+    if (event.key === '/') { event.preventDefault(); $('#search').focus(); return; }
+    if (focused) return;
+    if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }
+    if (event.key === 'Escape') { if (activeTool !== 'select') setTool('select'); else setSelection([]); return; }
+    const shortcut = { v: 'select', h: 'hand', t: 'text', n: 'note', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow', f: 'frame' }[event.key.toLowerCase()];
+    if (shortcut && !event.shiftKey) { event.preventDefault(); setTool(shortcut); }
 });
 window.addEventListener('resize', () => { if (ready) renderCamera(); });
 if (bridge) {

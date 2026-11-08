@@ -26,6 +26,7 @@ for (const platform of ['win32', 'linux']) {
                 loadURL = async () => {};
             },
             Menu: { setApplicationMenu: noop },
+            protocol: { registerSchemesAsPrivileged: noop, handle: noop },
             session: { defaultSession: { setPermissionCheckHandler: noop, setPermissionRequestHandler: noop } },
             ipcMain: { handle: noop, on: noop },
             dialog: { showErrorBox: () => assert.fail('Unexpected startup error') }
