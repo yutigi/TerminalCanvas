@@ -61,6 +61,7 @@ function clipboardSummary(items) {
     return (text || `${items.length} canvas item${items.length === 1 ? '' : 's'}`).slice(0, CLIPBOARD_TEXT_LIMIT);
 }
 function copySelection({ cut = false } = {}) {
+    if (boardBusy()) return false;
     const items = clipboardItems();
     if (!items.length) {
         if (selection.size) toast('Terminals cannot be copied. Start a new terminal instead.');
@@ -80,7 +81,7 @@ function visibleWorld() {
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 // Each paste lands a step further from the original; out-of-sight copies land in the middle of the view.
 function pasteBoardItems() {
-    if (!boardClipboard || focused) return false;
+    if (!boardClipboard || focused || boardBusy()) return false;
     const { items, bounds } = boardClipboard;
     let dx = PASTE_OFFSET * (boardClipboard.pastes + 1), dy = dx;
     if (!overlaps({ ...bounds, x: bounds.x + dx, y: bounds.y + dy }, visibleWorld())) {
@@ -93,7 +94,7 @@ function pasteBoardItems() {
     return true;
 }
 function duplicateSelection() {
-    if (focused) return false;
+    if (focused || boardBusy()) return false;
     const items = clipboardItems();
     if (!items.length) {
         if (selection.size) toast('Terminals cannot be duplicated. Start a new terminal instead.');

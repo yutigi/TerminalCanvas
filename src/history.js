@@ -5,6 +5,10 @@
 const HISTORY_LIMIT = 100;
 const boardHistory = { undo: [], redo: [] };
 const cloneData = value => JSON.parse(JSON.stringify(value));
+// The redo steps a commit cleared, so discarding that commit can bring them back.
+const clearedRedo = new WeakMap();
+// Board commands wait for a drag to finish, so the drag's undo step and theirs cannot interleave.
+const boardBusy = () => activeDrags > 0;
 function snapshotBoard() {
     return {
         cards: workspace.cards.map(({ id, x, y, w, h, groups }) => cloneData({ id, x, y, w, h, groups })),
@@ -18,15 +22,20 @@ function renderHistoryButtons() {
 }
 // Call with a snapshot taken before a change, once the change is known to have happened.
 function commitHistory(snapshot) {
+    clearedRedo.set(snapshot, boardHistory.redo);
     boardHistory.undo.push(snapshot);
     if (boardHistory.undo.length > HISTORY_LIMIT) boardHistory.undo.shift();
     boardHistory.redo = [];
     renderHistoryButtons();
 }
 function recordHistory() { commitHistory(snapshotBoard()); }
-// Drops a step that turned out to change nothing, such as an empty text label that was removed.
+// Drops a step that turned out to change nothing, such as an empty text label that was removed,
+// and restores the redo steps that recording it cleared.
 function discardHistory(snapshot) {
-    if (snapshot && boardHistory.undo.at(-1) === snapshot) boardHistory.undo.pop();
+    if (snapshot && boardHistory.undo.at(-1) === snapshot) {
+        boardHistory.undo.pop();
+        boardHistory.redo = clearedRedo.get(snapshot) || [];
+    }
     renderHistoryButtons();
 }
 function clearHistory() {

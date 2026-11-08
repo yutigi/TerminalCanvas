@@ -231,24 +231,22 @@ function resizeItem(event, item, handle) {
     if (event.button !== 0 || focused) return;
     if (!selection.has(item.id)) select(item.id);
     const { min } = ITEM_DEFAULTS[itemKind(item)], start = { w: item.w, h: item.h }, ratio = item.w / item.h, z = workspace.camera.z;
-    const before = snapshotBoard();
     beginDrag(handle, event, (dx, dy) => {
         item.w = clampSize(start.w + dx / z, min[0]);
         item.h = item.type === 'image' ? clampSize(item.w / ratio, min[1]) : clampSize(start.h + dy / z, min[1]);
         renderItem(item); renderLines(); renderSelectionBox();
-    }, moved => { if (moved) { commitHistory(before); renderMinimap(); changed(); } });
+    }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
 }
 function dragEndpoint(event, line, which, handle) {
     if (event.button !== 0 || focused) return;
     const other = which === 'start' ? 'end' : 'start';
-    const before = snapshotBoard(), original = line[which];
+    const original = line[which];
     beginDrag(handle, event, (_dx, _dy, e) => { line[which] = toWorld(e); renderLine(line); renderSelectionBox(); }, (moved, e) => {
         if (!moved) { line[which] = original; renderLine(line); return; }
-        commitHistory(before);
         const target = attachableAt(toWorld(e), line[other].id);
         if (target) line[which] = { id: target };
         renderLine(line); renderSelectionBox(); renderMinimap(); changed();
-    });
+    }, { history: true });
 }
 // Text, note, and shape content is plain text edited in place; empty text labels are removed.
 // `created` is the history step that added a new item, so typing its first text is part of that step.
@@ -396,6 +394,7 @@ function renderStyleToolbar() {
     bar.querySelectorAll('[data-font-size]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fontSize === size)));
 }
 function setItemColor(color) {
+    if (boardBusy()) return;
     const items = selectedItems(COLORED_TYPES);
     if (!items.length || (color !== 'default' && !ITEM_COLORS.includes(color))) return;
     recordHistory();
@@ -407,6 +406,7 @@ function setItemColor(color) {
     renderStyleToolbar(); changed();
 }
 function setItemFontSize(size) {
+    if (boardBusy()) return;
     const items = selectedItems(TEXT_TYPES);
     if (!items.length || (size !== 'medium' && !ITEM_FONT_SIZES.includes(size))) return;
     recordHistory();

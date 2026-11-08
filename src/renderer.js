@@ -267,7 +267,7 @@ function movingElements() {
 function startMove(event, id, handle) {
     if (event.button !== 0 || focused || event.shiftKey) return;
     if (!selection.has(id)) select(id);
-    const { rects, lines } = movingElements(), z = workspace.camera.z, before = snapshotBoard();
+    const { rects, lines } = movingElements(), z = workspace.camera.z;
     const origins = rects.map(e => ({ e, x: e.x, y: e.y }));
     const ends = lines.map(line => ({ line, start: line.start.id ? null : { ...line.start }, end: line.end.id ? null : { ...line.end } }));
     const shift = (point, dx, dy) => ({ x: clampCoordinate(point.x + dx / z), y: clampCoordinate(point.y + dy / z) });
@@ -275,10 +275,11 @@ function startMove(event, id, handle) {
         for (const o of origins) { Object.assign(o.e, shift(o, dx, dy)); placeElement(o.e); }
         for (const o of ends) { if (o.start) o.line.start = shift(o.start, dx, dy); if (o.end) o.line.end = shift(o.end, dx, dy); }
         renderLines(); renderSelectionBox();
-    }, moved => { if (moved) { commitHistory(before); renderMinimap(); changed(); } });
+    }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
 }
 // Grouping wraps whole groups in a new outer group; ungrouping removes only the outermost level.
 function groupSelection() {
+    if (boardBusy()) return;
     const chosen = [...selection].map(findElement).filter(Boolean);
     if (Geometry.selectionUnits(chosen).size < 2) return toast('Select two or more items or groups to group them.');
     if (chosen.some(e => (e.groups?.length || 0) >= GROUP_DEPTH)) return toast(`Groups can be nested up to ${GROUP_DEPTH} levels deep.`);
@@ -288,6 +289,7 @@ function groupSelection() {
     renderSelectionBox(); changed();
 }
 function ungroupSelection() {
+    if (boardBusy()) return;
     const chosen = [...selection].map(findElement).filter(e => e?.groups);
     if (!chosen.length) return;
     recordHistory();
@@ -298,6 +300,7 @@ function ungroupSelection() {
 }
 // Keyboard deletion never closes terminals; their close button handles running processes.
 function deleteSelection() {
+    if (boardBusy()) return;
     const ids = [...selection].filter(id => findItem(id));
     if (ids.length) { recordHistory(); removeItems(ids); }
     else if (selection.size) toast('Use a terminal\'s close button to remove it.');
@@ -459,31 +462,40 @@ async function start(card) {
     } catch (error) { setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
-function beginDrag(element, event, move, end) {
+// With `history`, the first movement records an undo step, so a plain click records nothing and later
+// steps stay in order. The step is dropped again if the pointer never moved past the click threshold.
+function beginDrag(element, event, move, end, { history = false } = {}) {
     event.preventDefault(); element.setPointerCapture(event.pointerId);
     const origin = { x: event.clientX, y: event.clientY };
-    let moved = false;
+    let moved = false, done = false, step = null;
     activeDrags++;
     const update = e => {
-        if (e.pointerId !== event.pointerId) return;
+        if (done || e.pointerId !== event.pointerId) return;
         const dx = e.clientX - origin.x, dy = e.clientY - origin.y;
         if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        if (history && !step) { step = snapshotBoard(); commitHistory(step); }
         move(dx, dy, e);
     };
+    // If the captured element is removed mid-drag, the release goes elsewhere; the window still sees it.
     const finish = e => {
-        if (e.pointerId !== event.pointerId) return;
-        element.removeEventListener('pointermove', update); element.removeEventListener('pointerup', finish); element.removeEventListener('pointercancel', finish);
+        if (done || e.pointerId !== event.pointerId) return;
+        done = true;
+        for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) element.removeEventListener(type, type === 'pointermove' ? update : finish);
+        window.removeEventListener('pointerup', finish, true); window.removeEventListener('pointercancel', finish, true);
         activeDrags--;
         if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId);
+        if (step && !moved) discardHistory(step);
         end?.(moved && e.type !== 'pointercancel', e);
     };
-    element.addEventListener('pointermove', update); element.addEventListener('pointerup', finish); element.addEventListener('pointercancel', finish);
+    element.addEventListener('pointermove', update);
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) element.addEventListener(type, finish);
+    window.addEventListener('pointerup', finish, true); window.addEventListener('pointercancel', finish, true);
 }
 function drag(element, allowed, move, initial) {
     element.addEventListener('pointerdown', event => {
         if (event.button !== 0 || !allowed(event)) return;
-        const data = initial(), before = snapshotBoard();
-        beginDrag(element, event, (dx, dy) => move(dx, dy, data), moved => { if (moved) { commitHistory(before); changed(); } });
+        const data = initial();
+        beginDrag(element, event, (dx, dy) => move(dx, dy, data), moved => { if (moved) changed(); }, { history: true });
     });
 }
 const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus');

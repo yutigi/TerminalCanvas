@@ -68,11 +68,12 @@ async function boot(workspace, { initialized = true, respond } = {}) {
         querySelector: selector => selector === 'dialog[open]' ? [...elements.values()].find(e => e.open) : elements.get(selector),
         querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener() {}
     };
-    const context = vm.createContext({ document, window: { terminalCanvas: bridge, addEventListener() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
+    const window = Object.assign(new Element(), { terminalCanvas: bridge });
+    const context = vm.createContext({ document, window, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
     // Load renderer scripts in the same order as index.html.
     for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)" defer>/g)) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', script), 'utf8'), context);
     await new Promise(resolve => setImmediate(resolve));
-    return { elements, calls, context };
+    return { elements, calls, context, window };
 }
 test('renderer initializes an empty workspace and enables the launch dialog', async () => {
     const { elements, calls } = await boot(createWorkspace());
@@ -616,4 +617,64 @@ test('layouts saved by the browser preview in format 2 load their single groups 
     assert.deepEqual(json(context, 'workspace.items.map(i => [i.groups, "group" in i])'), [[['pair'], false], [['pair'], false]]);
     vm.runInContext('select("a")', context);
     assert.deepEqual(json(context, '[...selection].sort()'), ['a', 'b']);
+});
+
+test('a drag records its undo step on the first movement, and a plain click records nothing', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push(note('a', 0, 0), note('b', 400, 0));
+    const { context } = await boot(workspace);
+    const history = () => json(context, '[boardHistory.undo.length, boardHistory.redo.length]');
+    vm.runInContext('select("b"); setItemColor("blue"); undo()', context);
+    assert.deepEqual(history(), [0, 1]);
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointerup', { clientX: 0, clientY: 0 });
+    assert.deepEqual(history(), [0, 1], 'a click neither records a step nor clears redo');
+    const jitter = vm.runInContext('itemViews.get("b").element', context);
+    jitter.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    jitter.dispatch('pointermove', { clientX: 2, clientY: 0 });
+    jitter.dispatch('pointerup', { clientX: 2, clientY: 0 });
+    assert.deepEqual(history(), [0, 1], 'a jitter below the drag threshold keeps redo');
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 50, clientY: 0 });
+    vm.runInContext('groupSelection(); deleteSelection(); setItemColor("red"); duplicateSelection(); copySelection({ cut: true })', context);
+    vm.runInContext('select("a"); select("b", { additive: true })', context);
+    assert.equal(json(context, 'activeDrags'), 1);
+    vm.runInContext('groupSelection(); deleteSelection(); setItemColor("red"); duplicateSelection(); copySelection({ cut: true })', context);
+    assert.deepEqual(json(context, 'workspace.items.map(i => [i.id, i.groups ?? null, i.color ?? null])'), [['a', null, null], ['b', null, null]], 'board commands wait for the drag');
+    element.dispatch('pointerup', { clientX: 50, clientY: 0 });
+    assert.deepEqual(history(), [1, 0]);
+    vm.runInContext('undo()', context);
+    assert.equal(json(context, 'workspace.items[0].x'), 0);
+});
+test('a drag still ends when its element is removed mid-drag, so undo keeps working', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push(note('a', 0, 0), note('b', 400, 0));
+    const { context, window } = await boot(workspace);
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 50, clientY: 0 });
+    vm.runInContext('removeItems(["a"])', context);
+    window.dispatch('pointerup', { clientX: 50, clientY: 0 });
+    assert.equal(json(context, 'activeDrags'), 0);
+    element.dispatch('pointerup', { clientX: 50, clientY: 0 });
+    assert.equal(json(context, 'activeDrags'), 0, 'a drag ends only once');
+    const other = vm.runInContext('itemViews.get("b").element', context);
+    other.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    other.dispatch('pointermove', { clientX: 30, clientY: 0 });
+    other.dispatch('lostpointercapture', { clientX: 30, clientY: 0 });
+    assert.equal(json(context, 'activeDrags'), 0, 'losing pointer capture ends a drag');
+    vm.runInContext('undo()', context);
+    assert.deepEqual(json(context, 'workspace.items.map(i => [i.id, i.x])'), [['b', 400]], 'undo works after both drags');
+});
+test('discarding a new empty text label keeps the redo steps it would have cleared', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push(note('a', 0, 0));
+    const { elements, context } = await boot(workspace);
+    vm.runInContext('select("a"); setItemColor("blue"); undo(); setTool("text")', context);
+    elements.get('#viewport').dispatch('pointerdown', { clientX: 600, clientY: 300 });
+    elements.get('#viewport').dispatch('pointerup', { clientX: 600, clientY: 300 });
+    vm.runInContext('itemViews.get(workspace.items[1].id).editor', context).blur();
+    vm.runInContext('redo()', context);
+    assert.equal(json(context, 'workspace.items[0].color'), 'blue');
 });
