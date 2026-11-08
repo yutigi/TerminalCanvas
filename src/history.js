@@ -5,8 +5,9 @@
 const HISTORY_LIMIT = 100;
 const boardHistory = { undo: [], redo: [] };
 const cloneData = value => JSON.parse(JSON.stringify(value));
-// The redo steps a commit cleared, so discarding that commit can bring them back.
-const clearedRedo = new WeakMap();
+// The redo steps the latest commit cleared, so discarding that commit can bring them back. Only the
+// newest step can be discarded, so older cleared stacks are not kept.
+let clearedRedo = { step: null, redo: [] };
 // Board commands wait for a drag to finish, so the drag's undo step and theirs cannot interleave.
 const boardBusy = () => activeDrags > 0;
 // Steps store each item as JSON text. An unchanged item reuses the previous step's string, so a step
@@ -46,7 +47,7 @@ function renderHistoryButtons() {
 }
 // Call with a snapshot taken before a change, once the change is known to have happened.
 function commitHistory(snapshot) {
-    clearedRedo.set(snapshot, boardHistory.redo);
+    clearedRedo = { step: snapshot, redo: boardHistory.redo };
     boardHistory.undo.push(snapshot);
     if (boardHistory.undo.length > HISTORY_LIMIT) boardHistory.undo.shift();
     boardHistory.redo = [];
@@ -65,7 +66,8 @@ function recordChange(change) {
 function discardHistory(snapshot) {
     if (snapshot && boardHistory.undo.at(-1) === snapshot) {
         boardHistory.undo.pop();
-        boardHistory.redo = clearedRedo.get(snapshot) || [];
+        boardHistory.redo = clearedRedo.step === snapshot ? clearedRedo.redo : [];
+        clearedRedo = { step: null, redo: [] };
     }
     renderHistoryButtons();
 }

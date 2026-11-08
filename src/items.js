@@ -256,7 +256,7 @@ function startEditing(id, { created = null } = {}) {
     const item = findItem(id), view = itemViews.get(id);
     if (!item || !view?.text || editing) return;
     editing = id;
-    view.session = { created, before: created ? null : snapshotBoard() };
+    view.session = { created, before: created ? null : snapshotBoard(), h: item.h };
     const editor = document.createElement('textarea');
     editor.className = 'item-editor'; editor.value = item.text; editor.maxLength = 10000;
     editor.setAttribute('aria-label', item.type === 'note' ? 'Sticky note text' : item.type === 'shape' ? 'Shape text' : 'Text label');
@@ -296,7 +296,11 @@ function finishEditing(id) {
     const text = view.editor.value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f]/g, '');
     const edited = text !== item.text;
     item.text = text;
-    if (item.type === 'text' && edited) fitTextHeight(item, view.editor);
+    // Typing refits a label as it goes; an edit that ends with the original text keeps the original height.
+    if (item.type === 'text') {
+        if (edited) fitTextHeight(item, view.editor);
+        else if (session.h) item.h = session.h;
+    }
     view.editor.remove(); view.editor = null;
     view.text.hidden = false; view.element.classList.remove('editing');
     if (item.type === 'text' && !item.text.trim()) {
@@ -383,7 +387,8 @@ async function cleanUpImages() {
         `Delete image${plural}`)) return;
     if (imageImports) return toast('Wait for images to finish importing, then try again.');
     const result = await invoke('delete-unused-images', { keep: referencedImages() });
-    toast(`Deleted ${result.deleted} unused image${result.deleted === 1 ? '' : 's'} (${formatBytes(result.bytes)}).`);
+    const skipped = result.failed ? ` ${result.failed} could not be deleted because another program is using ${result.failed === 1 ? 'it' : 'them'}.` : '';
+    toast(`Deleted ${result.deleted} unused image${result.deleted === 1 ? '' : 's'} (${formatBytes(result.bytes)}).${skipped}`);
 }
 // The style toolbar edits the color of selected items and the text size of those that hold text.
 const selectedItems = types => [...selection].map(findItem).filter(item => item && types.includes(item.type));

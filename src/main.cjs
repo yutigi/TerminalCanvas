@@ -101,7 +101,7 @@ async function command(action, payload) {
     if (action === 'unused-images' || action === 'delete-unused-images') {
         const keep = keepList(payload?.keep);
         if (action === 'delete-unused-images') return assetTask(async () => deleteAssets(assetsFolder(), await unusedAssets(assetsFolder(), keep)));
-        const unused = await unusedAssets(assetsFolder(), keep);
+        const unused = await assetTask(() => unusedAssets(assetsFolder(), keep));
         return { count: unused.length, bytes: unused.reduce((sum, asset) => sum + asset.bytes, 0) };
     }
     if (action === 'open') {

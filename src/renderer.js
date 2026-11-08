@@ -466,12 +466,17 @@ async function start(card) {
 // records an undo step, so a click records nothing and later steps stay in order. A cancelled drag
 // is put back where it started.
 function beginDrag(element, event, move, end, { history = false } = {}) {
+    // A drag whose release never arrived (the window lost focus first) ends where it last was.
+    for (const stop of [...openDrags]) stop();
     event.preventDefault(); element.setPointerCapture(event.pointerId);
     const origin = { x: event.clientX, y: event.clientY };
-    let moved = false, done = false, step = null;
+    let moved = false, done = false, step = null, last = event;
     activeDrags++;
+    const stop = () => finish(last);
+    openDrags.add(stop);
     const update = e => {
         if (done || e.pointerId !== event.pointerId) return;
+        last = e;
         const dx = e.clientX - origin.x, dy = e.clientY - origin.y;
         if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
         if (history && !moved) return;
@@ -482,6 +487,7 @@ function beginDrag(element, event, move, end, { history = false } = {}) {
     const finish = e => {
         if (done || e.pointerId !== event.pointerId) return;
         done = true;
+        openDrags.delete(stop);
         for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) element.removeEventListener(type, type === 'pointermove' ? update : finish);
         window.removeEventListener('pointerup', finish, true); window.removeEventListener('pointercancel', finish, true);
         activeDrags--;
@@ -495,6 +501,8 @@ function beginDrag(element, event, move, end, { history = false } = {}) {
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) element.addEventListener(type, finish);
     window.addEventListener('pointerup', finish, true); window.addEventListener('pointercancel', finish, true);
 }
+const openDrags = new Set();
+window.addEventListener('blur', () => { for (const stop of [...openDrags]) stop(); });
 function drag(element, allowed, move, initial) {
     element.addEventListener('pointerdown', event => {
         if (event.button !== 0 || !allowed(event)) return;

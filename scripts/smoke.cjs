@@ -70,8 +70,10 @@ exports.inputWaiter = inputWaiter;
 // Clipboard checks use the real system clipboard, so they put back whatever the user had copied.
 // Every format is read before the task runs, because clipboard items read their data lazily.
 async function withSavedClipboard(task) {
-    const saved = await Promise.all((await clipboard.read()).map(async item =>
-        Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)])))));
+    // An empty clipboard can still report an item with no formats; there is nothing to restore from it.
+    const saved = (await Promise.all((await clipboard.read()).map(async item =>
+        Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))))
+        .filter(data => Object.keys(data).length);
     try { return await task(); } finally {
         try {
             if (saved.length) await clipboard.write(saved.map(data => new ClipboardItem(data)));

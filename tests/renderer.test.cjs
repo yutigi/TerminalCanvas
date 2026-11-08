@@ -562,6 +562,7 @@ test('duplicate, cut, frames, and pasting out of sight', async () => {
     assert.deepEqual(json(context, 'workspace.items.slice(3).map(i => [i.type, i.x, i.y])'), [['frame', 24, 24], ['note', 74, 74]], 'a frame copies with its contents');
     vm.runInContext('undo()', context);
     vm.runInContext('select("frame"); copySelection({ cut: true })', context);
+    await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(json(context, 'workspace.items.map(i => i.id).filter(id => ["frame", "inside"].includes(id))'), [], 'cut removes the copied items');
     assert.equal(json(context, 'boardClipboard.marker'), 'Plan\n\nInside');
     vm.runInContext('undo()', context);
@@ -788,4 +789,47 @@ test('history steps share the text of unchanged items', async () => {
     vm.runInContext('select("b"); setItemColor("blue"); setItemColor("green")', context);
     assert.equal(vm.runInContext('boardHistory.undo[0].items[0] === boardHistory.undo[1].items[0]', context), true);
     assert.equal(vm.runInContext('boardHistory.undo[0].items[1] === boardHistory.undo[1].items[1]', context), false);
+});
+
+test('a cut waits for the clipboard, pastes back in place, and a failed cut removes nothing', async () => {
+    const workspace = createWorkspace();
+    workspace.camera = { x: 0, y: 0, z: 1 };
+    workspace.items.push(note('a', 100, 100), note('b', 500, 100));
+    let fail = false;
+    const { elements, context } = await boot(workspace, { respond: action => (action === 'clipboard-write' && fail ? { error: 'Clipboard busy.' } : null) });
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    vm.runInContext('select("a"); copySelection({ cut: true })', context);
+    assert.equal(json(context, 'workspace.items.length'), 2, 'nothing is removed before the write lands');
+    await settle();
+    assert.deepEqual(json(context, 'workspace.items.map(i => i.id)'), ['b']);
+    vm.runInContext('pasteBoardItems()', context);
+    assert.deepEqual(json(context, '[workspace.items[1].x, workspace.items[1].y]'), [100, 100], 'the first paste after a cut lands in place');
+    fail = true;
+    vm.runInContext('select("b"); copySelection({ cut: true })', context);
+    await settle();
+    assert.equal(json(context, 'workspace.items.some(i => i.id === "b")'), true);
+    assert.match(elements.get('#toast').textContent, /nothing was cut/);
+});
+test('a drag whose release was lost ends at its last position when the next drag starts or the window blurs', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push(note('a', 0, 0), note('b', 400, 0));
+    const { context, window } = await boot(workspace);
+    const a = vm.runInContext('itemViews.get("a").element', context), b = vm.runInContext('itemViews.get("b").element', context);
+    a.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    a.dispatch('pointermove', { clientX: 40, clientY: 0 });
+    b.dispatch('pointerdown', { clientX: 400, clientY: 0, pointerId: 1 });
+    assert.equal(json(context, 'activeDrags'), 1, 'the stale drag ended when the new one started');
+    assert.equal(json(context, 'workspace.items[0].x'), 40, 'at its last position');
+    window.dispatch('blur');
+    assert.equal(json(context, 'activeDrags'), 0, 'losing window focus ends a drag');
+    vm.runInContext('undo()', context);
+    assert.equal(json(context, 'workspace.items[0].x'), 0);
+});
+test('ending a text label edit with its original text keeps its original height', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push({ id: 't', type: 'text', x: 0, y: 0, w: 220, h: 40, text: 'Short' });
+    const { context } = await boot(workspace);
+    vm.runInContext('startEditing("t"); workspace.items[0].h = 300', context);
+    vm.runInContext('itemViews.get("t").editor', context).blur();
+    assert.deepEqual(json(context, '[workspace.items[0].h, boardHistory.undo.length]'), [40, 0]);
 });

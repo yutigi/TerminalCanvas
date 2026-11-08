@@ -66,14 +66,23 @@ function copySelection({ cut = false } = {}) {
         if (selection.size) toast('Terminals cannot be copied. Start a new terminal instead.');
         return false;
     }
-    // `offset` is where the last paste landed relative to the original.
-    const clip = { items, bounds: clipboardBounds(items), marker: clipboardSummary(items), offset: { x: 0, y: 0 }, written: false };
+    // `offset` is where the last paste landed relative to the original; the first paste of a cut
+    // puts the items back where they were.
+    const start = cut ? -PASTE_OFFSET : 0;
+    const clip = { items, bounds: clipboardBounds(items), marker: clipboardSummary(items), offset: { x: start, y: start }, written: false };
     boardClipboard = clip;
-    invoke('clipboard-write', clip.marker).then(() => { clip.written = true; }, () => {
+    // A cut removes the items only once they are safely on the clipboard.
+    const write = invoke('clipboard-write', clip.marker).then(() => { clip.written = true; });
+    write.then(() => {
+        if (!cut) return;
+        return whenBoardIdle().then(() => {
+            const ids = items.map(item => item.id).filter(id => findItem(id));
+            if (ids.length) { recordHistory(); removeItems(ids); }
+        });
+    }, () => {
         if (boardClipboard === clip) boardClipboard = null;
-        toast(cut ? 'Could not copy to the clipboard. Press Ctrl+Z to restore the cut items.' : 'Could not copy to the clipboard. Try again.');
+        toast(cut ? 'Could not copy to the clipboard, so nothing was cut.' : 'Could not copy to the clipboard. Try again.');
     });
-    if (cut) { recordHistory(); removeItems(items.map(item => item.id)); }
     return true;
 }
 // Each paste lands a step further from the previous one. A paste that would be out of sight lands in

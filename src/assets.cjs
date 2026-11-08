@@ -77,23 +77,20 @@ async function unusedAssets(directory, keep) {
         if (error.code === 'ENOENT') return [];
         throw error;
     }
-    const unused = [];
-    for (const name of names.sort()) {
-        if (!ASSET_NAME.test(name) || keep.has(name)) continue;
-        const stat = await fs.stat(path.join(directory, name)).catch(() => null);
-        if (stat?.isFile()) unused.push({ name, bytes: stat.size });
-    }
-    return unused;
+    const candidates = names.sort().filter(name => ASSET_NAME.test(name) && !keep.has(name));
+    const stats = await Promise.all(candidates.map(name => fs.stat(path.join(directory, name)).catch(() => null)));
+    return candidates.flatMap((name, index) => (stats[index]?.isFile() ? [{ name, bytes: stats[index].size }] : []));
 }
+// A file another program holds open (common on Windows) is skipped and counted, not fatal.
 async function deleteAssets(directory, assets) {
-    let deleted = 0, bytes = 0;
+    let deleted = 0, bytes = 0, failed = 0;
     for (const asset of assets) {
         try {
             await fs.unlink(assetPath(directory, asset.name));
             deleted++; bytes += asset.bytes;
-        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        } catch (error) { if (error.code !== 'ENOENT') failed++; }
     }
-    return { deleted, bytes };
+    return { deleted, bytes, failed };
 }
 // Runs tasks one at a time in call order. Imports reuse an existing file with the same content, so a
 // cleanup that interleaved with an import could delete the file the import just handed out.
