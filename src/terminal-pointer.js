@@ -34,6 +34,8 @@
         // The screen of the terminal where a button was pressed; drags keep mapping into it.
         let dragScreen = null;
         const screenFor = target => target?.closest?.('.xterm')?.querySelector('.xterm-screen') || null;
+        // Computed width is the exact layout width; offsetWidth is rounded to whole pixels, which would
+        // misreport 100% zoom as slightly scaled. xterm already reads layout on each mouse event, so this stays cheap.
         function layoutSize(element) {
             const style = win.getComputedStyle(element);
             const width = parseFloat(style.width), height = parseFloat(style.height);
