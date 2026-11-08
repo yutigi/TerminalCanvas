@@ -37,6 +37,21 @@ For a dependency-free **layout preview**, run `npm run dev` and visit [localhost
 - Use the card's stop/start controls to end or relaunch its shell. Closing a running card asks before stopping it.
 - Copy/paste with Ctrl + Shift + C/V. Ctrl + C remains the shell interrupt. Paste respects the terminal's bracketed-paste mode.
 
+### Board items
+
+The left canvas toolbar adds items around your terminals. Click to place an item at its default size, or drag to draw it; the tool then returns to Select.
+
+- **Text label** and **sticky note** open for typing immediately. Double-click a label, note, or shape to edit its plain text; press Esc or Ctrl + Enter, or click elsewhere, to finish. An empty text label is removed.
+- **Rectangle** and **ellipse** shapes can hold centered text.
+- **Line** and **arrow** draw free-standing lines. Start or end a line on any terminal or item to attach it as a connector; attached ends follow the item when it moves. Select a line to drag its end handles and reattach them. Deleting an attached item leaves the line in place with a free end.
+- **Frame** draws a titled section. Drag it by its title, which you can double-click to rename. Everything fully inside a frame, including terminals, moves with it. Its empty area still pans the canvas.
+- **Image** opens a file picker. You can also paste an image or drop image files onto the canvas. PNG, JPEG, GIF, and WebP files up to 15 MB are supported.
+- Shift + click adds or removes elements from the selection; Shift + drag on empty canvas selects every element fully inside the rectangle. Drag any selected element to move the whole selection. Click empty canvas to clear the selection.
+- **Ctrl + G** groups the selection so it selects and moves as one unit; **Ctrl + Shift + G** ungroups. Groups can include terminals.
+- **Delete** or **Backspace** removes selected board items. Terminals are only removed with their close button, which stops running shells safely.
+
+Board items use one fixed visual style; colors, fonts, and stroke styles are not configurable yet. Undo, copy/paste of items, and nested groups are not implemented.
+
 On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by default. Optional launch commands run inside PowerShell. Use `pwsh` as the launch command for PowerShell 7 if installed, or `cmd.exe` for Command Prompt. Other systems use the login shell selected by `SHELL`, falling back to Bash; those platforms have not been validated.
 
 | Shortcut | Action |
@@ -45,12 +60,23 @@ On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by def
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
 | / outside a terminal or input | Search terminals |
+| V / H | Select / hand tool |
+| T / N / R / O / L / A / F | Text, sticky note, rectangle, ellipse, line, arrow, frame tool |
+| Esc | Return to the Select tool, then clear the selection |
+| Ctrl + G / Ctrl + Shift + G | Group / ungroup the selection |
+| Delete / Backspace | Delete selected board items |
+
+Single-key and board shortcuts apply only when focus is outside a terminal or text field, so they never reach a running shell.
 
 ## Persistence and process lifecycle
 
-Layouts autosave to Electron's user-data directory, normally `%APPDATA%/terminal-canvas/workspace.terminalcanvas` on Windows. **Save workspace** exports a portable `.terminalcanvas` JSON file. A workspace contains names, geometry, profile IDs, project paths, and launch commands. It does not save terminal output, credentials, or process IDs. Keep secrets out of launch commands because those commands are saved in plain text.
+Layouts autosave to Electron's user-data directory, normally `%APPDATA%/terminal-canvas/workspace.terminalcanvas` on Windows. **Save workspace** exports a portable `.terminalcanvas` JSON file. A workspace contains names, geometry, profile IDs, project paths, launch commands, and board items with their text, groups, and connectors. It does not save terminal output, credentials, or process IDs. Keep secrets out of launch commands because those commands are saved in plain text.
 
-Restored cards are stopped until explicitly started. A saved command is never executed merely by importing a workspace. Closing the app stops its managed terminals; running processes cannot survive an app restart. A maximum of 24 cards and 5,000 scrollback lines per terminal bounds the initial workspace.
+Images are copied into `%APPDATA%/terminal-canvas/assets/` under a SHA-256 content name; workspace files store only that name, so a regular saved workspace opened on another computer shows *Image unavailable*. Choose **Export portable copy** in the sidebar to write a separate file with every referenced image embedded. Opening that file copies the images back into the local assets folder, re-hashing each one; the file must be smaller than 64 MB. Image bytes are validated by signature, never by file name, and SVG is not accepted. Unused images are not deleted from the assets folder yet.
+
+Workspace files from version 0.1 (format version 1) open unchanged and are saved as format version 2.
+
+Restored cards are stopped until explicitly started. A saved command is never executed merely by importing a workspace. Closing the app stops its managed terminals; running processes cannot survive an app restart. A maximum of 24 cards, 1,000 board items, and 5,000 scrollback lines per terminal bounds the workspace.
 
 ## Development and validation
 
@@ -61,11 +87,11 @@ Restored cards are stopped until explicitly started. A saved command is never ex
 | `npm run rebuild` | Verify the Windows native binary in Electron, or rebuild when needed |
 | `npm run icons` | Regenerate native PNG/ICO icons from `src/assets/logo.svg` using Electron |
 | `npm run check` | Check JavaScript syntax and the package manifest |
-| `npm test` | Run dependency-free icon, workspace, minimap, terminal-manager, rebuild, renderer, and smoke-output/capture tests |
-| `npm run test:smoke` | Check the desktop renderer, minimap navigation, first-click terminal typing, real PTY output, resize, and cleanup; save `.cache/smoke.png` and `.cache/smoke-first-click.png` |
+| `npm test` | Run dependency-free icon, workspace, board geometry, image asset, minimap, terminal-manager, rebuild, renderer, and smoke-output/capture tests |
+| `npm run test:smoke` | Check the desktop renderer, minimap navigation, first-click terminal typing, board items (image loading, connector hit testing, note typing, grouping), real PTY output, resize, and cleanup; save `.cache/smoke.png`, `.cache/smoke-first-click.png`, and `.cache/smoke-board.png` |
 | `npm run build` | Package an unsigned Windows portable executable in `release/` |
 
-Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Screenshot capture retries transient `UnknownVizError` failures up to five times, requesting a repaint and waiting 100 ms between attempts. Persistent failures, unrelated errors, and empty captures still fail the test. Current Windows validation passed syntax checks, all 38 automated tests, and 10 consecutive desktop smoke runs; the saved screenshot was visually inspected. The native icon comparison against the SVG passed previously. The smoke test still emits a node-pty `AttachConsole failed` message during shutdown despite completing successfully. The default rebuild command passed previously; forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. Packaging remains unverified.
+Core tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. Screenshot capture retries transient `UnknownVizError` failures up to five times, requesting a repaint and waiting 100 ms between attempts. Persistent failures, unrelated errors, and empty captures still fail the test. Current Windows validation passed syntax checks and all 62 automated tests; the board screenshot was visually inspected. In 14 desktop smoke runs on this machine, every run that reached the board checks passed them, but 5 runs failed earlier at the first-click terminal focus assertion. That assertion fails at the same rate on `main` without the board changes (4 of 8 runs), so it is a pre-existing intermittent failure. The native icon comparison against the SVG passed previously. The smoke test still emits a node-pty `AttachConsole failed` message during shutdown despite completing successfully. The default rebuild command passed previously; forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. Packaging remains unverified.
 
 Source lives in `src/`, scripts in `scripts/`, tests in `tests/`, and design notes in [docs/architecture.md](docs/architecture.md). `AGENTS.md` is preserved as requested; this README records the tooling added since that guide was created.
 
