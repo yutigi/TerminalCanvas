@@ -488,6 +488,6 @@ exports.run = async ({ app, win, terminals, createCard }) => {
         await fs.mkdir(path.dirname(screenshot), { recursive: true });
         await fs.writeFile(screenshot, (await captureScreenshot(win)).toPNG());
         console.log(`Desktop smoke passed: renderer, hyperlink clicks without confirmation, minimap navigation, first-click typing, zoomed terminal selection, board items, focus, isolated preload, PTY output, resize, cleanup. Screenshot: ${screenshot}`);
-    } finally { terminals.emit = originalEmit; terminals.stopAll(); }
+    } finally { terminals.emit = originalEmit; await terminals.shutdown(); }
     app.quit();
 };

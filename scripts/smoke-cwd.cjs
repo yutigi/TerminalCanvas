@@ -35,7 +35,8 @@ exports.run = async ({ win, terminals, createCard }) => {
         terminals.write(cards[0].id, cmd ? `cd /d "${target}"\r` : posix ? `cd '${target.replaceAll("'", "'\\''")}'\r` : `cd -LiteralPath '${target.replaceAll("'", "''")}'\r`);
         await waitFor(async () => await displayed(0) === target, 'Changed directory did not reach the display: ' + command);
         assert.equal(await displayed(1), root, 'another terminal keeps its own directory');
-        assert.deepEqual(await win.webContents.executeJavaScript('workspace.cards.map(c => c.cwd)'), [root, root], 'launch directories stay unchanged');
+        assert.deepEqual(await win.webContents.executeJavaScript('workspace.cards.map(c => c.cwd)'), [target, root], 'last valid folders are retained independently for restoration');
+        assert.equal(terminals.snapshot().get(cards[0].id).cwd, target, 'the host retains the folder for shutdown recovery');
         terminals.write(cards[0].id, cmd || posix ? 'cd "missing directory"\r' : "Set-Location -LiteralPath 'missing directory'\r");
         terminals.write(cards[0].id, cmd || posix ? 'echo CWD_OUTPUT_OK\r' : "Write-Output 'CWD_OUTPUT_OK'\r");
         await waitFor(() => win.webContents.executeJavaScript(`(() => { const t = sessions.get(workspace.cards[0].id).terminal; return Array.from({ length: t.buffer.active.length }, (_, i) => t.buffer.active.getLine(i).translateToString().trim()).includes('CWD_OUTPUT_OK'); })()`), 'Normal output was lost: ' + command);
@@ -49,8 +50,9 @@ exports.run = async ({ win, terminals, createCard }) => {
         if (!cmd && process.platform === 'win32') {
             terminals.write(cards[0].id, 'Set-Location HKCU:\r');
             await waitFor(async () => await displayed(0) === 'Current directory unavailable', 'Non-filesystem location should be unknown: ' + command);
+            assert.equal(terminals.snapshot().get(cards[0].id).cwd, target, 'an unavailable location preserves the last restorable folder');
         }
         terminals.stopAll();
-        console.log('Directory smoke passed: ' + (command || 'default login shell') + ' (cd, spaces, Unicode, independent terminals, unchanged launch folders, failed cd, output, unavailable location).');
+        console.log('Directory smoke passed: ' + (command || 'default login shell') + ' (cd, spaces, Unicode, independent saved folders, failed cd, output, unavailable location).');
     }
 };
