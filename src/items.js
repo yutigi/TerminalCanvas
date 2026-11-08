@@ -57,6 +57,11 @@ function toWorld(event) {
     const rect = viewport.getBoundingClientRect(), { x, y, z } = workspace.camera;
     return { x: clampCoordinate((event.clientX - rect.left - x) / z), y: clampCoordinate((event.clientY - rect.top - y) / z) };
 }
+// The part of the world the viewport shows.
+function visibleWorld() {
+    const { x, y, z } = workspace.camera;
+    return { x: -x / z, y: -y / z, w: viewport.clientWidth / z, h: viewport.clientHeight / z };
+}
 function viewportCenterWorld() {
     const { x, y, z } = workspace.camera;
     return { x: (viewport.clientWidth / 2 - x) / z, y: (viewport.clientHeight / 2 - y) / z };
@@ -291,7 +296,7 @@ function finishEditing(id) {
     const text = view.editor.value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f]/g, '');
     const edited = text !== item.text;
     item.text = text;
-    if (item.type === 'text') fitTextHeight(item, view.editor);
+    if (item.type === 'text' && edited) fitTextHeight(item, view.editor);
     view.editor.remove(); view.editor = null;
     view.text.hidden = false; view.element.classList.remove('editing');
     if (item.type === 'text' && !item.text.trim()) {
@@ -329,7 +334,11 @@ function placeImage(asset, point) {
         const finish = (width, height) => {
             const scale = Math.min(1, 480 / Math.max(width, height));
             const w = clampSize(Math.round(width * scale), ITEM_DEFAULTS.image.min[0]), h = clampSize(Math.round(height * scale), ITEM_DEFAULTS.image.min[1]);
-            resolve(addItem({ id: newId(), type: 'image', asset, x: clampCoordinate(point.x - w / 2), y: clampCoordinate(point.y - h / 2), w, h }));
+            // An import can finish mid-gesture: wait for any drag, and finish a text edit first.
+            whenBoardIdle().then(() => {
+                if (editing) document.activeElement?.blur();
+                resolve(addItem({ id: newId(), type: 'image', asset, x: clampCoordinate(point.x - w / 2), y: clampCoordinate(point.y - h / 2), w, h }));
+            });
         };
         probe.onload = () => finish(probe.naturalWidth || ITEM_DEFAULTS.image.w, probe.naturalHeight || ITEM_DEFAULTS.image.h);
         probe.onerror = () => finish(ITEM_DEFAULTS.image.w, ITEM_DEFAULTS.image.h);
@@ -359,7 +368,7 @@ function referencedImages() {
     const names = new Set();
     const add = items => { for (const item of items) if (item.type === 'image') names.add(item.asset); };
     add(workspace.items);
-    for (const step of [...boardHistory.undo, ...boardHistory.redo]) add(step.items);
+    for (const step of [...boardHistory.undo, ...boardHistory.redo]) for (const name of step.assets) names.add(name);
     if (boardClipboard) add(boardClipboard.items);
     return [...names];
 }
@@ -405,7 +414,8 @@ function setItemColor(color) {
 }
 function setItemFontSize(size) {
     if (boardBusy()) return;
-    const items = selectedItems(TEXT_TYPES);
+    // Items already at this size are left alone, so a text label keeps a height the user chose.
+    const items = selectedItems(TEXT_TYPES).filter(item => (item.fontSize || 'medium') !== size);
     if (!items.length || (size !== 'medium' && !ITEM_FONT_SIZES.includes(size))) return;
     recordChange(() => {
         for (const item of items) {

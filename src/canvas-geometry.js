@@ -6,6 +6,7 @@
         return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
     }
     const containsPoint = (b, p) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+    const intersects = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
     const containsRect = (outer, inner) => inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
     // The point where a ray from the element's center toward `toward` leaves its rectangle or ellipse.
     function clipToBounds(b, toward, ellipse = false) {
@@ -81,7 +82,7 @@
         return [...elements].filter(e => e.bounds && containsPoint(e.bounds, point)).sort((a, b) => (b.z || 0) - (a.z || 0))[0] || null;
     }
     const geometry = {
-        center, rectFromPoints, containsPoint, containsRect, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
+        center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
         outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;

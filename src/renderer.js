@@ -115,12 +115,12 @@ function renderMinimap() {
         return node;
     }));
     $('#minimap-cards').replaceChildren(...nodes);
-    const { x, y, z } = workspace.camera;
+    const view = visibleWorld();
     positionMinimapElement($('#minimap-viewport'), {
-        x: -x / z * minimapLayout.scale + minimapLayout.offsetX,
-        y: -y / z * minimapLayout.scale + minimapLayout.offsetY,
-        w: viewport.clientWidth / z * minimapLayout.scale,
-        h: viewport.clientHeight / z * minimapLayout.scale
+        x: view.x * minimapLayout.scale + minimapLayout.offsetX,
+        y: view.y * minimapLayout.scale + minimapLayout.offsetY,
+        w: view.w * minimapLayout.scale,
+        h: view.h * minimapLayout.scale
     });
 }
 $('#minimap-toggle').onclick = () => { minimapVisible = !minimapVisible; renderMinimap(); };
@@ -462,8 +462,9 @@ async function start(card) {
     } catch (error) { setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
-// With `history`, the first movement records an undo step, so a plain click records nothing and later
-// steps stay in order. The step is dropped again if the pointer never moved past the click threshold.
+// With `history`, nothing moves until the pointer passes the click threshold; that first movement
+// records an undo step, so a click records nothing and later steps stay in order. A cancelled drag
+// is put back where it started.
 function beginDrag(element, event, move, end, { history = false } = {}) {
     event.preventDefault(); element.setPointerCapture(event.pointerId);
     const origin = { x: event.clientX, y: event.clientY };
@@ -473,6 +474,7 @@ function beginDrag(element, event, move, end, { history = false } = {}) {
         if (done || e.pointerId !== event.pointerId) return;
         const dx = e.clientX - origin.x, dy = e.clientY - origin.y;
         if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        if (history && !moved) return;
         if (history && !step) { step = snapshotBoard(); commitHistory(step); }
         move(dx, dy, e);
     };
@@ -484,8 +486,10 @@ function beginDrag(element, event, move, end, { history = false } = {}) {
         window.removeEventListener('pointerup', finish, true); window.removeEventListener('pointercancel', finish, true);
         activeDrags--;
         if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId);
-        if (step && !moved) discardHistory(step);
-        end?.(moved && e.type !== 'pointercancel', e);
+        const cancelled = e.type === 'pointercancel';
+        if (step && cancelled) { restoreBoard(step); discardHistory(step); }
+        end?.(moved && !cancelled, e);
+        notifyBoardIdle();
     };
     element.addEventListener('pointermove', update);
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) element.addEventListener(type, finish);

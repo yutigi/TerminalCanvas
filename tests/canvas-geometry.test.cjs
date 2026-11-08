@@ -72,3 +72,10 @@ test('hit testing prefers the highest element and normalizes dragged rectangles'
     assert.deepEqual(G.unionBounds([{ x: 0, y: 0, w: 10, h: 10 }, { x: -5, y: 20, w: 5, h: 5 }]), { x: -5, y: 0, w: 15, h: 25 });
     assert.equal(G.unionBounds([]), null);
 });
+
+test('rectangles intersect only when they overlap', () => {
+    const a = { x: 0, y: 0, w: 10, h: 10 };
+    assert.equal(G.intersects(a, { x: 5, y: 5, w: 10, h: 10 }), true);
+    assert.equal(G.intersects(a, { x: 10, y: 0, w: 5, h: 5 }), false, 'touching edges do not overlap');
+    assert.equal(G.intersects(a, { x: -20, y: -20, w: 5, h: 5 }), false);
+});

@@ -4,7 +4,8 @@
 const PASTE_OFFSET = 24;
 const CLIPBOARD_TEXT_LIMIT = 10000;
 // `marker` is the text written to the system clipboard. Pasting uses these items only while that text
-// is still on the clipboard, so copying something else in another app takes precedence.
+// is still on the clipboard, so copying something else in another app takes precedence. Until the
+// write lands, a paste uses the items, since the clipboard is about to hold the marker.
 let boardClipboard = null;
 const normalizeClipboardText = text => String(text ?? '').replace(/\r\n?/g, '\n').trim();
 // Selected items, everything inside selected frames, and whole groups, in stacking order.
@@ -55,7 +56,8 @@ function cloneItems(items, dx, dy) {
 }
 function clipboardSummary(items) {
     const text = items.map(item => item.text ?? item.title ?? '').filter(value => value.trim()).join('\n\n');
-    return (text || `${items.length} canvas item${items.length === 1 ? '' : 's'}`).slice(0, CLIPBOARD_TEXT_LIMIT);
+    // Never end on half of a surrogate pair, which the clipboard would store as a replacement character.
+    return (text || `${items.length} canvas item${items.length === 1 ? '' : 's'}`).slice(0, CLIPBOARD_TEXT_LIMIT).replace(/[\uD800-\uDBFF]$/, '');
 }
 function copySelection({ cut = false } = {}) {
     if (boardBusy()) return false;
@@ -65,25 +67,22 @@ function copySelection({ cut = false } = {}) {
         return false;
     }
     // `offset` is where the last paste landed relative to the original.
-    const clip = { items, bounds: clipboardBounds(items), marker: clipboardSummary(items), offset: { x: 0, y: 0 } };
+    const clip = { items, bounds: clipboardBounds(items), marker: clipboardSummary(items), offset: { x: 0, y: 0 }, written: false };
     boardClipboard = clip;
-    // Without a system clipboard (the browser preview), the next paste uses these items regardless.
-    invoke('clipboard-write', clip.marker).catch(() => { clip.marker = null; });
+    invoke('clipboard-write', clip.marker).then(() => { clip.written = true; }, () => {
+        if (boardClipboard === clip) boardClipboard = null;
+        toast(cut ? 'Could not copy to the clipboard. Press Ctrl+Z to restore the cut items.' : 'Could not copy to the clipboard. Try again.');
+    });
     if (cut) { recordHistory(); removeItems(items.map(item => item.id)); }
     return true;
 }
-function visibleWorld() {
-    const { x, y, z } = workspace.camera;
-    return { x: -x / z, y: -y / z, w: viewport.clientWidth / z, h: viewport.clientHeight / z };
-}
-const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 // Each paste lands a step further from the previous one. A paste that would be out of sight lands in
 // the middle of the view instead, and later pastes step on from there.
 function pasteBoardItems() {
     if (!boardClipboard || focused || boardBusy()) return false;
     const { items, bounds, offset } = boardClipboard;
     let dx = offset.x + PASTE_OFFSET, dy = offset.y + PASTE_OFFSET;
-    if (!overlaps({ ...bounds, x: bounds.x + dx, y: bounds.y + dy }, visibleWorld())) {
+    if (!Geometry.intersects({ ...bounds, x: bounds.x + dx, y: bounds.y + dy }, visibleWorld())) {
         const center = viewportCenterWorld();
         dx = Math.round(center.x - (bounds.x + bounds.w / 2));
         dy = Math.round(center.y - (bounds.y + bounds.h / 2));
@@ -109,7 +108,7 @@ function pasteFromClipboard(data) {
         return true;
     }
     if (!boardClipboard) return false;
-    const { marker } = boardClipboard;
-    if (marker !== null && normalizeClipboardText(data?.getData?.('text/plain')) !== normalizeClipboardText(marker)) return false;
+    const { marker, written } = boardClipboard;
+    if (written && normalizeClipboardText(data?.getData?.('text/plain')) !== normalizeClipboardText(marker)) return false;
     return pasteBoardItems();
 }
