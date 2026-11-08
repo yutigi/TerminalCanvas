@@ -75,6 +75,7 @@ exports.checkCreationWorkflows = async ({ app, win, terminals, createCard, captu
             await js('sessions.get(workspace.cards[1].id).element.querySelector("[data-action=duplicate]").click()');
             await until(() => terminals.sessions.size === 4, 'Duplicate button did not launch a terminal.');
             const second = await js('JSON.parse(JSON.stringify(workspace.cards.at(-1)))');
+            await until(async () => !(await terminals.directory(second)).warning, 'The second duplicate did not reach an idle prompt.');
             assert.equal(second.cwd, other);
         }
         terminals.stop(cards[0].id);
