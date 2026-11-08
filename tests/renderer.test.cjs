@@ -569,6 +569,9 @@ test('duplicate, cut, frames, and pasting out of sight', async () => {
     const copy = json(context, 'workspace.items.at(-1)');
     assert.deepEqual([copy.x + copy.w / 2, copy.y + copy.h / 2], [550, 360], 'lands in the middle of the view');
     assert.equal(copy.groups, undefined, 'a one-member group is not kept');
+    vm.runInContext('pasteBoardItems()', context);
+    const next = json(context, 'workspace.items.at(-1)');
+    assert.deepEqual([next.x - copy.x, next.y - copy.y], [24, 24], 'the next paste steps on instead of stacking');
 });
 
 test('image cleanup keeps images used by the workspace, history, and clipboard, and asks before deleting', async () => {
@@ -695,4 +698,14 @@ test('repeating a color, text size, or Arrange that changes nothing adds no undo
     assert.equal(steps(), 3, 'only the first Arrange moved anything');
     vm.runInContext('undo()', context);
     assert.deepEqual(json(context, 'workspace.cards.map(c => [c.x, c.y])'), [[30, 40], [900, 40]]);
+});
+
+test('deleting the other part of an outer group leaves only the inner group', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push(note('a', 0, 0), note('b', 300, 0), note('c', 600, 0));
+    const { context } = await boot(workspace);
+    vm.runInContext('select("a"); select("b", { additive: true }); groupSelection(); select("c", { additive: true }); groupSelection(); select("c")', context);
+    const inner = json(context, 'workspace.items[0].groups[1]');
+    vm.runInContext('recordHistory(); removeItems(["c"])', context);
+    assert.deepEqual(json(context, 'workspace.items.map(i => i.groups)'), [[inner], [inner]], 'one ungroup is enough afterwards');
 });

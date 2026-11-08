@@ -58,11 +58,17 @@
     function ungroupPaths(elements) {
         return elements.map(e => (e.groups || []).slice(1));
     }
-    // Groups with fewer than two members no longer group anything.
+    // A group needs at least two direct parts: inner groups or elements. One that holds a single
+    // element, or only wraps one inner group, no longer groups anything and is removed.
     function pruneGroupPaths(elements) {
-        const counts = new Map();
-        for (const e of elements) for (const group of e.groups || []) counts.set(group, (counts.get(group) || 0) + 1);
-        return elements.map(e => (e.groups || []).filter(group => counts.get(group) > 1));
+        const parts = new Map();
+        for (const e of elements) {
+            (e.groups || []).forEach((group, index) => {
+                if (!parts.has(group)) parts.set(group, new Set());
+                parts.get(group).add(e.groups[index + 1] ?? `element:${e.id}`);
+            });
+        }
+        return elements.map(e => (e.groups || []).filter(group => parts.get(group).size > 1));
     }
     // Everything fully inside a frame travels with it, including nested frames and their contents.
     function frameContents(frame, elements) {

@@ -41,7 +41,7 @@ function clipboardBounds(items) {
         return Geometry.boundsOfPoints([start, end]);
     }));
 }
-// New IDs and groups for every paste; groups that lost members outside the copied set are dropped.
+// New IDs and groups for every paste. Groups left with fewer than two parts in the copied set are dropped.
 function cloneItems(items, dx, dy) {
     const ids = new Map(items.map(item => [item.id, newId()])), groups = new Map();
     const group = id => { if (!groups.has(id)) groups.set(id, newId()); return groups.get(id); };
@@ -67,7 +67,8 @@ function copySelection({ cut = false } = {}) {
         if (selection.size) toast('Terminals cannot be copied. Start a new terminal instead.');
         return false;
     }
-    const clip = { items, bounds: clipboardBounds(items), marker: clipboardSummary(items), pastes: 0 };
+    // `offset` is where the last paste landed relative to the original.
+    const clip = { items, bounds: clipboardBounds(items), marker: clipboardSummary(items), offset: { x: 0, y: 0 } };
     boardClipboard = clip;
     // Without a system clipboard (the browser preview), the next paste uses these items regardless.
     invoke('clipboard-write', clip.marker).catch(() => { clip.marker = null; });
@@ -79,18 +80,19 @@ function visibleWorld() {
     return { x: -x / z, y: -y / z, w: viewport.clientWidth / z, h: viewport.clientHeight / z };
 }
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-// Each paste lands a step further from the original; out-of-sight copies land in the middle of the view.
+// Each paste lands a step further from the previous one. A paste that would be out of sight lands in
+// the middle of the view instead, and later pastes step on from there.
 function pasteBoardItems() {
     if (!boardClipboard || focused || boardBusy()) return false;
-    const { items, bounds } = boardClipboard;
-    let dx = PASTE_OFFSET * (boardClipboard.pastes + 1), dy = dx;
+    const { items, bounds, offset } = boardClipboard;
+    let dx = offset.x + PASTE_OFFSET, dy = offset.y + PASTE_OFFSET;
     if (!overlaps({ ...bounds, x: bounds.x + dx, y: bounds.y + dy }, visibleWorld())) {
         const center = viewportCenterWorld();
         dx = Math.round(center.x - (bounds.x + bounds.w / 2));
         dy = Math.round(center.y - (bounds.y + bounds.h / 2));
     }
     if (!addItems(cloneItems(items, dx, dy))) return false;
-    boardClipboard.pastes++;
+    boardClipboard.offset = { x: dx, y: dy };
     return true;
 }
 function duplicateSelection() {
