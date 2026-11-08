@@ -9,8 +9,8 @@ function sessionMetadata(raw) {
 
 // Inspect a bounded rolling buffer; never save terminal text or infer IDs from unrelated files.
 class MetadataParser {
-    constructor({ cwd, provider, onChange, onLaunch = () => {}, onEnd = () => {}, onWarning = () => {}, platform = process.platform }) {
-        Object.assign(this, { cwd, provider, onChange, onLaunch, onEnd, onWarning, platform });
+    constructor({ cwd, onChange, onLaunch = () => {}, onEnd = () => {}, onWarning = () => {}, platform = process.platform }) {
+        Object.assign(this, { cwd, onChange, onLaunch, onEnd, onWarning, platform });
         this.buffer = '';
         this.text = '';
     }
@@ -41,27 +41,33 @@ class MetadataParser {
                 if (event.type === 'warning' && typeof event.message === 'string' && event.message.length <= 512) this.onWarning(event.message);
                 if (event.type === 'cwd' && validDirectory(event.cwd)) { this.cwd = event.cwd; this.onChange({ cwd: event.cwd }); }
                 if (event.type === 'launch' && ['codex', 'claude'].includes(event.provider) && SESSION_ID.test(event.token) && validDirectory(event.cwd)) {
-                    this.provider = event.provider;
+                    this.launch = { provider: event.provider, token: event.token };
                     this.cwd = event.cwd;
                     this.text = '';
                     this.onLaunch(event);
                     this.onChange({ cwd: event.cwd, session: sessionMetadata({ ...event, sessionId: event.sessionId }) });
                 }
-                if (event.type === 'end' && SESSION_ID.test(event.token)) this.onEnd(event);
+                if (event.type === 'end' && this.launch && event.token === this.launch.token) {
+                    this.onEnd(event);
+                    this.launch = null;
+                    this.text = '';
+                }
             }
         } catch { /* Malformed or non-local metadata must not break terminal output. */ }
     }
     inspectText(data) {
+        // A configured profile or a command mentioned in arbitrary output is not a launch.
+        // Claude reports IDs through its launch event and hook instead of output heuristics.
+        if (this.launch?.provider !== 'codex') return;
         this.text = (this.text + data).slice(-4096).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
         const patterns = [
-            ['codex', /\bcodex resume ([a-f0-9-]{36})\b/gi],
-            ['claude', /\bclaude (?:--resume|-r) ([a-f0-9-]{36})\b/gi]
+            /(?:^|[\r\n])[ \t]*To continue this session, run codex resume ([a-f0-9-]{36})\b/gi,
+            /(?:^|[\r\n])[ \t]*session id:[ \t]*([a-f0-9-]{36})\b/gi
         ];
-        if (this.provider === 'codex') patterns.push(['codex', /\bsession id:\s*([a-f0-9-]{36})\b/gi]);
         const matches = [];
-        for (const [provider, pattern] of patterns) {
+        for (const pattern of patterns) {
             for (const match of this.text.matchAll(pattern)) {
-                const session = sessionMetadata({ provider, sessionId: match[1], cwd: this.cwd });
+                const session = sessionMetadata({ provider: 'codex', sessionId: match[1], cwd: this.cwd });
                 if (session) matches.push({ session, index: match.index, end: match.index + match[0].length });
             }
         }

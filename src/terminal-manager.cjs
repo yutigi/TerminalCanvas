@@ -44,7 +44,7 @@ class TerminalManager {
         this.sessions.set(card.id, entry);
         this.metadata.set(card.id, { cwd, session: card.session || null });
         entry.parser = new MetadataParser({
-            cwd, platform: this.platform, provider: ['codex', 'claude'].includes(card.profile) ? card.profile : undefined,
+            cwd, platform: this.platform,
             onChange: patch => this.updateMetadata(card.id, patch),
             onLaunch: event => { entry.launch = event; },
             onWarning: message => this.emit({ type: 'error', id: card.id, message }),
@@ -74,6 +74,7 @@ class TerminalManager {
             this.emit({ type: 'exit', id: card.id, exitCode, signal });
         }));
         try {
+            if (integration?.command) terminal.write(integration.command + '\r');
             const command = mode === 'fresh' ? '' : mode === 'resume'
                 ? (card.session.provider === 'codex' ? `codex resume ${card.session.sessionId}` : `claude --resume ${card.session.sessionId}`)
                 : card.command;

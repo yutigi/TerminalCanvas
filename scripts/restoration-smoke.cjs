@@ -14,7 +14,7 @@ exports.run = async ({ app, win, terminals, createCard, phase }) => {
     assert.equal(process.platform, 'win32', 'This native smoke test currently targets Windows.');
     const root = path.resolve(__dirname, '../.cache/restoration-project');
     const tools = path.join(root, 'tools');
-    const changedFolder = path.join(root, 'changed folder');
+    const changedFolder = path.join(root, 'changed folder ไทย 工作 🚀');
     await fs.mkdir(tools, { recursive: true });
     await fs.mkdir(changedFolder, { recursive: true });
     // These stand-ins exercise real shells and real hook processes, with no API calls.
@@ -51,6 +51,10 @@ console.log('SESSION_TEST_DONE');
         terminals.write(card.id, 'claude\r');
         try { await until(() => output.includes('SESSION_TEST_DONE') && terminals.snapshot().get(card.id)?.session?.sessionId === savedId, 'Manual Claude launch or its SessionStart hook was not captured.'); }
         catch (error) { console.error(output.slice(-12000)); throw error; }
+        const unrelatedId = '87654321-4321-4321-9876-123456789abc';
+        terminals.write(card.id, `Write-Output 'Example: codex resume ${unrelatedId}'; Write-Output 'DOCUMENT_OUTPUT_DONE'\r`);
+        await until(() => /(?:\r?\n)DOCUMENT_OUTPUT_DONE(?:\r?\n|\x1b)/.test(output), 'Ordinary shell output did not finish.');
+        assert.deepEqual(terminals.snapshot().get(card.id).session, { provider: 'claude', sessionId: savedId, cwd: changedFolder }, 'Ordinary terminal output must not replace the captured AI session.');
         const file = path.join(app.getPath('userData'), 'workspace.terminalcanvas');
         await until(async () => JSON.parse(await fs.readFile(file, 'utf8')).cards[0]?.session?.sessionId === savedId, 'Host metadata was not autosaved.');
         const persisted = JSON.parse(await fs.readFile(file, 'utf8'));

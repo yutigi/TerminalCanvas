@@ -52,16 +52,40 @@ test('metadata parser handles character-split OSC, ANSI, cwd changes, and tool s
     assert.equal(updates.filter(p => p.session).length, 2, 'old IDs must not reappear after another session starts');
 });
 
-test('explicit resume hints detect manually launched tools without trusting arbitrary UUIDs or remote directories', () => {
+test('terminal output cannot replace a saved session without a matching active tool launch', () => {
     const updates = [];
-    const parser = new MetadataParser({ cwd: '/project', platform: 'linux', onChange: p => updates.push(p) });
+    // Even a Codex profile is not evidence that Codex is currently running.
+    const parser = new MetadataParser({ cwd: '/project', provider: 'codex', platform: 'linux', onChange: p => updates.push(p) });
     parser.feed(`a random UUID ${id}\n`);
     parser.feed('\x1b]7;file://remote/private\x07');
-    parser.feed(`To continue this session, run codex resume ${id}\nclaude --resume ${nextId}\n`);
-    assert.deepEqual(updates, [{ session: session('codex', id, '/project') }, { session: session('claude', nextId, '/project') }]);
+    parser.feed(`Example: codex resume ${id}\nclaude --resume ${nextId}\nsession id: ${id}\n`);
+    parser.feed(`To continue this session, run codex resume ${id}\n`);
+    assert.deepEqual(updates, []);
+    parser.feed(osc({ type: 'launch', provider: 'claude', token: id, sessionId: id, cwd: '/project' }));
+    parser.feed(`To continue this session, run codex resume ${nextId}\nclaude --resume ${nextId}\n`);
+    assert.deepEqual(updates.filter(p => p.session), [{ cwd: '/project', session: session('claude', id, '/project') }]);
     parser.feed('\x1b]633;TC;not-json\x07');
     parser.feed('x'.repeat(100000));
     assert.ok(parser.buffer.length <= 32768 && parser.text.length <= 4096);
+});
+
+test('Codex captures only its own session headers and exit hints between matching launch and end events', () => {
+    const updates = [], ends = [];
+    const parser = new MetadataParser({ cwd: '/project', onChange: p => updates.push(p), onEnd: e => ends.push(e) });
+    parser.feed(osc({ type: 'end', exitCode: 1 }));
+    assert.equal(ends.length, 0);
+    parser.feed(osc({ type: 'launch', provider: 'codex', token: id, cwd: '/project' }));
+    parser.feed(`Example: codex resume ${nextId}\nThe docs say session id: ${nextId}\nclaude --resume ${nextId}\n`);
+    assert.deepEqual(updates.filter(p => p.session), []);
+    for (const char of `session id: ${id}\n`) parser.feed(char);
+    // An end event for a different launch must not deactivate the current tool.
+    parser.feed(osc({ type: 'end', token: nextId, exitCode: 0 }));
+    for (const char of `To continue this session, run codex resume ${nextId}\n`) parser.feed(char);
+    assert.deepEqual(updates.filter(p => p.session).map(p => p.session), [session('codex', id, '/project'), session('codex', nextId, '/project')]);
+    parser.feed(osc({ type: 'end', token: id, exitCode: 0 }));
+    assert.equal(ends.length, 1);
+    parser.feed(`session id: ${id}\nTo continue this session, run codex resume ${id}\n`);
+    assert.equal(updates.filter(p => p.session).length, 2, 'shell output after the tool exits must not replace its ID');
 });
 
 test('recovery persists host metadata immediately and stale renderer autosaves cannot overwrite it', async () => {
@@ -140,4 +164,37 @@ test('real Windows PowerShell wrappers detect manual Claude launches and pass ar
     assert.equal(launches[1].sessionId, id);
     assert.ok(result.stdout.includes('name with spaces'), result.stdout + result.stderr);
     assert.ok(result.stdout.includes('settings with'), result.stdout + result.stderr);
+});
+
+test('the Windows Claude hook decodes Unicode directories as UTF-8', { skip: process.platform !== 'win32' }, t => {
+    const folder = temporary(t);
+    const integration = prepareIntegration({ folder, platform: 'win32', shell: 'powershell.exe' });
+    t.after(() => integration.cleanup());
+    const settingsFile = fs.readdirSync(folder).find(file => file.endsWith('.settings.json'));
+    const settings = JSON.parse(fs.readFileSync(path.join(folder, settingsFile), 'utf8'));
+    const cwd = path.join(folder, 'ไทย', '工作', '🚀');
+    fs.mkdirSync(cwd, { recursive: true });
+    const result = spawnSync(settings.hooks.SessionStart[0].hooks[0].command, {
+        shell: true, input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: id, cwd }),
+        encoding: 'utf8', env: { ...process.env, ...integration.env, TC_LAUNCH_TOKEN: nextId }, windowsHide: true, timeout: 15000
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(integration.sessionFile, 'utf8')), { ...session('claude', id, cwd), token: nextId });
+});
+
+const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : '/bin/bash';
+test('integrated Bash loads login profiles before installing hooks and preserves existing prompt commands', { skip: !fs.existsSync(bash) }, t => {
+    const folder = temporary(t);
+    fs.writeFileSync(path.join(folder, '.bash_profile'), 'export TC_REVIEW_LOGIN=profile-loaded\n. "$HOME/.bashrc"\n');
+    fs.writeFileSync(path.join(folder, '.bashrc'), 'TC_RC_COUNT=$(( ${TC_RC_COUNT:-0} + 1 ))\nPROMPT_COMMAND=(":" "true")\n');
+    const integration = prepareIntegration({ folder, platform: 'linux', shell: '/bin/bash' });
+    t.after(() => integration.cleanup());
+    assert.equal(typeof integration.command, 'string');
+    const result = spawnSync(bash, [...integration.args, '-c', `${integration.command}\nprintf 'login=%s rc=%s\\n' "$TC_REVIEW_LOGIN" "$TC_RC_COUNT"\nprintf 'prompt=%s\\n' "\${PROMPT_COMMAND[*]}"\ndeclare -F claude codex\n`], {
+        env: { ...process.env, HOME: folder }, encoding: 'utf8', windowsHide: true, timeout: 15000
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /login=profile-loaded rc=1/);
+    assert.match(result.stdout, /prompt=__tc_cwd : true/);
+    assert.match(result.stdout, /claude\r?\ncodex/);
 });

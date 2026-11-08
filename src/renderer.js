@@ -377,7 +377,7 @@ function mount(card) {
     el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
-    const s = { element: el, status: 'idle', terminal: null, fit: null, placeholder: el.querySelector('.terminal-placeholder') };
+    const s = { element: el, status: 'idle', terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     recoveryInfo(card);
     if (window.Terminal && window.FitAddon) {
@@ -451,10 +451,13 @@ async function start(card, mode = card.session ? 'resume' : 'start') {
     try {
         clearTimeout(autosaveTimer);
         await invoke('autosave', workspace);
+        const metadataRevision = s.metadataRevision;
         const result = await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows, mode });
         if (sessions.get(card.id) !== s) return;
-        if (result.cwd) card.cwd = result.cwd;
-        if (result.session) card.session = result.session;
+        if (s.metadataRevision === metadataRevision) {
+            if (result.cwd) card.cwd = result.cwd;
+            if (result.session) card.session = result.session;
+        }
         recoveryInfo(card); changed();
         if (s.status === 'starting') setStatus(card, 'running');
         s.terminal.focus();
@@ -660,6 +663,7 @@ if (bridge) {
         if (event.type === 'metadata') {
             const card = workspace?.cards.find(c => c.id === event.id);
             if (card) {
+                if (s) s.metadataRevision++;
                 card.cwd = event.cwd;
                 if (event.session) card.session = event.session;
                 recoveryInfo(card); changed(); refresh();

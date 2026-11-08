@@ -95,6 +95,38 @@ test('host metadata updates the renderer model and folder display without runnin
     assert.deepEqual(calls.map(c => c.action), ['initialize']);
 });
 
+test('metadata received during startup takes precedence over an older start response', async () => {
+    const workspace = createWorkspace(); const card = createCard();
+    const oldSession = { provider: 'claude', sessionId: '11111111-1111-4111-8111-111111111111', cwd: '/old' };
+    const latestSession = { provider: 'claude', sessionId: '22222222-2222-4222-8222-222222222222', cwd: '/latest' };
+    workspace.cards.push({ ...card, cwd: '/old', session: oldSession });
+    const { context, onEvent } = await boot(workspace);
+    vm.runInContext(`
+        sessions.get(workspace.cards[0].id).terminal = { reset() {}, focus() {}, cols: 80, rows: 24 };
+        bridge.invoke = async action => action === 'start' ? new Promise(resolve => { globalThis.finishStart = resolve; }) : ({ ok: true });
+    `, context);
+    const starting = vm.runInContext('start(workspace.cards[0])', context);
+    await new Promise(resolve => setImmediate(resolve));
+    onEvent({ type: 'metadata', id: card.id, cwd: '/latest', session: latestSession });
+    context.startResponse = { cwd: '/old', session: oldSession };
+    vm.runInContext('finishStart(startResponse)', context);
+    await starting;
+    assert.equal(json(context, 'workspace.cards[0].cwd'), '/latest');
+    assert.deepEqual(json(context, 'workspace.cards[0].session'), latestSession);
+    assert.equal(vm.runInContext('[...sessions.values()][0].element.querySelector(".card-directory span").textContent', context), '/latest');
+});
+
+test('start responses still supply metadata when no newer event has arrived', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard());
+    const { context } = await boot(workspace);
+    vm.runInContext(`
+        sessions.get(workspace.cards[0].id).terminal = { reset() {}, focus() {}, cols: 80, rows: 24 };
+        bridge.invoke = async action => action === 'start' ? ({ cwd: '/home' }) : ({ ok: true });
+    `, context);
+    await vm.runInContext('start(workspace.cards[0])', context);
+    assert.equal(json(context, 'workspace.cards[0].cwd'), '/home');
+});
+
 test('Resume and Start fresh send explicit start modes and shutdown sends the latest metadata', async () => {
     const workspace = createWorkspace(); const card = createCard();
     card.session = { provider: 'codex', sessionId: '12345678-1234-4321-9876-123456789abc', cwd: '/agent' };

@@ -31,6 +31,20 @@ test('does not launch anything until explicitly started; sends selected command 
     assert.equal(launches[0][2].env.SAMPLE, 'yes');
     assert.equal(launches[0][2].cwd, process.cwd());
 });
+
+test('shell initialization runs before a saved AI command or resume action', () => {
+    const { manager, processes, launches } = harness({
+        platform: 'linux', env: { SHELL: '/bin/bash' },
+        integration: () => ({ args: ['--login', '-i'], command: "source '/integration.bash'", env: {}, cleanup() {} })
+    });
+    manager.start(createCard({ profile: 'codex' }));
+    assert.deepEqual(launches[0][1], ['--login', '-i']);
+    assert.deepEqual(processes[0].writes, ["source '/integration.bash'\r", 'codex\r']);
+    const card = { ...createCard(), session: { provider: 'codex', sessionId: '12345678-1234-4321-9876-123456789abc', cwd: process.cwd() } };
+    manager.start(card, 80, 24, 'resume');
+    assert.deepEqual(processes[1].writes, ["source '/integration.bash'\r", `codex resume ${card.session.sessionId}\r`]);
+    manager.stopAll();
+});
 test('uses Windows PowerShell from SystemRoot for a plain terminal', () => {
     const { manager, launches, processes } = harness({ env: { SystemRoot: 'D:\\Windows', ComSpec: 'cmd.exe' } });
     const result = manager.start(createCard());

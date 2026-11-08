@@ -89,7 +89,7 @@ function prepareIntegration({ folder, executable = process.execPath, platform = 
     const sessionFile = `${stem}.json`, settings = `${stem}.settings.json`;
     const hook = path.join(__dirname, 'session-hook.cjs');
     const windows = platform === 'win32';
-    const ps = `$payload = [Console]::In.ReadToEnd(); $OutputEncoding = New-Object Text.UTF8Encoding $false; $env:ELECTRON_RUN_AS_NODE = '1'; $payload | & ${psQuote(executable)} ${psQuote(hook)} claude`;
+    const ps = `$reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.Encoding]::UTF8); $payload = $reader.ReadToEnd(); $reader.Dispose(); $OutputEncoding = New-Object Text.UTF8Encoding $false; $env:ELECTRON_RUN_AS_NODE = '1'; $payload | & ${psQuote(executable)} ${psQuote(hook)} claude`;
     const command = windows
         ? `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(ps, 'utf16le').toString('base64')}`
         : `ELECTRON_RUN_AS_NODE=1 ${shQuote(executable)} ${shQuote(hook)} claude`;
@@ -97,14 +97,16 @@ function prepareIntegration({ folder, executable = process.execPath, platform = 
     const source = windows ? powershellSource(settings) : bashSource(settings);
     const script = `${stem}.${windows ? 'ps1' : 'bash'}`;
     fs.writeFileSync(script, source, { mode: 0o600 });
-    let args;
+    let args, initializeCommand;
     if (windows) args = ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')];
     else if (path.basename(shell) === 'bash') {
-        fs.writeFileSync(script, '[ -f ~/.bashrc ] && . ~/.bashrc\n' + source, { mode: 0o600 });
-        args = ['--rcfile', script, '-i'];
+        // Login profiles keep control of environment setup and whether .bashrc is sourced.
+        // Queue integration as the first input command, after Bash finishes those profiles.
+        args = ['--login', '-i'];
+        initializeCommand = `source ${shQuote(script)}`;
     }
     return {
-        args, sessionFile,
+        args, command: initializeCommand, sessionFile,
         env: { TC_SESSION_FILE: sessionFile, TC_NODE: executable, TC_HOOK: hook },
         cleanup() { for (const file of [sessionFile, settings, script]) { try { fs.unlinkSync(file); } catch {} } }
     };
