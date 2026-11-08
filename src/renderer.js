@@ -27,9 +27,12 @@ document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.
 const bridge = window.terminalCanvas;
 const viewport = $('#viewport');
 const world = $('#world');
+const minimap = $('#minimap');
+const minimapMap = $('#minimap-map');
 const sessions = new Map();
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
 let ready = false, formBusy = false;
+let minimapVisible = true, minimapLayout, minimapDrag;
 const mark = profile => {
     const el = document.createElement('span');
     el.className = 'profile-mark';
@@ -68,13 +71,90 @@ function renderCamera() {
     viewport.style.setProperty('--viewport-width', `${viewport.clientWidth}px`);
     viewport.style.setProperty('--viewport-height', `${viewport.clientHeight}px`);
     $('#zoom-reset').textContent = `${Math.round(z * 100)}%`;
+    renderMinimap();
 }
+function positionMinimapElement(element, rect) {
+    Object.assign(element.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
+}
+function renderMinimap() {
+    const hasCards = workspace.cards.length > 0;
+    $('#minimap-toggle').disabled = !hasCards;
+    $('#minimap-toggle').setAttribute('aria-pressed', String(minimapVisible));
+    minimap.hidden = !minimapVisible || !hasCards || !!focused;
+    if (minimap.hidden || minimapMap.clientWidth <= 20 || minimapMap.clientHeight <= 20) return;
+    minimapLayout = minimapDrag?.layout || window.TerminalCanvasMinimap.layout(workspace.cards, workspace.camera,
+        { width: viewport.clientWidth, height: viewport.clientHeight }, minimapMap.clientWidth, minimapMap.clientHeight);
+    const nodes = workspace.cards.map((card, index) => {
+        const node = document.createElement('div');
+        const status = sessions.get(card.id)?.status;
+        node.className = `minimap-card${card.id === selected ? ' selected' : ''}${['running', 'starting'].includes(status) ? ' running' : ''}`;
+        node.style.setProperty('--profile-color', profiles.find(profile => profile.id === card.profile).color);
+        node.title = card.title;
+        positionMinimapElement(node, minimapLayout.cards[index]);
+        return node;
+    });
+    $('#minimap-cards').replaceChildren(...nodes);
+    const { x, y, z } = workspace.camera;
+    positionMinimapElement($('#minimap-viewport'), {
+        x: -x / z * minimapLayout.scale + minimapLayout.offsetX,
+        y: -y / z * minimapLayout.scale + minimapLayout.offsetY,
+        w: viewport.clientWidth / z * minimapLayout.scale,
+        h: viewport.clientHeight / z * minimapLayout.scale
+    });
+}
+$('#minimap-toggle').onclick = () => { minimapVisible = !minimapVisible; renderMinimap(); };
+minimap.addEventListener('pointerdown', event => event.stopPropagation());
+minimap.addEventListener('wheel', event => event.stopPropagation());
+minimapMap.addEventListener('pointerdown', event => {
+    if (!ready || minimap.hidden || event.button !== 0 || minimapDrag || !minimapLayout) return;
+    event.preventDefault(); minimapMap.focus(); minimapMap.setPointerCapture(event.pointerId);
+    // Freeze the projection during navigation so changing bounds cannot move the target under the pointer.
+    const map = minimapLayout, rect = minimapMap.getBoundingClientRect(), frame = map.viewport;
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const inside = point.x >= frame.x && point.x <= frame.x + frame.w && point.y >= frame.y && point.y <= frame.y + frame.h;
+    const offset = inside ? { x: frame.x + frame.w / 2 - point.x, y: frame.y + frame.h / 2 - point.y } : { x: 0, y: 0 };
+    minimapDrag = { layout: map };
+    const move = e => {
+        if (e.pointerId !== event.pointerId) return;
+        workspace.camera = window.TerminalCanvasMinimap.cameraAtPoint(
+            { x: e.clientX - rect.left + offset.x, y: e.clientY - rect.top + offset.y }, map,
+            { width: viewport.clientWidth, height: viewport.clientHeight }, workspace.camera.z);
+        renderCamera();
+    };
+    const end = e => {
+        if (e.pointerId !== event.pointerId) return;
+        minimapMap.removeEventListener('pointermove', move);
+        minimapMap.removeEventListener('pointerup', end);
+        minimapMap.removeEventListener('pointercancel', end);
+        minimapMap.removeEventListener('lostpointercapture', end);
+        minimapDrag = null;
+        if (minimapMap.hasPointerCapture(event.pointerId)) minimapMap.releasePointerCapture(event.pointerId);
+        renderMinimap(); changed();
+    };
+    minimapMap.addEventListener('pointermove', move);
+    minimapMap.addEventListener('pointerup', end);
+    minimapMap.addEventListener('pointercancel', end);
+    minimapMap.addEventListener('lostpointercapture', end);
+    move(event);
+});
+minimapMap.addEventListener('keydown', event => {
+    if (!ready || minimap.hidden || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const amount = event.shiftKey ? .5 : .1;
+    const dx = event.key === 'ArrowLeft' ? 1 : event.key === 'ArrowRight' ? -1 : 0;
+    const dy = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
+    workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + dx * viewport.clientWidth * amount));
+    workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + dy * viewport.clientHeight * amount));
+    renderCamera(); changed();
+});
 function renderGeometry(card) {
     const el = sessions.get(card.id)?.element;
     if (!el) return;
     Object.assign(el.style, { left: `${card.x}px`, top: `${card.y}px`, width: `${card.w}px`, height: `${card.h}px` });
+    renderMinimap();
 }
 function refresh() {
+    renderMinimap();
     const running = [...sessions.values()].filter(s => ['running', 'starting'].includes(s.status)).length;
     $('#card-count').textContent = workspace.cards.length;
     $('#outline-count').textContent = String(workspace.cards.length).padStart(2, '0');

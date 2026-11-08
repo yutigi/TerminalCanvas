@@ -94,6 +94,7 @@ app.whenReady().then(async () => {
     win = new BrowserWindow({
         width: 1500, height: 960, minWidth: 1000, minHeight: 680,
         title: 'Terminal Canvas', backgroundColor: '#111318', autoHideMenuBar: true,
+        icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
         webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, webviewTag: false }
     });
     win.webContents.on('will-navigate', event => event.preventDefault());
