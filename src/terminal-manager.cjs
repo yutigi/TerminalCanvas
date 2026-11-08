@@ -2,15 +2,17 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { validateCard, LIMITS } = require('./workspace.cjs');
+const { directoryReports, powershellArgs, watchDirectory } = require('./terminal-cwd.cjs');
 
 // Terminal processes belong to the desktop host; renderers only receive this lifecycle API.
 class TerminalManager {
-    constructor({ spawn, emit, platform = process.platform, env = process.env, home = os.homedir() }) {
+    constructor({ spawn, emit, platform = process.platform, env = process.env, home = os.homedir(), watchCwd = watchDirectory }) {
         this.spawn = spawn;
         this.emit = emit;
         this.platform = platform;
         this.env = env;
         this.home = home;
+        this.watchCwd = watchCwd;
         this.sessions = new Map();
     }
     start(raw, cols = 80, rows = 24) {
@@ -21,15 +23,29 @@ class TerminalManager {
         const cwd = card.cwd || this.home;
         if (!fs.statSync(cwd).isDirectory()) throw new Error('Working directory must be a folder.');
         const windows = this.platform === 'win32';
-        const shell = windows
+        let shell = windows
             ? path.win32.join(this.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
             : (this.env.SHELL || '/bin/bash');
-        const args = windows ? ['-NoLogo'] : ['-l'];
+        let args = windows ? powershellArgs() : ['-l'];
+        let command = card.command;
+        // An explicit plain shell launcher can be integrated directly. More complex
+        // launch commands keep their existing PowerShell execution semantics.
+        if (windows && /^(?:pwsh|powershell|cmd)(?:\.exe)?$/i.test(command.trim())) {
+            shell = /\.exe$/i.test(command.trim()) ? command.trim() : command.trim() + '.exe'; command = '';
+            args = /^cmd/i.test(shell) ? [] : powershellArgs();
+        }
         const env = { ...this.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERMINAL_CANVAS: '1' };
         delete env.ELECTRON_RUN_AS_NODE;
+        if (windows) env.PROMPT = '$E]9;9;$P$E\\' + (env.PROMPT || '$P$G');
         const terminal = this.spawn(shell, args, { name: 'xterm-256color', cwd, cols, rows, env });
-        const entry = { terminal, pending: 0, paused: false, subscriptions: [] };
+        const entry = { terminal, cwd: undefined, pending: 0, paused: false, subscriptions: [] };
         this.sessions.set(card.id, entry);
+        const report = cwd => {
+            if (this.sessions.get(card.id) !== entry || entry.cwd === cwd) return;
+            entry.cwd = cwd;
+            this.emit({ type: 'cwd', id: card.id, cwd });
+        };
+        const observe = directoryReports(this.platform, report);
         entry.subscriptions.push(terminal.onData(data => {
             if (this.sessions.get(card.id) !== entry) return;
             entry.pending += data.length;
@@ -38,6 +54,7 @@ class TerminalManager {
                 terminal.pause();
             }
             this.emit({ type: 'data', id: card.id, data });
+            if (windows) observe(data);
         }));
         entry.subscriptions.push(terminal.onExit(({ exitCode, signal }) => {
             if (this.sessions.get(card.id) !== entry) return;
@@ -45,8 +62,9 @@ class TerminalManager {
             this.dispose(entry);
             this.emit({ type: 'exit', id: card.id, exitCode, signal });
         }));
+        if (!windows) entry.subscriptions.push(this.watchCwd(terminal.pid, this.platform, report));
         try {
-            if (card.command) terminal.write(card.command + '\r');
+            if (command) terminal.write(command + '\r');
         } catch (error) {
             this.stop(card.id);
             throw error;
