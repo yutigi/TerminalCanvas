@@ -177,15 +177,20 @@ function removeItems(ids) {
     if (targets.includes(selected)) selected = [...selection].at(-1) ?? null;
     applySelection(); renderLines(); changed();
 }
-function addItem(item, { edit = false } = {}) {
-    if (workspace.items.length >= ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
-    workspace.items.push(item);
-    mountItem(item);
-    select(item.id);
-    changed();
-    if (edit) startEditing(item.id);
-    return item;
+// Adds items as one undoable step and selects them. `edit` opens a single new item for typing.
+function addItems(list, { edit = false } = {}) {
+    if (workspace.items.length + list.length > ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
+    const before = snapshotBoard();
+    commitHistory(before);
+    workspace.items.push(...list);
+    list.forEach(mountItem);
+    if (list.length === 1) select(list[0].id);
+    else setSelection(list.map(item => item.id));
+    renderLines(); changed();
+    if (edit && list.length === 1) startEditing(list[0].id, { created: before });
+    return list;
 }
+function addItem(item, options) { return addItems([item], options)?.[0] ?? null; }
 function makeItem(kind, rect) {
     const item = { id: newId(), x: clampCoordinate(rect.x), y: clampCoordinate(rect.y), w: rect.w, h: rect.h };
     if (kind === 'rect' || kind === 'ellipse') return { ...item, type: 'shape', shape: kind, text: '' };
@@ -198,6 +203,7 @@ function beginCreate(event) {
     if (workspace.items.length >= ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
     if (kind === 'line' || kind === 'arrow') {
         const from = attachableAt(start);
+        recordHistory();
         const line = { id: newId(), type: 'line', start: from ? { id: from } : start, end: { ...start }, arrow: kind === 'arrow' };
         workspace.items.push(line);
         mountLine(line);
@@ -225,27 +231,32 @@ function resizeItem(event, item, handle) {
     if (event.button !== 0 || focused) return;
     if (!selection.has(item.id)) select(item.id);
     const { min } = ITEM_DEFAULTS[itemKind(item)], start = { w: item.w, h: item.h }, ratio = item.w / item.h, z = workspace.camera.z;
+    const before = snapshotBoard();
     beginDrag(handle, event, (dx, dy) => {
         item.w = clampSize(start.w + dx / z, min[0]);
         item.h = item.type === 'image' ? clampSize(item.w / ratio, min[1]) : clampSize(start.h + dy / z, min[1]);
         renderItem(item); renderLines(); renderSelectionBox();
-    }, moved => { if (moved) { renderMinimap(); changed(); } });
+    }, moved => { if (moved) { commitHistory(before); renderMinimap(); changed(); } });
 }
 function dragEndpoint(event, line, which, handle) {
     if (event.button !== 0 || focused) return;
     const other = which === 'start' ? 'end' : 'start';
+    const before = snapshotBoard(), original = line[which];
     beginDrag(handle, event, (_dx, _dy, e) => { line[which] = toWorld(e); renderLine(line); renderSelectionBox(); }, (moved, e) => {
-        if (!moved) return;
+        if (!moved) { line[which] = original; renderLine(line); return; }
+        commitHistory(before);
         const target = attachableAt(toWorld(e), line[other].id);
         if (target) line[which] = { id: target };
         renderLine(line); renderSelectionBox(); renderMinimap(); changed();
     });
 }
 // Text, note, and shape content is plain text edited in place; empty text labels are removed.
-function startEditing(id) {
+// `created` is the history step that added a new item, so typing its first text is part of that step.
+function startEditing(id, { created = null } = {}) {
     const item = findItem(id), view = itemViews.get(id);
     if (!item || !view?.text || editing) return;
     editing = id;
+    view.session = { created, before: created ? null : snapshotBoard() };
     const editor = document.createElement('textarea');
     editor.className = 'item-editor'; editor.value = item.text; editor.maxLength = 10000;
     editor.setAttribute('aria-label', item.type === 'note' ? 'Sticky note text' : item.type === 'shape' ? 'Shape text' : 'Text label');
@@ -280,17 +291,27 @@ function finishEditing(id) {
     const item = findItem(id), view = itemViews.get(id);
     editing = null;
     if (!item || !view?.editor) return;
-    item.text = view.editor.value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f]/g, '');
+    const session = view.session || {};
+    view.session = null;
+    const text = view.editor.value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f]/g, '');
+    const edited = text !== item.text;
+    item.text = text;
     if (item.type === 'text') fitTextHeight(item, view.editor);
     view.editor.remove(); view.editor = null;
     view.text.hidden = false; view.element.classList.remove('editing');
-    if (item.type === 'text' && !item.text.trim()) return removeItems([id]);
+    if (item.type === 'text' && !item.text.trim()) {
+        if (session.created) discardHistory(session.created);
+        else if (session.before) commitHistory(session.before);
+        return removeItems([id]);
+    }
+    if (edited && session.before) commitHistory(session.before);
     renderItem(item); changed();
 }
 function editFrameTitle(item) {
     const view = itemViews.get(item.id);
     if (!view || editing) return;
     editing = item.id;
+    const before = snapshotBoard();
     const input = document.createElement('input');
     input.className = 'frame-title-editor'; input.value = item.title; input.maxLength = 100;
     input.setAttribute('aria-label', 'Frame title');
@@ -299,7 +320,9 @@ function editFrameTitle(item) {
     input.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Enter' || event.key === 'Escape') { event.preventDefault(); input.blur(); } });
     input.addEventListener('blur', () => {
         editing = null;
-        item.title = input.value.replace(/[\x00-\x1f]/g, ' ').trim() || 'Frame';
+        const title = input.value.replace(/[\x00-\x1f]/g, ' ').trim() || 'Frame';
+        if (title !== item.title) commitHistory(before);
+        item.title = title;
         input.remove(); view.title.hidden = false;
         renderItem(item); changed();
     }, { once: true });
@@ -345,6 +368,7 @@ function renderStyleToolbar() {
 function setItemColor(color) {
     const items = selectedItems(COLORED_TYPES);
     if (!items.length || (color !== 'default' && !ITEM_COLORS.includes(color))) return;
+    recordHistory();
     for (const item of items) {
         if (color === 'default') delete item.color;
         else item.color = color;
@@ -355,6 +379,7 @@ function setItemColor(color) {
 function setItemFontSize(size) {
     const items = selectedItems(TEXT_TYPES);
     if (!items.length || (size !== 'medium' && !ITEM_FONT_SIZES.includes(size))) return;
+    recordHistory();
     for (const item of items) {
         if (size === 'medium') delete item.fontSize;
         else item.fontSize = size;

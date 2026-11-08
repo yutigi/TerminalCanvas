@@ -179,6 +179,10 @@ exports.run = async ({ app, win, terminals, createCard }) => {
     await sendInput(win, key('G', ['control']));
     const grouped = await win.webContents.executeJavaScript('({ box: findItem("box").groups?.[0], ring: findItem("ring").groups?.[0], box2: !document.querySelector("#selection-box").hidden })');
     assert.ok(grouped.box && grouped.box === grouped.ring && grouped.box2, 'Ctrl+G groups the selection');
+    await sendInput(win, key('Z', ['control']));
+    assert.equal(await win.webContents.executeJavaScript('findItem("box").groups ?? null'), null, 'Ctrl+Z undoes the grouping');
+    await sendInput(win, key('Z', ['control', 'shift']));
+    assert.deepEqual(await win.webContents.executeJavaScript('findItem("box").groups'), [grouped.box], 'Ctrl+Shift+Z redoes it');
     // Everything the renderer builds must pass the desktop host's validation, or autosave would fail.
     const saved = validateWorkspace(await win.webContents.executeJavaScript('JSON.parse(JSON.stringify(workspace))'));
     assert.equal(saved.items.length, board.items.length + 1);
