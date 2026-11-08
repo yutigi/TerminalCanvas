@@ -155,6 +155,19 @@ async function checkTerminalSelection(win, createCard) {
         send({ type: 'mouseMove', x: wheel.x, y: wheel.y });
         send({ type: 'mouseWheel', x: wheel.x, y: wheel.y, deltaX: 0, deltaY: 240, wheelTicksY: 2, canScroll: true });
         await waitFor(() => js(`sessions.get(${JSON.stringify(card.id)}).terminal.buffer.active.viewportY`), y => y < bottom, 'Wheel input did not scroll the zoomed terminal.');
+        // Ctrl+scroll over a zoomed terminal without scrollback reaches the canvas and zooms around the pointer.
+        const anchorCard = cards[1];
+        await js(`workspace.camera = { x: ${200 - anchorCard.x * .65}, y: ${100 - anchorCard.y * .65}, z: .65 }; renderCamera();`);
+        const anchor = await cellPoint(anchorCard, 40, 9, .5);
+        assert.ok(anchor.visible, 'the zoom anchor is on the terminal');
+        const worldAt = `(() => { const r = viewport.getBoundingClientRect(), c = workspace.camera; return { x: (${anchor.x} - r.left - c.x) / c.z, y: (${anchor.y} - r.top - c.y) / c.z }; })()`;
+        const anchorWorld = await js(worldAt);
+        send({ type: 'mouseMove', x: anchor.x, y: anchor.y });
+        send({ type: 'mouseWheel', x: anchor.x, y: anchor.y, deltaX: 0, deltaY: 120, wheelTicksY: 1, canScroll: true, modifiers: ['control'] });
+        await waitFor(() => js('workspace.camera.z'), z => z !== .65, 'Ctrl+wheel over a terminal did not zoom the canvas.');
+        const anchorAfter = await js(worldAt);
+        assert.ok(Math.abs(anchorAfter.x - anchorWorld.x) < 1 && Math.abs(anchorAfter.y - anchorWorld.y) < 1,
+            `Ctrl+wheel must zoom around the pointer: world point ${JSON.stringify(anchorWorld)} moved to ${JSON.stringify(anchorAfter)}`);
     } finally {
         clipboard.writeText = originalWriteText;
         await js('setFocus(null)');

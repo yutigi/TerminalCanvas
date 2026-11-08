@@ -118,3 +118,15 @@ test('unscaled terminals, detached terminals, and other elements are left untouc
     uninstall();
     assert.equal(win.listeners.size, 0);
 });
+
+test('canvas handlers can still read the pointer position of a rewritten event', () => {
+    const terminal = scaledScreen({ zoom: 0.5 });
+    const win = fakeWindow();
+    P.install(win);
+    const raw = cellCenter(terminal, 40, 10);
+    const event = win.dispatch('wheel', { ...raw, target: terminal.inside, ctrlKey: true });
+    assert.notEqual(event.clientX, raw.clientX, 'xterm sees unscaled coordinates');
+    assert.deepEqual(P.clientPoint(event), { x: raw.clientX, y: raw.clientY });
+    const untouched = { clientX: 3, clientY: 4 };
+    assert.deepEqual(P.clientPoint(untouched), { x: 3, y: 4 });
+});
