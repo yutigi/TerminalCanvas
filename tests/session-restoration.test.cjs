@@ -9,7 +9,7 @@ const { createWorkspace, createCard, validateWorkspace } = require('../src/works
 const { MetadataParser } = require('../src/session-metadata.cjs');
 const { WorkspaceRecovery } = require('../src/workspace-recovery.cjs');
 const { recordSession } = require('../src/session-hook.cjs');
-const { prepareIntegration, powershellSource } = require('../src/shell-integration.cjs');
+const { prepareIntegration, powershellSource, bashSource } = require('../src/shell-integration.cjs');
 
 const id = '12345678-1234-4321-9876-123456789abc';
 const nextId = 'abcdef01-1234-4321-9876-123456789abc';
@@ -168,6 +168,43 @@ test('real Windows PowerShell wrappers detect manual Claude launches and pass ar
     assert.ok(result.stdout.includes('settings with'), result.stdout + result.stderr);
 });
 
+const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : '/bin/bash';
+
+test('Windows PowerShell wrappers pass Claude management commands through without session options', { skip: process.platform !== 'win32' }, t => {
+    const folder = temporary(t);
+    fs.writeFileSync(path.join(folder, 'claude.cmd'), '@echo off\r\necho ARGS=%*\r\nexit /b 3\r\n');
+    const source = powershellSource(path.join(folder, 'settings.json'))
+        + "\nclaude update\nWrite-Output ('EXIT=' + $LASTEXITCODE)\nclaude --version\n";
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')], {
+        env: { ...process.env, PATH: folder + path.delimiter + process.env.PATH }, encoding: 'utf8', timeout: 15000, windowsHide: true
+    });
+    const launches = [];
+    new MetadataParser({ cwd: folder, onChange() {}, onLaunch: e => launches.push(e) }).feed(result.stdout);
+    assert.equal(launches.length, 0, result.stdout);
+    assert.match(result.stdout, /ARGS=update\s*\r?\n/);
+    assert.match(result.stdout, /EXIT=3/);
+    assert.match(result.stdout, /ARGS=--version\s*\r?\n/);
+    assert.ok(!result.stdout.includes('--settings'), result.stdout);
+    assert.ok(!result.stdout.includes('--session-id'), result.stdout);
+});
+
+test('Bash wrappers pass Claude management commands through without session options', { skip: !fs.existsSync(bash) }, t => {
+    const folder = temporary(t);
+    const fake = path.join(folder, 'claude');
+    fs.writeFileSync(fake, '#!/bin/sh\necho "ARGS=$*"\nexit 3\n', { mode: 0o755 });
+    const script = path.join(folder, 'integration.bash');
+    fs.writeFileSync(script, bashSource(path.join(folder, 'settings.json')));
+    const binDir = folder.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => '/' + d.toLowerCase());
+    const result = spawnSync(bash, ['-c', `export PATH="${binDir}:$PATH"; source "${binDir}/integration.bash"; claude update; echo "EXIT=$?"; claude --version`], {
+        encoding: 'utf8', windowsHide: true, timeout: 15000
+    });
+    assert.equal(result.status, 3, result.stderr);
+    assert.match(result.stdout, /ARGS=update\n/);
+    assert.match(result.stdout, /EXIT=3/);
+    assert.match(result.stdout, /ARGS=--version\n/);
+    assert.ok(!result.stdout.includes('--settings'), result.stdout);
+});
+
 test('the Windows Claude hook decodes Unicode directories as UTF-8', { skip: process.platform !== 'win32' }, t => {
     const folder = temporary(t);
     const integration = prepareIntegration({ folder, platform: 'win32', shell: 'powershell.exe' });
@@ -184,7 +221,6 @@ test('the Windows Claude hook decodes Unicode directories as UTF-8', { skip: pro
     assert.deepEqual(JSON.parse(fs.readFileSync(integration.sessionFile, 'utf8')), { ...session('claude', id, cwd), token: nextId });
 });
 
-const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : '/bin/bash';
 for (const executable of ['powershell.exe', 'pwsh.exe']) {
     test(`${executable} AI integration preserves strict-mode custom prompts and native exit codes`, { skip: process.platform !== 'win32' }, t => {
         const source = `Set-StrictMode -Version Latest

@@ -4,6 +4,10 @@ const { randomUUID } = require('node:crypto');
 const { powershellArgs } = require('./terminal-cwd.cjs');
 const psQuote = value => "'" + value.replace(/'/g, "''") + "'";
 const shQuote = value => "'" + value.replace(/'/g, "'\\''") + "'";
+// Claude management commands and info flags reject session options such as --settings,
+// and they do not start a session, so the wrappers pass them through untouched.
+const CLAUDE_PASSTHROUGH = ['update', 'upgrade', 'install', 'doctor', 'mcp', 'config', 'setup-token',
+    'migrate-installer', 'plugin', 'plugins', 'auth', 'agents', '-v', '--version', '-h', '--help'];
 
 function powershellSource(settings) {
     // Share directory reporting with plain PowerShell cards, including strict-mode
@@ -20,6 +24,7 @@ function global:__tc_agent($provider, $arguments) {
         if (-not $executable) { $executable = (Get-Command -Name $provider -CommandType ExternalScript -ErrorAction Stop | Select-Object -First 1).Source }
     }
     catch { __tc_emit @{ type = 'warning'; message = 'The AI tool is unavailable. Install it on PATH, or stop this terminal and use Start fresh shell. The saved ID is retained.' }; Write-Error ($provider + ' is unavailable.'); return }
+    if ($provider -eq 'claude' -and $arguments.Count -gt 0 -and @(${CLAUDE_PASSTHROUGH.map(psQuote).join(', ')}) -ccontains [string]$arguments[0]) { & $executable @arguments; return }
     $env:TC_LAUNCH_TOKEN = [guid]::NewGuid().ToString()
     $sessionId = $null
     $extra = @()
@@ -52,6 +57,7 @@ __tc_agent() {
     local executable session_id="" token previous="" argument code
     executable=$(type -P "$provider")
     if [ -z "$executable" ]; then printf '%s is unavailable. Install it on PATH, or use Start fresh to open a shell.\\n' "$provider" >&2; return 127; fi
+    if [ "$provider" = claude ]; then case "\${1-}" in ${CLAUDE_PASSTHROUGH.join('|')}) "$executable" "$@"; return;; esac; fi
     token=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
     export TC_LAUNCH_TOKEN="$token"
     for argument in "$@"; do
