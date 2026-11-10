@@ -16,13 +16,13 @@ const HOSTNAME = 'TC-Host';
 os.hostname = () => HOSTNAME;
 const HOME = { win32: 'C:\\Users\\tc', linux: '/home/tc', darwin: '/Users/tc' };
 
-const workspace = require('../src/workspace.cjs');
-const styles = require('../src/item-styles.js');
-const { sessionMetadata, MetadataParser } = require('../src/session-metadata.cjs');
-const { directoryReports, powershellArgs } = require('../src/terminal-cwd.cjs');
-const assets = require('../src/assets.cjs');
-const { prepareIntegration, powershellSource, bashSource } = require('../src/shell-integration.cjs');
-const { recordSession } = require('../src/session-hook.cjs');
+const workspace = require('../tests/reference/node-host/workspace.cjs');
+const styles = require('../tests/reference/node-host/item-styles.js');
+const { sessionMetadata, MetadataParser } = require('../tests/reference/node-host/session-metadata.cjs');
+const { directoryReports, powershellArgs } = require('../tests/reference/node-host/terminal-cwd.cjs');
+const assets = require('../tests/reference/node-host/assets.cjs');
+const { prepareIntegration, powershellSource, bashSource } = require('../tests/reference/node-host/shell-integration.cjs');
+const { recordSession } = require('../tests/reference/node-host/session-hook.cjs');
 const { spawnSync } = require('node:child_process');
 const { validateWorkspace, validateCard, validateItem } = workspace;
 
@@ -680,7 +680,7 @@ function shellFixtures() {
     text('shell/bash-source-quoted.bash', bashSource("/home/o'brien/it's.settings.json"));
 
     // prepareIntegration() names files with random IDs and points at this checkout's session-hook.cjs.
-    const hook = path.join(root, 'src', 'session-hook.cjs');
+    const hook = path.join(root, 'tests', 'reference', 'node-host', 'session-hook.cjs');
     const psQuote = value => "'" + value.replace(/'/g, "''") + "'";
     const shQuote = value => "'" + value.replace(/'/g, "'\\''") + "'";
     const executables = { win32: 'C:\\Program Files\\Terminal Canvas\\Terminal Canvas.exe', linux: '/opt/Terminal Canvas/terminal-canvas', darwin: '/Applications/Terminal Canvas.app/Contents/MacOS/Terminal Canvas' };
@@ -735,7 +735,7 @@ function shellFixtures() {
 /* ---------- The session hook ---------- */
 
 function hookFixtures() {
-    const hook = path.join(root, 'src', 'session-hook.cjs');
+    const hook = path.join(root, 'tests', 'reference', 'node-host', 'session-hook.cjs');
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-golden-hook-'));
     try {
         // `emit` runs as its own process, as the shell integration runs it. Its folder is replaced by {{CWD}}.

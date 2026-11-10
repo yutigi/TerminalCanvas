@@ -831,4 +831,4 @@ if (bridge) {
         loadWorkspace(initial.workspace); ready = true; renderStyleToolbar();
         if (initial.warning) toast(initial.warning);
     });
-} else toast('Desktop bridge unavailable. Run npm start or npm run dev for the layout preview.');
+} else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');
