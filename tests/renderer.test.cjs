@@ -304,9 +304,27 @@ test('board items restore beside terminals, connectors render as arrows, and the
     assert.equal(elements.get('#minimap-cards').childElementCount, 3, 'lines are omitted from the minimap');
     const stroke = vm.runInContext('itemViews.get("wire").stroke', context);
     assert.match(stroke.attributes.get('d'), /^M200 /, 'the connector leaves the note at its right edge');
-    assert.equal(stroke.attributes.get('marker-end'), 'url(#arrowhead)');
+    const head = vm.runInContext('itemViews.get("wire").head', context);
+    assert.match(head.attributes.get('d'), /Z$/, 'the arrowhead is a filled path beside the shaft');
+    const end = json(context, 'linePoints(workspace.items[3]).end');
+    assert.ok(head.attributes.get('transform').startsWith(`translate(${end.x} ${end.y}) rotate(`), 'the head follows the attached endpoint');
     assert.equal(vm.runInContext('itemViews.get("note-1").text.textContent', context), 'Hello\nboard');
     assert.ok(Number(vm.runInContext('itemViews.get("frame").element.style.zIndex', context)) < 0, 'frames stay behind other items');
+});
+test('arrowheads follow endpoint direction, remain finite at zero length, and disappear for plain lines', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push({ id: 'arrow', type: 'line', start: { x: 100, y: 100 }, end: { x: 200, y: 100 }, arrow: true });
+    const { context } = await boot(workspace);
+    const head = vm.runInContext('itemViews.get("arrow").head', context);
+    for (const [x, y, angle] of [[200, 100, 0], [100, 200, 90], [0, 100, 180], [100, 0, -90], [200, 200, 45], [100, 100, 0]]) {
+        vm.runInContext(`workspace.items[0].end = { x: ${x}, y: ${y} }; renderLines()`, context);
+        assert.equal(head.attributes.get('transform'), `translate(${x} ${y}) rotate(${angle})`);
+        assert.match(head.attributes.get('d'), /Z$/);
+    }
+    vm.runInContext('workspace.items[0].arrow = false; renderLines()', context);
+    assert.equal(head.attributes.get('d'), '', 'plain lines have no arrowhead');
+    vm.runInContext('workspace.items[0].arrow = true; renderLines()', context);
+    assert.match(head.attributes.get('d'), /Z$/, 'restoring the arrow redraws its head');
 });
 test('creation tools draw a sticky note, edit it in place, and return to the select tool', async () => {
     const { elements, context } = await boot(createWorkspace());

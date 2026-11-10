@@ -109,16 +109,16 @@ function mountItem(item) {
 function mountLine(item) {
     const group = svgNode('g', 'canvas-line');
     group.dataset.id = item.id;
-    const hit = svgNode('path', 'line-hit'), stroke = svgNode('path', 'line-stroke');
+    const hit = svgNode('path', 'line-hit'), stroke = svgNode('path', 'line-stroke'), head = svgNode('path', 'line-head');
     const handles = ['start', 'end'].map(end => {
         const handle = svgNode('circle', 'line-handle');
         handle.setAttribute('r', '6'); handle.dataset.end = end;
         handle.addEventListener('pointerdown', event => { event.stopPropagation(); dragEndpoint(event, item, end, handle); });
         return handle;
     });
-    group.append(hit, stroke, ...handles);
+    group.append(hit, stroke, head, ...handles);
     $('#line-layer').append(group);
-    const view = { element: group, hit, stroke, handles };
+    const view = { element: group, hit, stroke, head, handles };
     itemViews.set(item.id, view);
     hit.addEventListener('pointerdown', event => pointerOnElement(event, item.id, hit));
     renderLine(item);
@@ -147,8 +147,10 @@ function renderLine(item) {
     const path = `M${start.x} ${start.y}L${end.x} ${end.y}`;
     view.hit.setAttribute('d', path);
     view.stroke.setAttribute('d', path);
-    if (item.arrow) view.stroke.setAttribute('marker-end', 'url(#arrowhead)');
-    else view.stroke.removeAttribute('marker-end');
+    // Draw the former marker directly: WebKit does not paint its context-stroke fill.
+    view.head.setAttribute('d', item.arrow ? 'M-12.6 -7L1.4 0L-12.6 7Z' : '');
+    const angle = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
+    view.head.setAttribute('transform', `translate(${end.x} ${end.y}) rotate(${angle})`);
     view.element.classList.toggle('attached', !!(item.start.id || item.end.id));
     [start, end].forEach((point, index) => { view.handles[index].setAttribute('cx', String(point.x)); view.handles[index].setAttribute('cy', String(point.y)); });
 }

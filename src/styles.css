@@ -30,10 +30,11 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .viewport.creating,.viewport.creating .world *{cursor:crosshair!important}
 .viewport.focus-mode .create-toolbar,.viewport.focus-mode .canvas-item,.viewport.focus-mode .line-layer,.viewport.focus-mode .selection-box{display:none}
 .line-layer{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;z-index:1000000000}
-#arrowhead path{stroke:none}
+.canvas-line{color:#8fa3b8}
 .line-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:move}
-.line-stroke{fill:none;stroke:#8fa3b8;stroke-width:2;stroke-linecap:round;pointer-events:none}
-.canvas-line.selected .line-stroke{stroke:var(--accent)}
+.line-stroke{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;pointer-events:none}
+.line-head{fill:currentColor;stroke:none;pointer-events:none}
+.canvas-line.selected{color:var(--accent)}
 .line-handle{display:none;fill:#15191f;stroke:var(--accent);stroke-width:2;pointer-events:all;cursor:crosshair}
 .single-selection .canvas-line.selected .line-handle{display:block}
 .viewport.hand .line-layer *,.viewport.creating .line-layer *{pointer-events:none!important}
@@ -93,10 +94,10 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .item-shape.colored{border-color:var(--item-color);background:color-mix(in srgb,var(--item-color) 14%,#1c222b)}
 .item-frame.colored{border-color:var(--item-color);background:color-mix(in srgb,var(--item-color) 4%,transparent)}
 .item-frame.colored .frame-title{color:var(--item-color)}
-.canvas-line.colored .line-stroke{stroke:var(--item-color)}
+.canvas-line.colored{color:var(--item-color)}
 .item-frame.colored.selected{border-color:var(--accent)}
 .item-frame.colored.selected .frame-title{color:var(--accent)}
-.canvas-line.colored.selected .line-stroke{stroke:var(--accent)}
+.canvas-line.colored.selected{color:var(--accent)}
 .item-text.size-small{font-size:12px}.item-text.size-large{font-size:24px}.item-text.size-huge{font-size:36px}
 .item-note.size-small{font-size:11px}.item-note.size-large{font-size:20px}.item-note.size-huge{font-size:30px}
 .item-shape.size-small{font-size:11px}.item-shape.size-large{font-size:19px}.item-shape.size-huge{font-size:28px}
