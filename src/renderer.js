@@ -380,7 +380,7 @@ function recoveryInfo(card) {
     else showDirectory(s, card.cwd || 'Home directory');
     s.element.querySelector('[data-action="start"]').innerHTML = icon('play') + (card.session ? 'Resume session' : 'Start terminal');
     s.element.querySelector('.placeholder-copy').textContent = card.session
-        ? `Saved ${card.session.provider === 'claude' ? 'Claude Code' : 'Codex'} session ${card.session.sessionId.slice(0, 8)}. Resume it, or open a fresh shell.`
+        ? `Saved ${({ claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' })[card.session.provider] || 'AI'} session ${card.session.sessionId.slice(0, 8)}. Resume it, or open a fresh shell.`
         : card.command ? `Ready to run: ${card.command}. No saved AI session ID is available.` : 'Your shell is ready. Start when you are.';
     if (!['running', 'starting'].includes(s.status)) {
         const toggle = s.element.querySelector('[data-action="toggle"]');

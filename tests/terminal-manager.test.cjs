@@ -49,6 +49,32 @@ test('shell initialization runs before a saved AI command or resume action', () 
     assert.deepEqual(processes[1].writes, ["source '/integration.bash'\r", `codex resume ${card.session.sessionId}\r`]);
     manager.stopAll();
 });
+test('integration shims are prepended to the existing Windows Path entry without adding a duplicate key', () => {
+    const { manager, launches } = harness({
+        env: { SystemRoot: 'C:\\Windows', Path: 'C:\\Tools', TC_LAUNCH_TOKEN: '12345678-1234-4321-9876-123456789abc', TC_SESSION_FILE: 'outer.json' },
+        integration: () => ({ pathPrepend: 'C:\\Shims', env: { TC_NODE: 'node' }, cleanup() {} })
+    });
+    manager.start(createCard());
+    const env = launches[0][2].env;
+    assert.equal(env.Path, 'C:\\Shims;C:\\Tools');
+    assert.deepEqual(Object.keys(env).filter(key => key.toUpperCase() === 'PATH'), ['Path']);
+    assert.equal(env.TC_LAUNCH_TOKEN, undefined, 'a terminal opened from a tracked session starts fresh');
+    assert.equal(env.TC_SESSION_FILE, undefined);
+    assert.equal(env.TC_NODE, 'node');
+    manager.stopAll();
+});
+
+test('each saved AI session resumes with its own CLI', () => {
+    const sessionId = '12345678-1234-4321-9876-123456789abc';
+    const expected = { claude: `claude --resume ${sessionId}`, codex: `codex resume ${sessionId}`, gemini: `gemini --resume ${sessionId}` };
+    for (const [provider, command] of Object.entries(expected)) {
+        const { manager, processes } = harness();
+        manager.start({ ...createCard(), session: { provider, sessionId, cwd: process.cwd() } }, 80, 24, 'resume');
+        assert.deepEqual(processes[0].writes, [command + '\r']);
+        manager.stopAll();
+    }
+});
+
 test('uses Windows PowerShell from SystemRoot for a plain terminal', () => {
     const { manager, launches, processes } = harness({ env: { SystemRoot: 'D:\\Windows', ComSpec: 'cmd.exe' } });
     const result = manager.start(createCard());

@@ -135,74 +135,69 @@ test('Claude hooks write only metadata atomically, including ID changes, and ign
     assert.deepEqual(fs.readdirSync(folder), ['session.json']);
 });
 
-test('integration files are per terminal and preserve the shell fallback on unsupported shells', t => {
+const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : '/bin/bash';
+const launcher = path.join(__dirname, '..', 'src', 'agent-launcher.cjs');
+const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === 'PATH') || 'PATH';
+
+test('integration files are per terminal, shims are shared, and every shell finds the AI CLIs', t => {
     const folder = temporary(t);
     const a = prepareIntegration({ folder, platform: 'win32', shell: 'powershell.exe' });
     const b = prepareIntegration({ folder, platform: 'linux', shell: '/bin/zsh' });
+    const c = prepareIntegration({ folder, platform: 'win32', shell: 'C:\Windows\System32\cmd.exe' });
+    const d = prepareIntegration({ folder, platform: 'linux', shell: '/usr/bin/fish' });
+    const e = prepareIntegration({ folder, platform: 'linux', shell: '/usr/bin/nu' });
     assert.notEqual(a.sessionFile, b.sessionFile);
     assert.ok(a.args.includes('-EncodedCommand'));
     assert.equal(a.args[a.args.indexOf('-ExecutionPolicy') + 1], 'RemoteSigned');
-    assert.equal(prepareIntegration({ folder, platform: 'win32', shell: 'cmd.exe' }), undefined);
-    assert.equal(b.args, undefined);
+    assert.deepEqual(b.args, ['-l', '-i']);
+    assert.match(b.command, /^source '.+\.zsh'$/);
+    assert.match(d.command, /^source '.+\.fish'$/);
+    // Shells without a script still get the shims through PATH and keep their default arguments.
+    for (const plain of [c, e]) { assert.equal(plain.args, undefined); assert.equal(plain.command, undefined); }
+    const bin = path.join(folder, 'bin');
+    for (const integration of [a, b, c, d, e]) assert.equal(integration.pathPrepend, bin);
+    assert.deepEqual(fs.readdirSync(bin).sort(), ['claude', 'claude.cmd', 'codex', 'codex.cmd', 'gemini', 'gemini.cmd']);
     assert.ok(!JSON.stringify(a.env).includes('API_KEY'));
-    a.cleanup(); b.cleanup();
-    assert.deepEqual(fs.readdirSync(folder), []);
+    for (const integration of [a, b, c, d, e]) integration.cleanup();
+    assert.deepEqual(fs.readdirSync(folder), ['bin']);
 });
 
-test('real Windows PowerShell wrappers detect manual Claude launches and pass arguments safely', { skip: process.platform !== 'win32' }, t => {
+test('real Windows PowerShell detects AI launches, passes arguments natively, and leaves other commands alone', { skip: process.platform !== 'win32' }, t => {
     const folder = temporary(t);
-    const fake = path.join(folder, 'claude.cmd');
-    fs.writeFileSync(fake, '@echo off\r\necho %*\r\nexit /b 0\r\n');
-    const source = powershellSource(path.join(folder, "settings with ' quote.json"))
-        + "\nclaude\nclaude --resume " + id + " --name 'name with spaces'\nprompt\n";
+    const tools = path.join(folder, 'tools');
+    fs.mkdirSync(tools);
+    const fake = path.join(tools, 'fake.cjs');
+    fs.writeFileSync(fake, "console.log('ARGS:' + JSON.stringify(process.argv.slice(2))); process.exitCode = Number(process.env.FAKE_EXIT || 0);\n");
+    for (const name of ['claude', 'codex', 'gemini']) fs.writeFileSync(path.join(tools, `${name}.cmd`), `@echo off\r\n"${process.execPath}" "${fake}" %*\r\n`);
+    const integration = prepareIntegration({ folder, platform: 'win32', shell: 'powershell.exe', executable: process.execPath });
+    t.after(() => integration.cleanup());
+    const source = powershellSource(integration.pathPrepend) + `
+claude
+claude --resume ${id} --name 'name with spaces'
+claude update
+Write-Output ('UPDATE_EXIT=' + $LASTEXITCODE)
+gemini
+codex login
+cmd /c echo PLAIN_COMMAND
+Write-Output ('RUN_AS_NODE=' + [bool]$env:ELECTRON_RUN_AS_NODE)
+`;
     const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')], {
-        env: { ...process.env, PATH: folder + path.delimiter + process.env.PATH }, encoding: 'utf8', timeout: 15000, windowsHide: true
+        // These tests may themselves run inside a tracked Terminal Canvas session.
+        env: { ...process.env, TC_LAUNCH_TOKEN: '', ...integration.env, [pathKey]: tools + path.delimiter + process.env[pathKey], FAKE_EXIT: '5' }, encoding: 'utf8', timeout: 30000, windowsHide: true
     });
-    assert.equal(result.status, 0, result.stderr);
     const launches = [];
     new MetadataParser({ cwd: folder, onChange() {}, onLaunch: e => launches.push(e) }).feed(result.stdout);
-    assert.equal(launches.length, 2, result.stdout + result.stderr);
+    assert.deepEqual(launches.map(e => e.provider), ['claude', 'claude', 'gemini'], result.stdout + result.stderr);
     assert.match(launches[0].sessionId, /^[a-f0-9-]{36}$/);
     assert.equal(launches[1].sessionId, id);
-    assert.ok(result.stdout.includes('name with spaces'), result.stdout + result.stderr);
-    assert.ok(result.stdout.includes('settings with'), result.stdout + result.stderr);
-});
-
-const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : '/bin/bash';
-
-test('Windows PowerShell wrappers pass Claude management commands through without session options', { skip: process.platform !== 'win32' }, t => {
-    const folder = temporary(t);
-    fs.writeFileSync(path.join(folder, 'claude.cmd'), '@echo off\r\necho ARGS=%*\r\nexit /b 3\r\n');
-    const source = powershellSource(path.join(folder, 'settings.json'))
-        + "\nclaude update\nWrite-Output ('EXIT=' + $LASTEXITCODE)\nclaude --version\n";
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')], {
-        env: { ...process.env, PATH: folder + path.delimiter + process.env.PATH }, encoding: 'utf8', timeout: 15000, windowsHide: true
-    });
-    const launches = [];
-    new MetadataParser({ cwd: folder, onChange() {}, onLaunch: e => launches.push(e) }).feed(result.stdout);
-    assert.equal(launches.length, 0, result.stdout);
-    assert.match(result.stdout, /ARGS=update\s*\r?\n/);
-    assert.match(result.stdout, /EXIT=3/);
-    assert.match(result.stdout, /ARGS=--version\s*\r?\n/);
-    assert.ok(!result.stdout.includes('--settings'), result.stdout);
-    assert.ok(!result.stdout.includes('--session-id'), result.stdout);
-});
-
-test('Bash wrappers pass Claude management commands through without session options', { skip: !fs.existsSync(bash) }, t => {
-    const folder = temporary(t);
-    const fake = path.join(folder, 'claude');
-    fs.writeFileSync(fake, '#!/bin/sh\necho "ARGS=$*"\nexit 3\n', { mode: 0o755 });
-    const script = path.join(folder, 'integration.bash');
-    fs.writeFileSync(script, bashSource(path.join(folder, 'settings.json')));
-    const binDir = folder.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => '/' + d.toLowerCase());
-    const result = spawnSync(bash, ['-c', `export PATH="${binDir}:$PATH"; source "${binDir}/integration.bash"; claude update; echo "EXIT=$?"; claude --version`], {
-        encoding: 'utf8', windowsHide: true, timeout: 15000
-    });
-    assert.equal(result.status, 3, result.stderr);
-    assert.match(result.stdout, /ARGS=update\n/);
-    assert.match(result.stdout, /EXIT=3/);
-    assert.match(result.stdout, /ARGS=--version\n/);
-    assert.ok(!result.stdout.includes('--settings'), result.stdout);
+    const calls = [...result.stdout.matchAll(/ARGS:(.*)/g)].map(match => JSON.parse(match[1]));
+    assert.deepEqual(calls[1], ['--resume', id, '--name', 'name with spaces', '--settings', integration.env.TC_SETTINGS]);
+    assert.deepEqual(calls[2], ['update']);
+    assert.deepEqual(calls[3], []);
+    assert.deepEqual(calls[4], ['login']);
+    assert.match(result.stdout, /UPDATE_EXIT=5/);
+    assert.match(result.stdout, /PLAIN_COMMAND/);
+    assert.match(result.stdout, /RUN_AS_NODE=False/);
 });
 
 test('the Windows Claude hook decodes Unicode directories as UTF-8', { skip: process.platform !== 'win32' }, t => {
@@ -247,18 +242,51 @@ for (const executable of ['powershell.exe', 'pwsh.exe']) {
     });
 }
 
-test('integrated Bash loads login profiles before installing hooks and preserves existing prompt commands', { skip: !fs.existsSync(bash) }, t => {
+test('integrated Bash loads login profiles first, then keeps the shims ahead of profile PATH changes', { skip: !fs.existsSync(bash) }, t => {
     const folder = temporary(t);
     fs.writeFileSync(path.join(folder, '.bash_profile'), 'export TC_REVIEW_LOGIN=profile-loaded\n. "$HOME/.bashrc"\n');
-    fs.writeFileSync(path.join(folder, '.bashrc'), 'TC_RC_COUNT=$(( ${TC_RC_COUNT:-0} + 1 ))\nPROMPT_COMMAND=(":" "true")\n');
+    fs.writeFileSync(path.join(folder, '.bashrc'), 'TC_RC_COUNT=$(( ${TC_RC_COUNT:-0} + 1 ))\nPROMPT_COMMAND=(":" "true")\nexport PATH="/profile/bin:$PATH"\n');
     const integration = prepareIntegration({ folder, platform: 'linux', shell: '/bin/bash' });
     t.after(() => integration.cleanup());
     assert.equal(typeof integration.command, 'string');
-    const result = spawnSync(bash, [...integration.args, '-c', `${integration.command}\nprintf 'login=%s rc=%s\\n' "$TC_REVIEW_LOGIN" "$TC_RC_COUNT"\nprintf 'prompt=%s\\n' "\${PROMPT_COMMAND[*]}"\ndeclare -F claude codex\n`], {
-        env: { ...process.env, HOME: folder }, encoding: 'utf8', windowsHide: true, timeout: 15000
+    const result = spawnSync(bash, [...integration.args, '-c', `${integration.command}\nprintf 'login=%s rc=%s\\n' "$TC_REVIEW_LOGIN" "$TC_RC_COUNT"\nprintf 'prompt=%s\\n' "\${PROMPT_COMMAND[*]}"\n[[ $PATH == "$TC_SHIM_DIR":/profile/bin:* ]] && echo shims-first\n`], {
+        env: { ...process.env, ...integration.env, HOME: folder }, encoding: 'utf8', windowsHide: true, timeout: 15000
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /login=profile-loaded rc=1/);
     assert.match(result.stdout, /prompt=__tc_cwd : true/);
-    assert.match(result.stdout, /claude\r?\ncodex/);
+    assert.match(result.stdout, /shims-first/);
+});
+
+for (const [shell, rc] of [['zsh', '.zshrc'], ['fish', '.config/fish/config.fish']]) {
+    const executable = ['/bin', '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin'].map(dir => path.join(dir, shell)).find(file => fs.existsSync(file));
+    test(`integrated ${shell} keeps the shims ahead of profile PATH changes and runs AI CLIs through them`, { skip: process.platform === 'win32' || !executable }, t => {
+        const folder = temporary(t);
+        fs.mkdirSync(path.dirname(path.join(folder, rc)), { recursive: true });
+        fs.writeFileSync(path.join(folder, rc), shell === 'fish' ? 'set -gx PATH /profile/bin $PATH\n' : 'export PATH="/profile/bin:$PATH"\n');
+        const tools = path.join(folder, 'tools');
+        fs.mkdirSync(tools);
+        fs.writeFileSync(path.join(tools, 'claude'), '#!/bin/sh\necho "ARGS=$*"\nexit 6\n', { mode: 0o755 });
+        const integration = prepareIntegration({ folder, platform: process.platform, shell: executable, executable: process.execPath });
+        t.after(() => integration.cleanup());
+        const result = spawnSync(executable, [...integration.args, '-c', `${integration.command}; claude update; echo "EXIT=${shell === 'fish' ? '$status' : '$?'}"`], {
+            env: { ...process.env, TC_LAUNCH_TOKEN: '', ...integration.env, HOME: folder, ZDOTDIR: folder, PATH: `${integration.pathPrepend}:${tools}:${process.env.PATH}` },
+            encoding: 'utf8', timeout: 15000
+        });
+        assert.match(result.stdout, /ARGS=update\n/, result.stderr);
+        assert.match(result.stdout, /EXIT=6/);
+        assert.ok(!result.stdout.includes('633;TC'), result.stdout);
+    });
+}
+
+test('Gemini sessions are captured from the resume hint it prints on exit, quoted or not', () => {
+    for (const hint of [`To resume this session: gemini --resume ${id}`, `To resume this session: gemini --resume "${id}"`]) {
+        const updates = [];
+        const parser = new MetadataParser({ cwd: '/work', platform: 'linux', onChange: p => updates.push(p) });
+        parser.feed(`gemini --resume ${nextId}\r\n`);
+        assert.equal(updates.length, 0, 'output before a Gemini launch is ignored');
+        parser.feed(osc({ type: 'launch', provider: 'gemini', token: nextId, cwd: '/work', sessionId: null }));
+        parser.feed(`\x1b[2mAgent powering down.\x1b[0m\r\n  ${hint}\r\n`);
+        assert.deepEqual(updates.at(-1).session, { provider: 'gemini', sessionId: id, cwd: '/work' });
+    }
 });

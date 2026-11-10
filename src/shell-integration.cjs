@@ -2,82 +2,89 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { powershellArgs } = require('./terminal-cwd.cjs');
+const { PROVIDERS } = require('./agent-launcher.cjs');
+const AGENTS = Object.keys(PROVIDERS);
+const LAUNCHER = path.join(__dirname, 'agent-launcher.cjs');
 const psQuote = value => "'" + value.replace(/'/g, "''") + "'";
 const shQuote = value => "'" + value.replace(/'/g, "'\\''") + "'";
-// Claude management commands and info flags reject session options such as --settings,
-// and they do not start a session, so the wrappers pass them through untouched.
-const CLAUDE_PASSTHROUGH = ['update', 'upgrade', 'install', 'doctor', 'mcp', 'config', 'setup-token',
-    'migrate-installer', 'plugin', 'plugins', 'auth', 'agents', '-v', '--version', '-h', '--help'];
+const fishQuote = value => "'" + value.replace(/[\\']/g, '\\$&') + "'";
+const shellName = shell => path.win32.basename(shell || '').replace(/\.exe$/i, '').toLowerCase();
 
-function powershellSource(settings) {
-    // Share directory reporting with plain PowerShell cards, including strict-mode
-    // prompts, custom prompt output, provider locations and native exit status.
-    return Buffer.from(powershellArgs().at(-1), 'base64').toString('utf16le') + `
-function global:__tc_emit($event) {
-    $json = ConvertTo-Json -Compress -InputObject $event
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
-    [Console]::Write(([char]27).ToString() + ']633;TC;' + $encoded + [char]7)
+// PATH shims reach the launcher from any shell, nested shell, or script in the terminal.
+// The interactive shells below also re-add them after profiles that rewrite PATH.
+function shimSources(name) {
+    const posix = `#!/bin/sh
+# Terminal Canvas: run the real ${name} through the session launcher.
+if [ -n "$TC_NODE" ] && [ -n "$TC_LAUNCHER" ]; then
+    ELECTRON_RUN_AS_NODE=1 exec "$TC_NODE" "$TC_LAUNCHER" ${name} "$@"
+fi
+self=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+IFS=:
+for directory in $PATH; do
+    [ "$directory" = "$self" ] && continue
+    [ -x "$directory/${name}" ] && exec "$directory/${name}" "$@"
+done
+printf '%s: command not found\\n' ${name} >&2
+exit 127
+`;
+    const windows = [
+        '@echo off',
+        `rem Terminal Canvas: run the real ${name} through the session launcher.`,
+        'if not defined TC_NODE goto unavailable',
+        'if not defined TC_LAUNCHER goto unavailable',
+        'setlocal',
+        'set ELECTRON_RUN_AS_NODE=1',
+        `"%TC_NODE%" "%TC_LAUNCHER%" ${name} %*`,
+        'exit /b %ERRORLEVEL%',
+        ':unavailable',
+        `echo ${name}: the Terminal Canvas launcher is unavailable. Open a new terminal. 1>&2`,
+        'exit /b 9009',
+        ''
+    ].join('\r\n');
+    return { [name]: posix, [`${name}.cmd`]: windows };
 }
-function global:__tc_agent($provider, $arguments) {
-    try {
-        $executable = (Get-Command -Name $provider -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
-        if (-not $executable) { $executable = (Get-Command -Name $provider -CommandType ExternalScript -ErrorAction Stop | Select-Object -First 1).Source }
-    }
-    catch { __tc_emit @{ type = 'warning'; message = 'The AI tool is unavailable. Install it on PATH, or stop this terminal and use Start fresh shell. The saved ID is retained.' }; Write-Error ($provider + ' is unavailable.'); return }
-    if ($provider -eq 'claude' -and $arguments.Count -gt 0 -and @(${CLAUDE_PASSTHROUGH.map(psQuote).join(', ')}) -ccontains [string]$arguments[0]) { & $executable @arguments; return }
-    $env:TC_LAUNCH_TOKEN = [guid]::NewGuid().ToString()
-    $sessionId = $null
-    $extra = @()
-    for ($i = 0; $i -lt $arguments.Count; $i++) {
-        if ($arguments[$i] -match '^(--resume|-r|--session-id)$' -or ($provider -eq 'codex' -and $arguments[$i] -eq 'resume')) {
-            if ($i + 1 -lt $arguments.Count -and $arguments[$i + 1] -match '^[a-fA-F0-9-]{36}$') { $sessionId = $arguments[$i + 1] }
+
+// A running batch file is re-read while it executes; only rewrite shims that changed.
+function writeShims(folder) {
+    const bin = path.join(folder, 'bin');
+    fs.mkdirSync(bin, { recursive: true, mode: 0o700 });
+    for (const name of AGENTS) {
+        for (const [file, source] of Object.entries(shimSources(name))) {
+            const target = path.join(bin, file);
+            let current;
+            try { current = fs.readFileSync(target, 'utf8'); } catch { /* New shim. */ }
+            if (current !== source) fs.writeFileSync(target, source, { mode: 0o755 });
         }
     }
-    if ($provider -eq 'claude') {
-        if ($arguments.Count -eq 0) { $sessionId = [guid]::NewGuid().ToString(); $extra += @('--session-id', $sessionId) }
-        if (-not ($arguments -match '^--settings(=|$)')) { $extra += @('--settings', ${psQuote(settings)}) }
-    }
-    __tc_emit @{ type = 'launch'; provider = $provider; token = $env:TC_LAUNCH_TOKEN; cwd = (Get-Location).ProviderPath; sessionId = $sessionId }
-    & $executable @arguments @extra
-    $tcSucceeded = $?
-    $tcExit = $LASTEXITCODE
-    if (-not $tcSucceeded -and -not $tcExit) { $tcExit = 1 }
-    __tc_emit @{ type = 'end'; token = $env:TC_LAUNCH_TOKEN; exitCode = $tcExit }
-    $global:LASTEXITCODE = $tcExit
+    return bin;
 }
-function global:claude { __tc_agent 'claude' $args }
-function global:codex { __tc_agent 'codex' $args }
+
+function powershellSource(bin) {
+    // Share directory reporting with plain PowerShell cards, including strict-mode
+    // prompts, custom prompt output, provider locations and native exit status.
+    // Functions call the launcher directly so PowerShell passes arguments natively.
+    return Buffer.from(powershellArgs().at(-1), 'base64').toString('utf16le') + `
+if ($env:PATH -and -not $env:PATH.StartsWith(${psQuote(bin)} + [IO.Path]::PathSeparator)) { $env:PATH = ${psQuote(bin)} + [IO.Path]::PathSeparator + $env:PATH }
+function global:__tc_agent($provider, $arguments) {
+    $tcPrevious = $env:ELECTRON_RUN_AS_NODE
+    $env:ELECTRON_RUN_AS_NODE = '1'
+    try { & $env:TC_NODE $env:TC_LAUNCHER $provider @arguments }
+    finally {
+        if ($null -eq $tcPrevious) { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction Ignore } else { $env:ELECTRON_RUN_AS_NODE = $tcPrevious }
+    }
+}
+${AGENTS.map(name => `function global:${name} { __tc_agent '${name}' $args }`).join('\n')}
 `;
 }
 
-function bashSource(settings) {
+const cwdReport = `printf '\\033]7;file://localhost%s\\007' "$(pwd -P | sed 's/%/%25/g; s/ /%20/g; s/#/%23/g; s/?/%3F/g')"`;
+const posixPath = bin => `case "$PATH" in ${shQuote(bin)}:*) ;; *) PATH=${shQuote(bin)}:"$PATH"; export PATH;; esac`;
+
+function bashSource(bin) {
     return `
-__tc_agent() {
-    local provider="$1"; shift
-    local executable session_id="" token previous="" argument code
-    executable=$(type -P "$provider")
-    if [ -z "$executable" ]; then printf '%s is unavailable. Install it on PATH, or use Start fresh to open a shell.\\n' "$provider" >&2; return 127; fi
-    if [ "$provider" = claude ]; then case "\${1-}" in ${CLAUDE_PASSTHROUGH.join('|')}) "$executable" "$@"; return;; esac; fi
-    token=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
-    export TC_LAUNCH_TOKEN="$token"
-    for argument in "$@"; do
-        case "$previous" in --resume|-r|--session-id|resume) session_id="$argument";; esac
-        previous="$argument"
-    done
-    local extra=()
-    if [ "$provider" = claude ]; then
-        if [ "$#" -eq 0 ]; then session_id="$token"; extra+=(--session-id "$session_id"); fi
-        case " $* " in *' --settings '*|*' --settings='*) ;; *) extra+=(--settings ${shQuote(settings)});; esac
-    fi
-    ELECTRON_RUN_AS_NODE=1 "$TC_NODE" "$TC_HOOK" emit launch "$provider" "$session_id"
-    "$executable" "$@" "\${extra[@]}"
-    code=$?
-    ELECTRON_RUN_AS_NODE=1 "$TC_NODE" "$TC_HOOK" emit end "$code"
-    return "$code"
-}
-claude() { __tc_agent claude "$@"; }
-codex() { __tc_agent codex "$@"; }
-__tc_cwd() { printf '\\033]7;file://localhost%s\\007' "$(pwd -P | sed 's/%/%25/g; s/ /%20/g; s/#/%23/g; s/?/%3F/g')"; }
+${posixPath(bin)}
+hash -r 2>/dev/null
+__tc_cwd() { ${cwdReport}; }
 if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
     PROMPT_COMMAND=(__tc_cwd "\${PROMPT_COMMAND[@]}")
 else
@@ -86,11 +93,31 @@ fi
 `;
 }
 
+function zshSource(bin) {
+    return `
+${posixPath(bin)}
+rehash 2>/dev/null
+__tc_cwd() { ${cwdReport}; }
+typeset -ga precmd_functions
+precmd_functions=(__tc_cwd \${precmd_functions:#__tc_cwd})
+`;
+}
+
+function fishSource(bin) {
+    return `
+if test "$PATH[1]" != ${fishQuote(bin)}
+    set -gx PATH ${fishQuote(bin)} $PATH
+end
+function __tc_cwd --on-event fish_prompt
+    printf '\\e]7;file://localhost%s\\a' (pwd -P | string replace -a '%' '%25' | string replace -a ' ' '%20' | string replace -a '#' '%23' | string replace -a '?' '%3F')
+end
+`;
+}
+
 // Intercept ordinary CLI launches without changing global CLI settings.
 function prepareIntegration({ folder, executable = process.execPath, platform = process.platform, shell }) {
-    // cmd uses its native PROMPT reports; PowerShell functions cannot run there.
-    if (platform === 'win32' && /^cmd(?:\.exe)?$/i.test(path.win32.basename(shell))) return undefined;
     fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+    const bin = writeShims(folder);
     const stem = path.join(folder, randomUUID());
     const sessionFile = `${stem}.json`, settings = `${stem}.settings.json`;
     const hook = path.join(__dirname, 'session-hook.cjs');
@@ -100,21 +127,27 @@ function prepareIntegration({ folder, executable = process.execPath, platform = 
         ? `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(ps, 'utf16le').toString('base64')}`
         : `ELECTRON_RUN_AS_NODE=1 ${shQuote(executable)} ${shQuote(hook)} claude`;
     fs.writeFileSync(settings, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 5 }] }] } }), { mode: 0o600 });
-    const source = windows ? powershellSource(settings) : bashSource(settings);
-    const script = `${stem}.${windows ? 'ps1' : 'bash'}`;
-    fs.writeFileSync(script, source, { mode: 0o600 });
+    const files = [sessionFile, settings];
+    const name = shellName(shell);
     let args, initializeCommand;
-    if (windows) args = ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')];
-    else if (path.basename(shell) === 'bash') {
-        // Login profiles keep control of environment setup and whether .bashrc is sourced.
-        // Queue integration as the first input command, after Bash finishes those profiles.
-        args = ['--login', '-i'];
-        initializeCommand = `source ${shQuote(script)}`;
+    if (name === 'powershell' || name === 'pwsh') {
+        const source = powershellSource(bin);
+        args = ['-NoLogo', '-NoExit', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')];
+    } else if (['bash', 'zsh', 'fish'].includes(name)) {
+        // Login profiles keep control of environment setup and whether rc files are sourced.
+        // Queue integration as the first input command, after the shell finishes those profiles.
+        const source = { bash: bashSource, zsh: zshSource, fish: fishSource }[name](bin);
+        const script = `${stem}.${name}`;
+        fs.writeFileSync(script, source, { mode: 0o600 });
+        files.push(script);
+        args = name === 'bash' ? ['--login', '-i'] : ['-l', '-i'];
+        initializeCommand = `source ${name === 'fish' ? fishQuote(script) : shQuote(script)}`;
     }
+    // Other shells (cmd, sh, nu, ...) still find the PATH shims set in their environment.
     return {
-        args, command: initializeCommand, sessionFile,
-        env: { TC_SESSION_FILE: sessionFile, TC_NODE: executable, TC_HOOK: hook },
-        cleanup() { for (const file of [sessionFile, settings, script]) { try { fs.unlinkSync(file); } catch {} } }
+        args, command: initializeCommand, sessionFile, pathPrepend: bin,
+        env: { TC_SESSION_FILE: sessionFile, TC_NODE: executable, TC_LAUNCHER: LAUNCHER, TC_SETTINGS: settings, TC_SHIM_DIR: bin },
+        cleanup() { for (const file of files) { try { fs.unlinkSync(file); } catch {} } }
     };
 }
-module.exports = { prepareIntegration, powershellSource, bashSource };
+module.exports = { prepareIntegration, powershellSource, bashSource, zshSource, fishSource, writeShims, shimSources };

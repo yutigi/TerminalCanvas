@@ -1,9 +1,18 @@
 const { fileURLToPath } = require('node:url');
 
+const PROVIDERS = ['claude', 'codex', 'gemini'];
+// Codex and Gemini print their resume command; Claude reports through its hook instead.
+const OUTPUT_PATTERNS = {
+    codex: [
+        /(?:^|[\r\n])[ \t]*To continue this session, run codex resume ([a-f0-9-]{36})\b/gi,
+        /(?:^|[\r\n])[ \t]*session id:[ \t]*([a-f0-9-]{36})\b/gi
+    ],
+    gemini: [/(?:^|[\r\n])[ \t]*To resume this session: gemini --resume "?([a-f0-9-]{36})\b/gi]
+};
 const SESSION_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const validDirectory = value => typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\x00-\x1f]/.test(value);
 function sessionMetadata(raw) {
-    if (!raw || !['codex', 'claude'].includes(raw.provider) || typeof raw.sessionId !== 'string' || !SESSION_ID.test(raw.sessionId) || !validDirectory(raw.cwd)) return null;
+    if (!raw || !PROVIDERS.includes(raw.provider) || typeof raw.sessionId !== 'string' || !SESSION_ID.test(raw.sessionId) || !validDirectory(raw.cwd)) return null;
     return { provider: raw.provider, sessionId: raw.sessionId.toLowerCase(), cwd: raw.cwd };
 }
 
@@ -40,7 +49,7 @@ class MetadataParser {
                 const event = JSON.parse(Buffer.from(value.slice(7), 'base64').toString('utf8'));
                 if (event.type === 'warning' && typeof event.message === 'string' && event.message.length <= 512) this.onWarning(event.message);
                 if (event.type === 'cwd' && validDirectory(event.cwd)) { this.cwd = event.cwd; this.onChange({ cwd: event.cwd }); }
-                if (event.type === 'launch' && ['codex', 'claude'].includes(event.provider) && SESSION_ID.test(event.token) && validDirectory(event.cwd)) {
+                if (event.type === 'launch' && PROVIDERS.includes(event.provider) && SESSION_ID.test(event.token) && validDirectory(event.cwd)) {
                     this.launch = { provider: event.provider, token: event.token };
                     this.cwd = event.cwd;
                     this.text = '';
@@ -58,16 +67,14 @@ class MetadataParser {
     inspectText(data) {
         // A configured profile or a command mentioned in arbitrary output is not a launch.
         // Claude reports IDs through its launch event and hook instead of output heuristics.
-        if (this.launch?.provider !== 'codex') return;
+        const provider = this.launch?.provider;
+        const patterns = OUTPUT_PATTERNS[provider];
+        if (!patterns) return;
         this.text = (this.text + data).slice(-4096).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-        const patterns = [
-            /(?:^|[\r\n])[ \t]*To continue this session, run codex resume ([a-f0-9-]{36})\b/gi,
-            /(?:^|[\r\n])[ \t]*session id:[ \t]*([a-f0-9-]{36})\b/gi
-        ];
         const matches = [];
         for (const pattern of patterns) {
             for (const match of this.text.matchAll(pattern)) {
-                const session = sessionMetadata({ provider: 'codex', sessionId: match[1], cwd: this.cwd });
+                const session = sessionMetadata({ provider, sessionId: match[1], cwd: this.cwd });
                 if (session) matches.push({ session, index: match.index, end: match.index + match[0].length });
             }
         }
@@ -76,4 +83,4 @@ class MetadataParser {
         if (matches.length) this.text = this.text.slice(matches.at(-1).end);
     }
 }
-module.exports = { SESSION_ID, validDirectory, sessionMetadata, MetadataParser };
+module.exports = { PROVIDERS, SESSION_ID, validDirectory, sessionMetadata, MetadataParser };
