@@ -31,10 +31,12 @@ if (provider === 'codex') console.log('session id: ${ids.codex}');
 console.log('SESSION_TEST_DONE:' + provider);
 `);
     for (const provider of Object.keys(ids)) {
-        await fs.writeFile(path.join(tools, `${provider}.cmd`), `@echo off\r\n"${process.execPath}" "${fake}" ${provider} %*\r\n`);
+        // Keep batch source ASCII: cmd decodes literal paths using its current
+        // code page. Environment/parameter expansion retains Unicode paths.
+        await fs.writeFile(path.join(tools, `${provider}.cmd`), `@echo off\r\n"%TC_E2E_NODE%" "%~dp0fake.cjs" ${provider} %*\r\n`);
     }
     const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') || 'Path';
-    const env = { [pathKey]: tools + path.delimiter + process.env[pathKey] };
+    const env = { [pathKey]: tools + path.delimiter + process.env[pathKey], TC_E2E_NODE: process.execPath };
     const first = await launch({ phase: 'save', clean: true, env }); t.after(() => first.dispose());
     await first.page.evaluate(async () => loadWorkspace((await invoke('new')).workspace));
     const cards = [];
@@ -57,10 +59,15 @@ console.log('SESSION_TEST_DONE:' + provider);
         const choice = await first.page.evaluate(card => invoke('duplicate-directory', card), card);
         assert.equal(choice.cwd, changed);
         await first.page.evaluate(({ id, provider }) => window.terminalCanvas.input(id, provider + '\r'), { id: card.id, provider });
-        await until(async () => {
-            const board = (await first.state()).host.workspace;
-            return (await first.output(card.id)).includes(`SESSION_TEST_DONE:${provider}`) && board.cards.find(c => c.id === card.id)?.session?.sessionId === ids[provider];
-        }, `Manual ${provider} capture did not finish.`);
+        try {
+            await until(async () => {
+                const board = (await first.state()).host.workspace;
+                return (await first.output(card.id)).includes(`SESSION_TEST_DONE:${provider}`) && board.cards.find(c => c.id === card.id)?.session?.sessionId === ids[provider];
+            }, `Manual ${provider} capture did not finish.`);
+        } catch (error) {
+            console.error('Controlled capture output:', JSON.stringify(await first.output(card.id)));
+            throw error;
+        }
     }
     // A stray resume hint in ordinary shell output cannot replace the observed conversation.
     await first.page.evaluate(id => window.terminalCanvas.input(id, "Write-Output 'Example: codex resume 87654321-4321-4321-9876-123456789abc'; Write-Output 'DOCUMENT_OUTPUT_DONE'\r"), cards[0].id);
