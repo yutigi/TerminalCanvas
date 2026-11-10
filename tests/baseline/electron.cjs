@@ -18,7 +18,13 @@ pty.spawn = (shell, args, options) => {
     if (/^(?:powershell|pwsh)(?:\.exe)?$/i.test(path.basename(shell))) {
         args = ['-NoProfile', ...args];
     }
-    return nativeSpawn(shell, args, options);
+    const terminal = nativeSpawn(shell, args, options);
+    if (mode === 'save' || mode === 'reopen') {
+        // These profiles contain only generated fixture commands and local stand-ins.
+        // Preserve control bytes in JSON so a failed Unicode cd can be diagnosed.
+        terminal.onData(data => console.error('BASELINE_RESTORATION_OUTPUT', JSON.stringify(data)));
+    }
+    return terminal;
 };
 
 if (mode === 'smoke') {
