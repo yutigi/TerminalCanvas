@@ -158,3 +158,5 @@ jobs:
     name: Windows distribution artifacts
     needs: test
     uses: ./.github/workflows/release.yml
+    with:
+      validated_sha: ${{ github.sha }}

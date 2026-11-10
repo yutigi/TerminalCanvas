@@ -3,6 +3,11 @@ name: Windows release artifacts
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      validated_sha:
+        description: Commit that passed the caller's complete CI matrix and ten E2E runs
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,6 +18,13 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
+      - name: Verify the caller validated this exact source
+        if: inputs.validated_sha != ''
+        env:
+          TC_VALIDATED_SHA: ${{ inputs.validated_sha }}
+        run: |
+          if ($env:TC_VALIDATED_SHA -ne $env:GITHUB_SHA) { throw 'CI validation does not match the artifact source' }
+          Write-Host "Reusing completed CI validation for $env:GITHUB_SHA"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -24,13 +36,16 @@ jobs:
       - name: Install development dependencies
         run: npm ci
       - name: Validate the source and golden fixtures
+        if: inputs.validated_sha == ''
         run: cargo xtask check
       - name: Build the hook and isolated E2E host
+        if: inputs.validated_sha == ''
         run: |
           cargo build -p tc-hook
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build -p terminal-canvas --features e2e
       - name: Require ten consecutive desktop and restoration passes
+        if: inputs.validated_sha == ''
         timeout-minutes: 90
         run: |
           node tests/e2e/preflight.cjs
