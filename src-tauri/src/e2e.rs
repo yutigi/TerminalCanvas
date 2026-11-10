@@ -20,6 +20,30 @@ pub fn browser_arguments(additional: Option<&str>) -> Option<String> {
     })
 }
 
+#[cfg(any(windows, test))]
+pub fn outer_for_emulated_dpi(
+    outer: tauri::LogicalSize<f64>,
+    os_scale: f64,
+    arguments: Option<&str>,
+) -> tauri::LogicalSize<f64> {
+    let scale = arguments
+        .and_then(|args| {
+            args.split_whitespace()
+                .find_map(|arg| arg.strip_prefix("--force-device-scale-factor="))
+        })
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|scale| scale.is_finite() && *scale > 0.0 && *scale <= 4.0);
+    match scale {
+        // The browser flag changes WebView DPI, not monitor DPI. Preserve the
+        // same logical app minimum during that test-only emulation.
+        Some(scale) => tauri::LogicalSize::new(
+            outer.width.max(1000.0 * scale / os_scale),
+            outer.height.max(680.0 * scale / os_scale),
+        ),
+        None => outer,
+    }
+}
+
 // User PowerShell profiles can rebuild PATH after the harness prepends its controlled tools.
 // Test shells skip those profiles, so an automatic resume can never fall through to a real CLI.
 pub struct TestBackend(pub tc_pty::PtyBackend);
@@ -167,6 +191,24 @@ pub fn e2e_focus(webview: Webview, _run: State<'_, TestRun>) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emulated_browser_dpi_retains_the_logical_app_minimum() {
+        let small = tauri::LogicalSize::new(1024.0, 720.0);
+        assert_eq!(outer_for_emulated_dpi(small, 1.0, None), small);
+        assert_eq!(
+            outer_for_emulated_dpi(small, 1.0, Some("--force-device-scale-factor=1.5")),
+            tauri::LogicalSize::new(1500.0, 1020.0)
+        );
+        assert_eq!(
+            outer_for_emulated_dpi(small, 1.5, Some("--force-device-scale-factor=1.5")),
+            small
+        );
+        assert_eq!(
+            outer_for_emulated_dpi(small, 1.0, Some("--force-device-scale-factor=NaN")),
+            small
+        );
+    }
 
     #[test]
     fn explicit_test_browser_arguments_keep_the_production_wry_defaults() {

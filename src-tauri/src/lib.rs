@@ -194,8 +194,17 @@ fn create_window(app: &tauri::App, host: &Arc<Host>) -> tauri::Result<()> {
         (outer.width - inner.width).max(0.0),
         (outer.height - inner.height).max(0.0),
     );
+    let monitor = window.current_monitor()?.or(window.primary_monitor()?);
+    let work_area = monitor.map(|monitor| monitor.work_area().size.to_logical::<f64>(scale));
+    let outer = initial_outer_size(work_area);
+    #[cfg(all(windows, feature = "e2e"))]
+    let outer = e2e::outer_for_emulated_dpi(
+        outer,
+        scale,
+        std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok().as_deref(),
+    );
     window.set_min_size(Some(content_size_for_outer(LogicalSize::new(1000.0, 680.0), frame)))?;
-    window.set_size(content_size_for_outer(LogicalSize::new(1500.0, 960.0), frame))?;
+    window.set_size(content_size_for_outer(outer, frame))?;
     window.show()?;
     // The hidden sizing pass bypasses the builder's normal foreground activation.
     window.set_focus()?;
@@ -220,6 +229,13 @@ fn content_size_for_outer(outer: LogicalSize<f64>, frame: LogicalSize<f64>) -> L
         (outer.width - frame.width).max(1.0),
         (outer.height - frame.height).max(1.0),
     )
+}
+
+fn initial_outer_size(work_area: Option<LogicalSize<f64>>) -> LogicalSize<f64> {
+    // Electron constrains initial bounds to the work area. An explicit Tauri
+    // resize would otherwise enlarge a window past a small monitor's bounds.
+    let work = work_area.unwrap_or(LogicalSize::new(1500.0, 960.0));
+    LogicalSize::new(work.width.clamp(1000.0, 1500.0), work.height.clamp(680.0, 960.0))
 }
 
 pub fn run() {
@@ -333,6 +349,23 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_window_matches_the_reference_work_area_and_minimum() {
+        assert_eq!(initial_outer_size(None), LogicalSize::new(1500.0, 960.0));
+        assert_eq!(
+            initial_outer_size(Some(LogicalSize::new(1920.0, 1040.0))),
+            LogicalSize::new(1500.0, 960.0)
+        );
+        assert_eq!(
+            initial_outer_size(Some(LogicalSize::new(1024.0, 720.0))),
+            LogicalSize::new(1024.0, 720.0)
+        );
+        assert_eq!(
+            initial_outer_size(Some(LogicalSize::new(800.0, 600.0))),
+            LogicalSize::new(1000.0, 680.0)
+        );
+    }
 
     #[test]
     fn window_content_preserves_the_electron_outer_dimensions_at_each_display_scale() {
