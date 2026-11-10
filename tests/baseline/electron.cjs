@@ -29,6 +29,10 @@ if (mode === 'smoke') {
         // The original clipboard fixture cannot construct a ClipboardItem for an
         // empty native item. Give that unchanged fixture a controlled text item.
         await clipboard.writeText('Terminal Canvas baseline clipboard fixture');
+        // Windows can clamp the initial BrowserWindow to the hosted display.
+        // Reapply the original app's requested outer size for its fixed native fixtures.
+        options.win.setSize(1500, 960);
+        assert.deepEqual(options.win.getSize(), [1500, 960]);
         const contents = options.win.webContents;
         const sendInput = contents.sendInputEvent;
         let point;
@@ -36,14 +40,7 @@ if (mode === 'smoke') {
             if (Number.isFinite(event.x) && Number.isFinite(event.y)) point = { x: event.x, y: event.y, type: event.type };
             return sendInput.call(this, event);
         };
-        try {
-            return await originalRun({ ...options, createCard(cardOptions = {}) {
-                // On the hosted 681px content viewport, the unchanged link fixture
-                // otherwise clicks the floating creation toolbar over its first cell.
-                const placement = cardOptions.title === 'Hyperlink smoke terminal' ? { x: 80 } : {};
-                return options.createCard({ ...cardOptions, ...placement });
-            } });
-        }
+        try { return await originalRun(options); }
         catch (error) {
             try {
                 const diagnostics = await contents.executeJavaScript(`(() => {
