@@ -1,0 +1,49 @@
+name: Windows JavaScript baseline
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows-baseline.yml
+      - scripts/capture-windows-baseline.cjs
+      - tests/baseline/**
+      - tests/windows-baseline.test.cjs
+      - tests/visual/reference.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-baseline-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Capture the immutable pre-migration host
+        run: node scripts/capture-windows-baseline.cjs
+      - name: Upload baseline measurements and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-electron-baseline
+          path: |
+            .cache/windows-baseline/report.json
+            .cache/windows-baseline/*.log
+            .cache/windows-baseline/*.png
+          if-no-files-found: error
+      - name: Upload the original portable app for Windows 11 interoperability checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-electron-reference
+          path: .cache/windows-baseline/reference/release/*.exe
+          compression-level: 0
+          if-no-files-found: error
