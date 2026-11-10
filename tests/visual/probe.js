@@ -36,6 +36,12 @@ window.captureLayout = async function (scene) {
         loadWorkspace(board);
         setSelection(['selected-plain', 'selected-colored']);
     }
+    if (scene === 'style') {
+        const board = structuredClone(window.layoutFixture.workspace);
+        board.items = [{ id: 'styled-note', type: 'note', x: 100, y: 100, w: 220, h: 140, text: 'Selected note' }];
+        loadWorkspace(board);
+        setSelection(['styled-note']);
+    }
     // WebKit can suspend transitions in an automation window. Measure the final style.
     if (!document.querySelector('#layout-still')) {
         const style = document.createElement('style');
@@ -54,7 +60,8 @@ window.captureLayout = async function (scene) {
         '#add-terminal', '.canvas-bar', '.bar-actions button', '#viewport',
         '.empty-eyebrow', '.empty-state h1', '.empty-state > p', '#empty-add',
         '.empty-features', '.canvas-toolbar', '.canvas-toolbar button',
-        '.element-tools', '.element-tools button', 'footer', '#launch-dialog',
+        '.create-toolbar', '.create-toolbar button', '.style-toolbar',
+        '.style-toolbar .swatch', '.style-toolbar .size-button', 'footer', '#launch-dialog',
         '.dialog-heading', '.eyebrow', 'h2', '.dialog-description', '.field-label',
         '#profile', '#terminal-title', '#cwd', '#command', '#browse-folder',
         '.field-hint', '.dialog-footer', '.dialog-footer button', '.icon-button',
@@ -77,6 +84,14 @@ window.captureLayout = async function (scene) {
                 }),
             };
         });
+    }
+    const count = selector => Object.keys(elements).filter(key => key.startsWith(selector + '[')).length;
+    if (count('.create-toolbar button') !== 8) throw new Error('The eight creation controls were not captured');
+    if (['board', 'style'].includes(scene) && count('.style-toolbar .swatch') !== 8) {
+        throw new Error('The eight visible style colors were not captured');
+    }
+    if (scene === 'style' && count('.style-toolbar .size-button') !== 4) {
+        throw new Error('The four visible text-size controls were not captured');
     }
     const colors = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
     const rgba = color => {

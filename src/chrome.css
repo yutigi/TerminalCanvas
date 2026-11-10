@@ -2,10 +2,10 @@
    Keep the desktop controls on whole CSS pixel line boxes; canvas text and
    xterm retain their own typography. renderer.js enables this sheet on macOS. */
 :where(.sidebar, .topbar, .canvas-bar, .empty-state, .canvas-toolbar,
-    .element-tools, footer, dialog, .card-header, .card-directory,
+    .create-toolbar, .style-toolbar, footer, dialog, .card-header, .card-directory,
     .terminal-placeholder, .minimap),
 :where(.sidebar, .topbar, .canvas-bar, .empty-state, .canvas-toolbar,
-    .element-tools, footer, dialog, .card-header, .card-directory,
+    .create-toolbar, .style-toolbar, footer, dialog, .card-header, .card-directory,
     .terminal-placeholder, .minimap) :where(*) {
     line-height: calc(1em + 2px);
 }
@@ -63,10 +63,18 @@ button {
     line-height: 12px;
 }
 
-.canvas-toolbar button {
+.canvas-toolbar button,
+.create-toolbar button,
+.style-toolbar .size-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+}
+
+/* A 17px icon in a 30px control otherwise rounds its half-pixel center
+   differently in WebKit. Keep the reference alignment without resizing it. */
+.create-toolbar button {
+    padding: 1px 0 0;
 }
 
 .workspace-badge small,

@@ -1,7 +1,7 @@
 {
     "commit": "f489d3b726690ffa3b0132fdc400f8dc31a460db",
     "viewports": [[1000, 680], [1280, 720], [1440, 840]],
-    "scenes": ["empty", "launch", "card", "board"],
+    "scenes": ["empty", "launch", "card", "board", "style"],
     "legacyTolerance": 1.5,
     "engineTolerance": 0.5
 }

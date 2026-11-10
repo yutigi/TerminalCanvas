@@ -18,8 +18,9 @@ UI in Electron and native WKWebView, Tauri's macOS rendering engine. Both hosts
 receive the same captured workspace/profiles through an inert test bridge.
 They never start a shell or access the user's workspace or clipboard.
 
-Twelve scenes cover the empty canvas, launch dialog, stopped terminal, and a board
-with a connector plus plain, colored, and multiply selected arrows at 1000×680,
+Fifteen scenes cover the empty canvas, launch dialog, stopped terminal, a board
+with a connector plus plain, colored, and multiply selected arrows, and a selected
+note with all text-size controls at 1000×680,
 1280×720, and 1440×840 content sizes. Control and icon bounds must agree
 between current Chromium and WebKit within 0.5 CSS pixels; colors must match.
 Current controls must remain within 1.5 CSS pixels of the previous JavaScript UI,
@@ -36,6 +37,9 @@ Reports include the native device pixel ratio. The macOS compatibility sheet
 preserves both Retina and 1× control boxes, since Chromium's old `normal` line
 heights round differently at those display densities. The same geometry
 tolerances apply at both densities.
+The probe requires all eight creation controls, eight visible color swatches,
+and four visible text-size buttons in their corresponding scenes, so an obsolete
+selector cannot silently omit those controls.
 
 Arrow checks read actual browser styles and pixels decoded from the captured PNG.
 The sample lies inside the filled triangle and off the shaft, so removing
