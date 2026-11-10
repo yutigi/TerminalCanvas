@@ -268,7 +268,9 @@ mod windows {
             .join(format!("tc pty {}", std::process::id()))
             .join("子");
         std::fs::create_dir_all(&target).unwrap();
-        let target = target.to_string_lossy().into_owned();
+        // The runner's TEMP may contain an 8.3 user name; PowerShell reports the
+        // expanded directory. Send that same canonical spelling to every shell.
+        let target = dunce::canonicalize(target).unwrap().to_string_lossy().into_owned();
         for command in ["", "pwsh", "cmd"] {
             if command == "pwsh" && which("pwsh.exe").is_none() {
                 continue;
