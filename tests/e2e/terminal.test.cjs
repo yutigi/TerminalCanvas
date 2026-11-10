@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { launch, until, hasOutputLine, sendInput, click, key, screenshot } = require('./harness.cjs');
-const { withSavedClipboard, fixtureScene, cellPoint, writeTerminal, clipboardRead, clipboardWrite, input, startTerminal } = require('./support.cjs');
+const { withSavedClipboard, fixtureScene, cellPoint, placeSelectionFixture, writeTerminal, clipboardRead, clipboardWrite, input, startTerminal } = require('./support.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 180000 };
 const normalize = text => text.replace(/\r\n/g, '\n');
 const expectedSelection = (lines, from, to) => from.row === to.row ? lines[from.row].slice(from.col, to.col + 1)
@@ -12,6 +12,8 @@ test(`native terminal selection, copying, SGR reports and scrolling (display sca
     await withSavedClipboard(async () => {
         const h = await launch({ clean: true, scale }); t.after(() => h.dispose());
         const cards = await fixtureScene(h.page, [{ title: 'Selection terminal', x: 0, y: 0 }, { title: 'Wide terminal', x: 1400, y: 900 }]);
+        await h.page.evaluate(() => { if (minimapVisible) document.querySelector('#minimap-toggle').click(); });
+        assert.equal(await h.page.locator('#minimap').isHidden(), true, 'The selection fixture needs unobstructed text; minimap navigation has its own native case');
         await h.page.evaluate(id => { const card = workspace.cards.find(card => card.id === id); card.w = 1000; card.h = 600; renderGeometry(card); }, cards[1].id);
         const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ';
         const lines = Array.from({ length: 12 }, (_, row) => `row${String(row).padStart(2, '0')} ${alphabet.slice(row % 5)} |${row}`);
@@ -28,18 +30,13 @@ test(`native terminal selection, copying, SGR reports and scrolling (display sca
         ];
         for (const current of cases) {
             const card = cards[current.index];
-            await h.page.evaluate(({ card, current }) => {
-                setFocus(null);
-                if (current.focus) setFocus(card.id);
-                else { workspace.camera = { x: current.x - card.x * current.z, y: current.y - card.y * current.z, z: current.z }; renderCamera(); }
-                return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-            }, { card, current });
+            const fitted = await placeSelectionFixture(h.page, card.id, current);
             for (const { from, to } of selections) {
                 for (const backward of [false, true]) {
                     let a = await cellPoint(h.page, card.id, from.col, from.row, .25);
                     let b = await cellPoint(h.page, card.id, to.col, to.row, .75);
                     if (backward) [a, b] = [b, a];
-                    assert.ok(a.visible && b.visible, JSON.stringify({ current, a, b }));
+                    assert.ok(a.visible && b.visible, JSON.stringify({ current, fitted, a, b }));
                     await sendInput(h.page, async () => {
                         await h.page.mouse.move(a.x, a.y); await h.page.mouse.down();
                         await h.page.mouse.move(b.x, b.y, { steps: 4 }); await h.page.mouse.up();

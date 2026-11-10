@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { launch, until, psQuote, screenshot, root } = require('./harness.cjs');
+const { launch, until, hasOutputLine, psQuote, screenshot, root } = require('./harness.cjs');
 const ids = { claude: '12345678-1234-4321-9876-123456789abc', codex: '0f1e2d3c-4b5a-4968-8776-655443322110' };
 
 test('two launches recover Claude and Codex IDs, resume exactly, and retain metadata in a fresh shell', {
@@ -44,12 +44,17 @@ console.log('SESSION_TEST_DONE:' + provider);
         }, { provider, project });
         cards.push(card);
         await until(async () => !(await first.page.evaluate(card => invoke('duplicate-directory', card), card)).warning, 'Shell did not reach its prompt.');
-        const command = `$env:Path=${psQuote(tools + path.delimiter)}+$env:Path; Set-Location -LiteralPath ${psQuote(changed)}; (Get-Command ${provider}).Source; Write-Output 'TOOL_RESOLVED'`;
+        const marker = `STANDIN_RESOLVED:${provider}`;
+        const command = `$env:Path=${psQuote(tools + path.delimiter)}+$env:Path; Set-Location -LiteralPath ${psQuote(changed)}; `
+            + `if ((Get-Command ${provider} -CommandType Application).Source -ieq ${psQuote(path.join(tools, `${provider}.cmd`))}) { 'STANDIN_' + 'RESOLVED:${provider}' } else { throw 'Uncontrolled provider executable' }`;
         await first.page.evaluate(({ id, command }) => window.terminalCanvas.input(id, command + '\r'), { id: card.id, command });
-        await until(async () => (await first.output(card.id)).includes('TOOL_RESOLVED'), 'Tool resolution did not finish.');
+        await until(async () => hasOutputLine(await first.output(card.id), marker), 'The controlled application did not resolve; no provider was invoked.');
+        await until(async () => {
+            const choice = await first.page.evaluate(card => invoke('duplicate-directory', card), card);
+            return choice.cwd === changed && !choice.warning;
+        }, 'The controlled project did not reach an idle prompt.');
         const choice = await first.page.evaluate(card => invoke('duplicate-directory', card), card);
         assert.equal(choice.cwd, changed);
-        assert.ok((await first.output(card.id)).toLowerCase().includes(path.join(tools, `${provider}.cmd`).toLowerCase()), 'Stand-in must resolve before launching a tool.');
         await first.page.evaluate(({ id, provider }) => window.terminalCanvas.input(id, provider + '\r'), { id: card.id, provider });
         await until(async () => {
             const board = (await first.state()).host.workspace;

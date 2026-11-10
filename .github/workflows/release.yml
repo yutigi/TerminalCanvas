@@ -59,4 +59,5 @@ jobs:
         with:
           name: windows-release-e2e
           path: .cache/tauri-*.png
+          include-hidden-files: true
           if-no-files-found: ignore

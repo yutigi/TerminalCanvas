@@ -13,7 +13,7 @@ async function withSavedClipboard(task) {
     child.stdin.on('error', error => { errors += error.message; });
     const exited = new Promise(resolve => {
         child.once('error', error => { failure = error; ended = true; resolve(null); });
-        child.once('exit', code => { ended = true; resolve(code); });
+        child.once('close', code => { ended = true; resolve(code); });
     });
     try {
         await until(() => {
@@ -48,6 +48,34 @@ async function cellPoint(page, id, col, row, fraction = .5) {
         return { x, y, visible: document.elementFromPoint(x, y)?.closest('.terminal-card') === s.element };
     }, { id, col, row, fraction });
 }
+async function placeSelectionFixture(page, id, current) {
+    return page.evaluate(async ({ id, current }) => {
+        const card = workspace.cards.find(card => card.id === id), terminal = sessions.get(id).terminal;
+        setFocus(null);
+        if (current.focus) setFocus(id);
+        else { workspace.camera = { x: current.x - card.x * current.z, y: current.y - card.y * current.z, z: current.z }; renderCamera(); }
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (!current.focus) {
+            const screen = terminal.element.querySelector('.xterm-screen').getBoundingClientRect();
+            const area = viewport.getBoundingClientRect(), tools = document.querySelector('.create-toolbar').getBoundingClientRect();
+            // Keep all 37 columns/11 rows used below clear of floating controls and
+            // viewport clipping, retaining the requested zoom and native pointer path.
+            const left = screen.left + .25 * screen.width / terminal.cols;
+            const right = screen.left + 36.75 * screen.width / terminal.cols;
+            const top = screen.top + .5 * screen.height / terminal.rows;
+            const bottom = screen.top + 10.5 * screen.height / terminal.rows;
+            const minX = Math.max(area.left + 12, tools.right + 8) - left;
+            const maxX = area.right - 12 - right;
+            const minY = area.top + 12 - top, maxY = area.bottom - 85 - bottom;
+            if (minX > maxX || minY > maxY) throw new Error('The selection sample does not fit the native viewport');
+            workspace.camera.x += Math.max(minX, Math.min(0, maxX));
+            workspace.camera.y += Math.max(minY, Math.min(0, maxY));
+            renderCamera();
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }
+        return { camera: workspace.camera, width: innerWidth, height: innerHeight, ratio: devicePixelRatio };
+    }, { id, current });
+}
 const writeTerminal = (page, id, text) => page.evaluate(({ id, text }) => new Promise(resolve => sessions.get(id).terminal.write(text, resolve)), { id, text });
 const clipboardRead = page => page.evaluate(() => invoke('clipboard-read').then(result => result.text.replace(/\r\n/g, '\n')));
 const clipboardWrite = (page, text) => page.evaluate(text => invoke('clipboard-write', text), text);
@@ -59,4 +87,4 @@ async function startTerminal(page, options = {}) {
         workspace.cards.push(card); mount(card); await start(card); return card;
     }, options);
 }
-module.exports = { withSavedClipboard, fixtureScene, cellPoint, writeTerminal, clipboardRead, clipboardWrite, choose, input, startTerminal, root };
+module.exports = { withSavedClipboard, fixtureScene, cellPoint, placeSelectionFixture, writeTerminal, clipboardRead, clipboardWrite, choose, input, startTerminal, root };

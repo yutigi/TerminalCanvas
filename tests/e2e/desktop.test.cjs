@@ -71,8 +71,9 @@ for (const scale of [1, 1.25, 1.5]) {
         await click(h.page, point);
         assert.equal(await h.page.evaluate(() => document.activeElement.className), 'item-editor');
         await sendInput(h.page, () => h.page.keyboard.type('native note'), { type: 'keyup', count: 11 });
-        assert.equal(await h.page.evaluate(() => workspace.items.at(-1).text), 'native note');
+        assert.equal(await h.page.evaluate(() => document.activeElement.value), 'native note');
         await h.page.evaluate(() => { document.activeElement.blur(); setTool('select'); viewport.focus(); });
+        assert.equal(await h.page.evaluate(() => workspace.items.at(-1).text), 'native note', 'Leaving the editor commits native typing');
         const before = await h.page.evaluate(() => ({ z: workspace.camera.z, ratio: devicePixelRatio }));
         await h.page.keyboard.down('Control');
         try { await h.page.mouse.wheel(0, -120); } finally { await h.page.keyboard.up('Control'); }
@@ -85,8 +86,9 @@ for (const scale of [1, 1.25, 1.5]) {
 test('native first-click typing reaches xterm and shell directory tracking follows Unicode paths', windows, async t => {
     const h = await launch({ clean: true }); t.after(() => h.dispose());
     const card = await newTerminal(h);
-    const changed = path.join(root, '.cache', 'tauri-e2e-project', 'changed ไทย 工作 🚀');
-    await fs.mkdir(changed, { recursive: true });
+    const requested = path.join(root, '.cache', 'tauri-e2e-project', 'changed ไทย 工作 🚀');
+    await fs.mkdir(requested, { recursive: true });
+    const changed = await fs.realpath(requested);
     for (const zoom of [.45, .65, .8, 1, 1.5, 'focus']) {
         const point = await h.page.evaluate(({ id, zoom }) => {
             setFocus(null);
@@ -103,13 +105,19 @@ test('native first-click typing reaches xterm and shell directory tracking follo
         await key(h.page, 'Enter');
         await until(async () => hasOutputLine(await h.output(card.id), marker), 'First-click native typing did not reach the shell.');
     }
+    await until(async () => !(await h.page.evaluate(card => invoke('duplicate-directory', card), card)).warning, 'The final typed command did not return to its prompt.');
     await h.page.evaluate(({ id, command }) => window.terminalCanvas.input(id, command + '\r'), {
         id: card.id, command: `Set-Location -LiteralPath ${psQuote(changed)}`
     });
-    await until(async () => {
-        const choice = await h.page.evaluate(card => invoke('duplicate-directory', card), card);
-        return choice.cwd === changed && !choice.warning;
-    }, 'Changed Unicode directory was not captured.');
+    let lastChoice;
+    try {
+        await until(async () => {
+            lastChoice = await h.page.evaluate(card => invoke('duplicate-directory', card), card);
+            return lastChoice.cwd === changed && !lastChoice.warning;
+        }, 'Changed Unicode directory was not captured.');
+    } catch (error) {
+        throw new Error(`${error.message}\n${JSON.stringify({ changed, lastChoice, output: (await h.output(card.id)).slice(-3000) })}`, { cause: error });
+    }
     await h.page.evaluate(() => { setFocus(null); select(workspace.cards[0].id); viewport.focus(); });
     await key(h.page, 'Control+Shift+d');
     await until(async () => (await h.state()).host.running === 2, 'Duplicate shortcut did not start a fresh shell.');
