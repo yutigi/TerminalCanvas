@@ -30,7 +30,14 @@ async function run(name, executable, args, { cwd = reference, timeout = 120000, 
     if (Object.hasOwn(env, 'TC_BASELINE_SPAWN_MS')) childEnv.TC_BASELINE_SPAWN_MS = String(startedAt);
     const child = spawn(executable, args, { cwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false });
     child.stdout.pipe(stream, { end: false }); child.stderr.pipe(stream, { end: false });
-    if (onSpawn) onSpawn(child, startedAt);
+    let observerError;
+    const observer = onSpawn && Promise.resolve().then(() => onSpawn(child, startedAt)).catch(error => {
+        observerError = error;
+        stream.write(`External observer failed: ${error.stack || error}\n`);
+        // A failed observer cannot supply the readiness handshake. End only
+        // this benchmark tree rather than leaving Electron waiting for it.
+        if (child.pid && child.exitCode === null) spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    });
     let timedOut = false;
     const timer = setTimeout(() => {
         timedOut = true;
@@ -39,8 +46,9 @@ async function run(name, executable, args, { cwd = reference, timeout = 120000, 
     }, timeout);
     let result;
     try { result = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal })); }); }
-    finally { clearTimeout(timer); await new Promise(resolve => stream.end(resolve)); }
+    finally { clearTimeout(timer); await observer; await new Promise(resolve => stream.end(resolve)); }
     report.stages[name] = { ...result, timedOut, log: path.basename(log) }; save();
+    if (observerError) throw observerError;
     assert.ok(!timedOut && result.code === 0, `${name} failed; see ${log}`);
     return fs.readFileSync(log, 'utf8');
 }
@@ -110,7 +118,7 @@ async function main() {
                         fs.writeFileSync(path.join(folder, 'observer-ready'), 'ready');
                         return connection;
                     })();
-                    observed.catch(() => {});
+                    return observed;
                 }) });
         const metrics = JSON.parse(fs.readFileSync(path.join(folder, 'metrics.json'), 'utf8'));
         if (observed) {
