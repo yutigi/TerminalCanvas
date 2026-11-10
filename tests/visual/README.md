@@ -32,6 +32,10 @@ requires the rendered arrow checks to fail.
 Fixture windows can extend beyond the runner's display, and captures wait for the
 exact requested content size. Every report must retain that size; a smaller CI
 display must not silently shrink either reference or current windows.
+Reports include the native device pixel ratio. The macOS compatibility sheet
+preserves both Retina and 1× control boxes, since Chromium's old `normal` line
+heights round differently at those display densities. The same geometry
+tolerances apply at both densities.
 
 Arrow checks read actual browser styles and pixels decoded from the captured PNG.
 The sample lies inside the filled triangle and off the shaft, so removing
