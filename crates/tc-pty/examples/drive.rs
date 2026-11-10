@@ -261,16 +261,23 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
                 .is_some_and(|metadata| metadata.cwd == target_text)
         })?;
         driver.log("check", "the host recorded the changed folder");
+        // The renderer keeps the last reported folder in the card it sends to Duplicate.
+        let mut duplicate_card = card.clone();
+        duplicate_card["cwd"] = target_text.clone().into();
+        let cmd_without_readiness = platform.is_windows() && shell == "cmd";
         let duplicate = Instant::now() + Duration::from_secs(10);
         let choice = loop {
-            let choice = match driver.manager.directory(&card).map_err(|e| e.to_string())? {
+            let choice = match driver.manager.directory(&duplicate_card).map_err(|e| e.to_string())? {
                 DirectoryRequest::Ready(choice) => choice,
                 DirectoryRequest::Lookup(lookup) => {
                     let current = tc_pty::cwd::process_directory(lookup.pid, lookup.platform);
                     driver.manager.finish_directory(lookup, current)
                 }
             };
-            if choice.cwd == target_text || Instant::now() > duplicate {
+            if cmd_without_readiness
+                || (choice.cwd == target_text && choice.warning.is_none())
+                || Instant::now() > duplicate
+            {
                 break choice;
             }
             driver
@@ -280,6 +287,18 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
         driver.log("duplicate", format!("{} {:?}", choice.cwd, choice.warning));
         if choice.cwd != target_text {
             return Err(format!("Duplicate would open {} instead of {target_text}", choice.cwd));
+        }
+        if cmd_without_readiness {
+            // Like the JavaScript host, cmd reports directories but has no idle marker.
+            if choice.warning.is_none() {
+                return Err("cmd must retain the JavaScript Duplicate review fallback".into());
+            }
+            driver.log(
+                "check",
+                "cmd suggests the saved folder for review without claiming prompt readiness",
+            );
+        } else if choice.warning.is_some() {
+            return Err("the integrated shell did not reach an idle prompt for Duplicate".into());
         }
         if ai {
             if hook.is_none() {

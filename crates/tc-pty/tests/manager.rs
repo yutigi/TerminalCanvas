@@ -775,6 +775,31 @@ fn tracks_directories_per_windows_session_without_typing_or_copying_ai_processes
 }
 
 #[test]
+fn cmd_directory_reports_preserve_the_javascript_duplicate_review_fallback() {
+    let root = tempdir("cmd-duplicate");
+    let nested = root.join("changed folder");
+    std::fs::create_dir(&nested).unwrap();
+    let mut config = config(Platform::Windows, WINDOWS_ENV);
+    config.home = text(&root);
+    let mut h = harness_with(config, None);
+    let original = card(json!({ "cwd": text(&root), "command": "cmd.exe" }));
+    h.start(&original).unwrap();
+    h.data(0, &format!("\x1b]9;9;{}\x1b\\", text(&nested)));
+    assert_eq!(h.manager.snapshot().get(id(&original)).unwrap().cwd, text(&nested));
+    assert_eq!(h.of_type("cwd").last().unwrap()["cwd"], text(&nested));
+    let initial = h.directory(&original);
+    assert_eq!(initial.cwd, text(&root));
+    assert!(initial.warning.unwrap().contains("could not be determined"));
+    let mut updated = original.clone();
+    updated["cwd"] = text(&nested).into();
+    let suggested = h.directory(&updated);
+    assert_eq!(suggested.cwd, text(&nested));
+    assert!(suggested.warning.unwrap().contains("Review the suggested folder"));
+    assert!(h.writes(0).is_empty(), "Duplicate does not type queries into cmd");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn missing_current_directories_offer_the_launch_folder_then_home() {
     let root = tempdir("fallback");
     let (launch, current) = (root.join("launch"), root.join("deleted directory"));
