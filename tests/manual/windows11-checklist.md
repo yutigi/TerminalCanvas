@@ -6,8 +6,14 @@ time; the Electron and Rust apps intentionally share recovery data.
 
 Downloads:
 
-- [Rust NSIS installer and portable ZIP](https://github.com/yutigi/TerminalCanvas/actions/runs/42876975230/artifacts/13793932227)
+- [Corrected Rust NSIS installer and portable ZIP](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863/artifacts/13803789174)
 - [Original Electron portable EXE](https://github.com/yutigi/TerminalCanvas/actions/runs/42873175044/artifacts/13790752385)
+- [Isolated desktop test kit, including Node and PowerShell 7](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863/artifacts/13803178978)
+
+The corrected `27e8774` build passed all three CI platforms, ten consecutive
+Windows desktop suites, the relocated PowerShell 5.1 test kit, and packaging.
+Both shipping executables passed their PE import checks. Older packages are
+superseded because their hook imported the MSVC redistributable.
 
 The Rust artifact contains `Terminal Canvas_0.1.0_x64-setup.exe` and
 `Terminal Canvas_0.1.0_x64_portable.zip`. The portable ZIP must contain
@@ -49,9 +55,22 @@ contains only stopped plain-shell cards and synthetic data; it invokes no AI CLI
    It compares the full saved layout and all embedded image bytes, independent of
    JSON property order. It records the Windows edition/build and which app data
    folders contain recovery files. It does not start an app or alter data.
+8. After the normal installer/portable checks, extract the isolated desktop test
+   kit into a writable folder. From that folder, run:
+
+   ```powershell
+   powershell.exe -NoProfile -File .\Run-Checks.ps1
+   ```
+
+   This is a separate instrumented debug build. It bundles its test runtimes,
+   keeps profiles and local CLI substitutes inside its own `.cache`, and makes
+   no provider calls. It must report **22 passed, 0 failed, 0 skipped**. Retain
+   `.cache\windows11-e2e.log` and any screenshots. Its relocated PowerShell 5.1
+   entry point passed on Windows Server CI; this run supplies the required
+   Windows 11 result. It does not replace the normal packaged-app checks above.
 
 Reply with the Windows edition/build, each numbered step's pass/fail, checker
-result, WebView2 status, and any exact errors. File equivalence does not replace
+result, desktop test log, WebView2 status, and any exact errors. File equivalence does not replace
 the separate native rendering/automatic-restoration observations.
 
 The current artifacts are migration validation builds. Electron remains the

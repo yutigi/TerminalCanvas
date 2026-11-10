@@ -112,7 +112,7 @@ Windows PowerShell and PowerShell 7 report their FileSystem location at each pro
 
 While a command/AI CLI or nested shell is running, before the first prompt, in a non-filesystem provider such as `HKCU:`, or when the console cannot confirm idle input, Duplicate opens the New terminal dialog with an explanation and the first available folder: the source last saved directory, home, then the app's working directory. Review or browse before starting. Deleted/inaccessible directories and stopped cards follow the same flow. Command Prompt updates its live folder label but cannot confirm idle input, so Duplicate uses the review dialog there as well.
 
-On Linux and macOS, Duplicate queries the managed shell's process directory afresh rather than reusing the display's polling cache (`/proc/<pid>/cwd` on Linux, `/usr/sbin/lsof` on macOS). A missing tool or failed lookup opens fallback review. These adapters have automated coverage but have not been validated on those desktops. Directories belonging to independently launched child shells are not tracked; native folder-picker behavior outside Windows remains unvalidated.
+On Linux and macOS, Duplicate queries the managed shell's process directory afresh rather than reusing the display's polling cache (`/proc/<pid>/cwd` on Linux, `/usr/sbin/lsof` on macOS). A missing tool or failed lookup opens fallback review. Native macOS duplication/polling and the Linux controlled Bash drive passed; Linux desktop behavior remains unverified. Directories belonging to independently launched child shells are not tracked; native folder-picker behavior outside Windows remains unvalidated.
 
 ## Persistence and process lifecycle
 
@@ -183,25 +183,38 @@ publish a release.
 
 ## Cutover validation status
 
-This is the prepared cutover candidate. It must not replace the transitional default until the
-remaining gates in [the migration plan](docs/rust-migration-plan.md#progress) pass. The transitional
-build passed three-platform CI, ten consecutive 22-case native Windows suites, original-host
-baseline capture, and Windows packaging. Candidate `cargo xtask check` passed locally with 126
-normal Rust tests, 25 test-host checks, 93 JavaScript passes/one Windows-only skip, and all 18
-goldens, plus formatting, clippy, syntax, and icons. The final candidate still needs native CI and
-packaging validation. Clean Windows 11 full-suite, installer/portable and automatic Electron
-workspace/image compatibility checks are pending; see the [checklist](tests/manual/windows11-checklist.md).
-Native macOS file drop also remains unverified.
+This is the prepared Rust-only candidate. [CI at 27e8774](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863)
+passed Windows, macOS, and Ubuntu, ten consecutive 22-case Windows desktop suites
+(220 passes, zero skips), an additional relocated PowerShell 5.1 kit run (22 passes,
+zero skips), and Windows packaging. The release hook uses the static MSVC runtime;
+the actual shipping app/hook PE import tables passed CI and independent inspection.
+[Corrected installer and portable ZIP](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863/artifacts/13803789174)
+and the [isolated test kit](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863/artifacts/13803178978)
+are validation artifacts, not a published release.
+
+The local task passed 126 normal Rust tests, 25 test-host checks and 18 goldens;
+after the startup cursor-reply correction, JavaScript passes 94 tests with one
+Windows-only skip. The regression deliberately delays the native start reply while
+ConPTY's cursor query arrives; early typing stays blocked. The actual query reply
+now reaches the already-spawned PTY before the start response settles.
+
+Do not replace the transitional default until the remaining [migration gates](docs/rust-migration-plan.md#progress)
+pass: clean Windows 11 installer/portable operation, automatic Electron workspace
+and image recovery/round-trip, one full Windows 11 suite, and the remaining native
+macOS folder-picker selection/cancellation observation. The user verified macOS
+Finder-to-canvas image drop and saved asset bytes match the fixture. Follow the
+[Windows 11 checklist](tests/manual/windows11-checklist.md) after the normal app
+checks; its test bundle includes Node/PowerShell 7 and needs no compiler installation.
 
 Source lives in `src/`, `crates/`, and `src-tauri/`; development tasks live in `xtask/`. See
 [the architecture](docs/architecture.md) and `AGENTS.md` for layout and constraints.
 
-Rendered layout has a separate [visual parity check](tests/visual/README.md). It extracts the actual JavaScript UI at commit `f489d3b`, renders it in Electron, and compares the current UI in Electron and macOS WKWebView at three content sizes. Fifteen scenes pass: current controls stay within 1.5 CSS pixels of the historical layout, and current Chromium/WebKit control and icon bounds agree within 0.5 pixels with matching colors. The negative control detects the original WebKit shifts. A macOS-only compatibility stylesheet makes control line boxes, icon wrappers, and input heights explicit so browser rounding cannot accumulate into shifted rows and dialog buttons; Windows/Linux retain their existing typography. The Tauri window also subtracts measured native decorations so its initial/minimum outer dimensions match Electron's 1500×960/1000×680. The rebuilt native macOS app was visually checked and closed with status 0. Windows/Linux visual results remain unverified.
+Rendered layout has a separate [visual parity check](tests/visual/README.md). It extracts the actual JavaScript UI at commit `f489d3b`, renders it in Electron, and compares the current UI in Electron and macOS WKWebView at three content sizes. Fifteen scenes pass: current controls stay within 1.5 CSS pixels of the historical layout, and current Chromium/WebKit control and icon bounds agree within 0.5 pixels with matching colors. The negative control detects the original WebKit shifts. A macOS-only compatibility stylesheet makes control line boxes, icon wrappers, and input heights explicit so browser rounding cannot accumulate into shifted rows and dialog buttons; Windows/Linux retain their existing typography. The Tauri window measures native decorations and clamps initial bounds to the monitor work area, preserving Electron's 1500×960/1000×680 default/minimum behavior. The rebuilt native macOS app was visually checked and closed with status 0. Windows/Linux visual results remain unverified.
 
-The transitional Rust build completed native macOS Save, repeated Save, portable Export, and Open into an empty test profile with the image rendered and saved terminals stopped. The [manual file verifier](tests/manual/README.md) checks those outputs with the frozen legacy oracle here. A pre-migration Electron process rewrote the Rust autosave unchanged and Rust reopened it, but Electron visual inspection was refused by Computer Use and remains unverified. Candidate-specific full manual checks and Windows runtime gates remain open.
+The transitional Rust build completed native macOS Save, repeated Save, portable Export, and Open into an empty test profile with the image rendered and saved terminals stopped. The [manual file verifier](tests/manual/README.md) checks those outputs with the frozen legacy oracle here. A pre-migration Electron process rewrote the Rust autosave unchanged and Rust reopened it, but Electron visual inspection was refused by Computer Use and remains unverified. The clean Windows 11 and remaining native folder-picker gates are listed above.
 
 The transitional Rust build also passed native macOS controlled-Bash capture, stopped restoration, exact-ID Resume, and Start fresh shell across two launches. The [manual restoration fixture](tests/manual/README.md#bash-session-restoration) checks executable paths before every shell starts; logs show four provider calls, six shells, preserved metadata, and all six PIDs gone after exit. This does not replace candidate-specific full manual or Windows validation. Generated command permission descriptors are ignored; removing them before the candidate build regenerated all 27 descriptors and its 25 test-host checks passed.
 
-The [macOS clipboard guard](tests/manual/README.md#preserve-the-macos-clipboard-during-native-checks) keeps native clipboard formats in memory for manual tests. Its private self-test and general restoration checks passed locally; the macOS CI job is configured for the private test only. The transitional build subsequently passed native board copy/cut/paste, undo/redo and PNG paste, exact xterm copy and single paste in canvas/Focus, and real Ctrl+C interruption. Original clipboard formats and prior test profiles were restored; the app exited 0. Native drawing/group/minimap checks also passed; native macOS file drop remains unverified.
+The [macOS clipboard guard](tests/manual/README.md#preserve-the-macos-clipboard-during-native-checks) keeps native clipboard formats in memory for manual tests. Its private self-test and general restoration checks passed locally; the macOS CI job is configured for the private test only. The transitional build subsequently passed native board copy/cut/paste, undo/redo and PNG paste, exact xterm copy and single paste in canvas/Focus, and real Ctrl+C interruption. Original clipboard formats and prior test profiles were restored; the app exited 0. Native drawing/group/minimap checks also passed; the user verified native macOS file drop with matching saved image bytes. Native folder-picker selection/cancellation remains unverified after Computer Use could not locate the candidate window.
 
-The renderer regression suite now checks fifteen scenes, actual arrowhead PNG pixels, deliberate missing-fill failures in Chromium/WebKit, and Chromium forced-colors colors. Install the locked test-only runtime with `npm ci --prefix tests/visual`; it remains outside application dependencies. WebView2 repeated the paint checks in all ten passing native Windows suites. The Unicode hook and direct Unicode input/cwd tests passed. The separate Windows 11 and candidate gates remain open; see PR #16 and the migration plan.
+The renderer regression suite now checks fifteen scenes, actual arrowhead PNG pixels, deliberate missing-fill failures in Chromium/WebKit, and Chromium forced-colors colors. Install the locked test-only runtime with `npm ci --prefix tests/visual`; it remains outside application dependencies. WebView2 repeated the paint checks in all ten passing native Windows suites. The Unicode hook and direct Unicode input/cwd tests passed. The candidate automation and packaging gates passed. The separate Windows 11 and native macOS folder-picker results remain open; see PR #16 and the migration plan.
