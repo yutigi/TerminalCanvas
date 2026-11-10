@@ -1,4 +1,12 @@
 /* Shared by the Electron and WKWebView fixtures. No terminals or OS services run. */
+window.waitForLayoutViewport = async function (width, height) {
+    const deadline = Date.now() + 5000;
+    while (innerWidth !== width || innerHeight !== height) {
+        if (Date.now() >= deadline) throw new Error(`Requested viewport ${width}x${height}; received ${innerWidth}x${innerHeight}`);
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+};
+
 window.captureLayout = async function (scene) {
     for (let tries = 0; typeof ready === 'undefined' || !ready; tries++) {
         if (tries === 200) throw new Error('The renderer did not initialize.');

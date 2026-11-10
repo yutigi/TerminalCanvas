@@ -141,6 +141,37 @@ fn record_matches_the_javascript_hook() {
 }
 
 #[test]
+fn record_accepts_one_utf8_transport_preamble() {
+    let folder = temp_folder("utf8-preamble");
+    let file = folder.join("session.json");
+    let cwd = "/project/ไทย 工作 🚀";
+    let input = json!({ "hook_event_name": "SessionStart", "session_id": ID, "cwd": cwd,
+        "transcript_path": "MUST_NOT_BE_SAVED" })
+    .to_string();
+    for prefix in ["", "\u{feff}"] {
+        let _ = std::fs::remove_file(&file);
+        let output = record(&folder, &format!("{prefix}{input}"), "claude", Some(ID), Some(&file));
+        assert!(output.status.success());
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            saved,
+            json!({ "provider": "claude", "sessionId": ID, "cwd": cwd, "token": ID })
+        );
+    }
+    std::fs::remove_file(&file).unwrap();
+    let output = record(
+        &folder,
+        &format!("\u{feff}\u{feff}{input}"),
+        "claude",
+        Some(ID),
+        Some(&file),
+    );
+    assert!(output.status.success(), "malformed hook input must remain nonblocking");
+    assert!(!file.exists(), "only one transport signature is accepted");
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
 fn record_ignores_malformed_and_oversized_input() {
     let folder = temp_folder("malformed");
     let file = folder.join("session.json");
@@ -157,6 +188,8 @@ fn record_ignores_malformed_and_oversized_input() {
         ("".to_owned(), false),
         (padded(65_536), true),
         (padded(65_537), false),
+        (format!("\u{feff}{}", padded(65_536)), true),
+        (format!("\u{feff}{}", padded(65_537)), false),
         (format!("{}{}", padded(65_536), " ".repeat(300_000)), false),
     ] {
         let _ = std::fs::remove_file(&file);
@@ -412,7 +445,6 @@ mod windows {
             .args(["/d", "/s", "/c", &command])
             .envs(integration.env.iter().cloned())
             .env("TC_LAUNCH_TOKEN", ID)
-            .env("TC_HOOK_TEST_DIAGNOSTICS", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

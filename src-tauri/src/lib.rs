@@ -186,6 +186,8 @@ fn create_window(app: &tauri::App, host: &Arc<Host>) -> tauri::Result<()> {
     window.set_min_size(Some(content_size_for_outer(LogicalSize::new(1000.0, 680.0), frame)))?;
     window.set_size(content_size_for_outer(LogicalSize::new(1500.0, 960.0), frame))?;
     window.show()?;
+    // The hidden sizing pass bypasses the builder's normal foreground activation.
+    window.set_focus()?;
     let closing = Arc::clone(host);
     window.on_window_event(move |event| match event {
         WindowEvent::CloseRequested { api, .. } if closing.close_requested() => api.prevent_close(),

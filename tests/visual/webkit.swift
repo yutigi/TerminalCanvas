@@ -8,6 +8,11 @@ let label = CommandLine.arguments[3]
 let application = NSApplication.shared
 application.setActivationPolicy(.regular)
 
+// The fixture must retain its requested viewport even on a small CI display.
+class FixtureWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
+
 class LayoutHarness: NSObject, WKNavigationDelegate {
     var window: NSWindow!
     var webview: WKWebView!
@@ -28,7 +33,7 @@ class LayoutHarness: NSObject, WKNavigationDelegate {
         config.websiteDataStore = .nonPersistent()
         let mock = try String(contentsOf: output.appendingPathComponent("mock.js"), encoding: .utf8)
         config.userContentController.addUserScript(WKUserScript(source: mock, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 720), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window = FixtureWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 720), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         webview = WKWebView(frame: window.contentView!.bounds, configuration: config)
         webview.autoresizingMask = [.width, .height]
         webview.navigationDelegate = self
@@ -88,7 +93,9 @@ class LayoutHarness: NSObject, WKNavigationDelegate {
     }
 
     func captureScene(_ scene: String, key: String, completion: @escaping ([String: Any]) -> Void) {
-        webview.callAsyncJavaScript("return await window.captureLayout(scene)", arguments: ["scene": scene], in: nil, in: .page) { result in
+        let size = viewports[viewportIndex]
+        webview.callAsyncJavaScript("await window.waitForLayoutViewport(width, height); return await window.captureLayout(scene)",
+            arguments: ["scene": scene, "width": size[0], "height": size[1]], in: nil, in: .page) { result in
             switch result {
             case .failure(let error): self.fail(error)
             case .success(let value):

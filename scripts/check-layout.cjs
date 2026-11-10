@@ -62,6 +62,16 @@ run(electron, [path.join(harness, 'electron.cjs'), reference, output, 'legacy'])
 run(electron, [path.join(harness, 'electron.cjs'), root, output, 'chromium']);
 run(path.join(output, 'webkit'), [root, output, 'webkit']);
 const read = name => JSON.parse(fs.readFileSync(path.join(output, `${name}.json`)));
+for (const name of ['legacy', 'chromium', 'webkit']) {
+    for (const [width, height] of config.viewports) {
+        for (const scene of config.scenes) {
+            const captured = read(name).scenes[`${width}x${height}-${scene}`];
+            if (captured?.width !== width || captured?.height !== height) {
+                throw new Error(`${name} did not retain requested viewport ${width}x${height} for ${scene}`);
+            }
+        }
+    }
+}
 const failures = [
     ...compare(read('legacy'), read('chromium'), config.legacyTolerance).map(message => `Legacy: ${message}`),
     ...compare(read('chromium'), read('webkit'), config.engineTolerance).map(message => `WebKit: ${message}`),

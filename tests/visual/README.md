@@ -29,6 +29,10 @@ the unmodified reference in WebKit and requires the strict parity check to fail.
 For current Chromium and WebKit, it also hides arrowhead fill deliberately and
 requires the rendered arrow checks to fail.
 
+Fixture windows can extend beyond the runner's display, and captures wait for the
+exact requested content size. Every report must retain that size; a smaller CI
+display must not silently shrink either reference or current windows.
+
 Arrow checks read actual browser styles and pixels decoded from the captured PNG.
 The sample lies inside the filled triangle and off the shaft, so removing
 `.line-head { fill: currentColor }` fails even when its `d` and `transform` remain
