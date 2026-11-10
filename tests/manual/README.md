@@ -106,8 +106,8 @@ behavior; perform and record those native UI checks separately.
 
 ## Remaining macOS folder-picker observation
 
-Use the isolated test app, with no terminals running. Open New terminal, type
-`.cache/final-mac-pickers/project ไทย 工作 🚀` as an absolute working directory,
+Use the isolated test app, with no terminals running. Open New terminal and enter the full path to
+`.cache/final-mac-pickers/project ไทย 工作 🚀` inside your checkout as the working directory,
 and click Browse. Observe that the native directory picker starts there; cancel
 it and confirm the field is unchanged. Browse again and select its `picked folder`
 subdirectory; confirm the full selected path fills the field. Cancel the terminal
