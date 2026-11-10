@@ -103,3 +103,17 @@ Stdin EOF also restores the clipboard. Keep the process alive until it reports
 failure happens before mutation. A command failure keeps the saved snapshot for
 restoration. The guard's successful checks do not prove board/xterm clipboard
 behavior; perform and record those native UI checks separately.
+
+## Remaining macOS folder-picker observation
+
+Use the isolated test app, with no terminals running. Open New terminal, type
+`.cache/final-mac-pickers/project ไทย 工作 🚀` as an absolute working directory,
+and click Browse. Observe that the native directory picker starts there; cancel
+it and confirm the field is unchanged. Browse again and select its `picked folder`
+subdirectory; confirm the full selected path fills the field. Cancel the terminal
+creation dialog and close the app. No provider or terminal needs to start.
+
+Computer Use could not locate the candidate window for this last observation;
+that failed attempt is not recorded as a native dialog pass. The user already
+verified Finder-to-canvas image drop. See the separate [Windows 11 checklist](windows11-checklist.md)
+for the clean-machine and eight-step compatibility checks.
