@@ -61,7 +61,20 @@ pub fn windows(root: &Path, cargo: &str) -> Result<(), String> {
     let target = target_dir(root, cargo)?;
     run(
         root,
-        Command::new(cargo).args(["build", "--locked", "-p", "tc-hook", "--release", "--target", TARGET]),
+        Command::new(cargo)
+            .args([
+                "build",
+                "--locked",
+                "-p",
+                "tc-hook",
+                "--release",
+                "--target",
+                TARGET,
+                "--config",
+            ])
+            .arg(format!(
+                "target.{TARGET}.rustflags=[\"-C\",\"target-feature=+crt-static\"]"
+            )),
     )?;
     let hook = target.join(TARGET).join("release/tc-hook.exe");
     let binaries = root.join("src-tauri/binaries");
@@ -77,6 +90,19 @@ pub fn windows(root: &Path, cargo: &str) -> Result<(), String> {
             .args(["--", "--locked"]),
     )?;
     let built = target.join(TARGET).join("release");
+    // CI has the MSVC redistributable installed. Inspect the actual shipping
+    // binaries so a sidecar cannot silently depend on that developer machine.
+    for binary in [built.join("Terminal Canvas.exe"), hook.clone()] {
+        run(
+            root,
+            Command::new("node")
+                .args([
+                    "-e",
+                    "const fs=require('node:fs'); const {imports}=require('./scripts/package-windows-test.cjs'); console.log(JSON.stringify({binary:process.argv[1],imports:imports(fs.readFileSync(process.argv[1]))}));",
+                ])
+                .arg(binary),
+        )?;
+    }
     let release = root.join("release");
     std::fs::create_dir_all(&release).map_err(|error| error.to_string())?;
     let installer = format!("Terminal Canvas_{}_x64-setup.exe", env!("CARGO_PKG_VERSION"));
