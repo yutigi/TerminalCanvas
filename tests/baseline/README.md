@@ -62,3 +62,13 @@ and a separate original portable EXE for later Windows 11 compatibility checks.
 It runs when the baseline harness/reference changes and can also be dispatched
 after its workflow is available on the default branch. The first native execution
 is required before treating this implementation as recorded baseline evidence.
+
+The [first recorded Windows baseline](../../docs/windows-migration-baseline.md)
+passed the complete native sequence. To compare both development hosts on the
+same runner, dispatch the workflow with `compare_rust=true`. Locally on Windows,
+build the Rust `e2e` app/hook and install root dependencies, then run the capture
+with `--compare-rust`, followed by `node scripts/measure-windows-rust.cjs`.
+This mode uses the same CDP readiness observer for both hosts, rejects mismatched
+viewports or source revisions, and uploads `comparison.json` plus native samples.
+Its instrumentation is included in timing/memory figures; release and clean
+Windows 11 validation remain separate.

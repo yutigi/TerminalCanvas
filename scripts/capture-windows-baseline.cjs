@@ -20,15 +20,17 @@ const report = { schema: 1, status: 'incomplete', capturedAt: new Date().toISOSt
 let ownsOutput = false;
 const save = () => { if (ownsOutput) fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n'); };
 
-async function run(name, executable, args, { cwd = reference, timeout = 120000, env = {} } = {}) {
+async function run(name, executable, args, { cwd = reference, timeout = 120000, env = {}, onSpawn } = {}) {
     console.log(`Baseline: ${name}`);
     const log = path.join(output, `${name}.log`);
     const stream = fs.createWriteStream(log);
     const childEnv = { ...process.env, ...env };
     delete childEnv.ELECTRON_RUN_AS_NODE;
-    if (Object.hasOwn(env, 'TC_BASELINE_SPAWN_MS')) childEnv.TC_BASELINE_SPAWN_MS = String(Date.now());
+    const startedAt = Date.now();
+    if (Object.hasOwn(env, 'TC_BASELINE_SPAWN_MS')) childEnv.TC_BASELINE_SPAWN_MS = String(startedAt);
     const child = spawn(executable, args, { cwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false });
     child.stdout.pipe(stream, { end: false }); child.stderr.pipe(stream, { end: false });
+    if (onSpawn) onSpawn(child, startedAt);
     let timedOut = false;
     const timer = setTimeout(() => {
         timedOut = true;
@@ -88,11 +90,34 @@ async function main() {
         await run(`restoration-${phase}`, electron, [bootstrap, reference, output, phase, `--restoration-smoke=${phase}`], { timeout: 120000 });
     }
     report.runs = [];
+    const comparison = process.argv.includes('--compare-rust')
+        ? require('../tests/e2e/harness.cjs') : null;
+    if (comparison) report.measurementProtocol = 'External CDP discovery, page attachment, and renderer-ready observation; same observer for both hosts';
     for (let attempt = 1; attempt <= 3; attempt++) {
         const folder = path.join(output, `measure-${attempt}`);
+        const port = comparison && await comparison.freePort();
+        let observed, observedStart;
         await run(`measure-${attempt}`, electron, [bootstrap, reference, folder, 'measure'],
-            { timeout: 120000, env: { TC_BASELINE_SPAWN_MS: String(Date.now()) } });
+            { timeout: 120000, env: { TC_BASELINE_SPAWN_MS: String(Date.now()), ...(port ? { TC_BENCHMARK_PORT: String(port) } : {}) },
+                onSpawn: comparison && ((child, startedAt) => {
+                    observedStart = startedAt;
+                    observed = (async () => {
+                        await comparison.until(() => {
+                            if (child.exitCode !== null || child.signalCode) throw Object.assign(new Error('Reference exited before CDP'), { terminal: true });
+                            return comparison.probeCdp(port);
+                        }, 'Reference benchmark CDP did not start.', 30000);
+                        return comparison.connectRenderer(port, 'file:');
+                    })();
+                    observed.catch(() => {});
+                }) });
         const metrics = JSON.parse(fs.readFileSync(path.join(folder, 'metrics.json'), 'utf8'));
+        if (observed) {
+            const connection = await observed;
+            metrics.nativeReadyMs = metrics.startupMs;
+            metrics.startupMs = connection.readyAt - observedStart;
+            assert.deepEqual(connection.errors, [], 'Reference benchmark renderer errors');
+            await connection.browser.close().catch(() => {});
+        }
         assert.ok(metrics.startupMs > 0 && metrics.startupMs < 60000, 'Startup timing must reach a ready renderer');
         fs.copyFileSync(path.join(folder, 'idle.png'), path.join(output, `idle-${attempt}.png`));
         const gone = await run(`cleanup-${attempt}`, 'powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',

@@ -2,9 +2,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
 const { app, clipboard } = require('electron');
 const { guardRestorationEnvironment, baselineShellInput, isolatePowerShellArguments } = require('./support.cjs');
+const { sampleProcessTree } = require('./memory.cjs');
 const [reference, output, mode] = process.argv.slice(2);
 assert.equal(process.platform, 'win32', 'The baseline requires native Windows');
 assert.ok(['smoke', 'save', 'reopen', 'measure'].includes(mode));
@@ -68,6 +68,11 @@ if (mode === 'smoke') {
 }
 
 if (mode === 'measure') {
+    if (process.env.TC_BENCHMARK_PORT) {
+        app.commandLine.appendSwitch('remote-debugging-port', process.env.TC_BENCHMARK_PORT);
+        app.commandLine.appendSwitch('disable-background-timer-throttling');
+        app.commandLine.appendSwitch('disable-renderer-backgrounding');
+    }
     fs.mkdirSync(output, { recursive: true });
     fs.mkdirSync(path.join(output, 'profile'), { recursive: true });
     app.setPath('userData', path.join(output, 'profile'));
@@ -108,26 +113,10 @@ if (mode === 'measure') {
         const seeds = [...new Set([process.pid, ...app.getAppMetrics().map(entry => entry.pid), ...shells])];
         const samples = [];
         for (let index = 0; index < 3; index++) {
-            const script = `$ErrorActionPreference='Stop'; $all=@(Get-CimInstance Win32_Process);
-$ids=[Collections.Generic.HashSet[int]]::new(); ${seeds.map(pid => `[void]$ids.Add(${pid})`).join('; ')};
-$observer=[Collections.Generic.HashSet[int]]::new(); [void]$observer.Add($PID);
-do { $added=$false; foreach($p in $all) {
-    if($ids.Contains([int]$p.ParentProcessId) -and $ids.Add([int]$p.ProcessId)) { $added=$true }
-    if($observer.Contains([int]$p.ParentProcessId) -and $observer.Add([int]$p.ProcessId)) { $added=$true }
-} } while($added);
-@($all | Where-Object { $ids.Contains([int]$_.ProcessId) -and -not $observer.Contains([int]$_.ProcessId) } | ForEach-Object {
-    $p=Get-Process -Id $_.ProcessId -ErrorAction Stop;
-    [pscustomobject]@{ pid=$p.Id; name=$p.ProcessName; privateBytes=$p.PrivateMemorySize64; workingSetBytes=$p.WorkingSet64 }
-}) | ConvertTo-Json -Compress`;
-            const snapshot = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
-                { encoding: 'utf8', timeout: 30000, windowsHide: true });
-            assert.ifError(snapshot.error);
-            assert.equal(snapshot.status, 0, snapshot.stderr);
-            const processes = JSON.parse(snapshot.stdout.replace(/^\uFEFF/, ''));
-            assert.ok(Array.isArray(processes) && processes.length >= 5, 'The native process tree must include the host and four shells');
-            for (const pid of shells) assert.ok(processes.some(process => process.pid === pid), `Missing shell ${pid}`);
-            samples.push({ processes, privateBytes: processes.reduce((sum, process) => sum + process.privateBytes, 0),
-                workingSetBytes: processes.reduce((sum, process) => sum + process.workingSetBytes, 0) });
+            const sample = sampleProcessTree(seeds);
+            assert.ok(sample.processes.length >= 5, 'The native tree must include the host and four shells');
+            for (const pid of [process.pid, ...shells]) assert.ok(sample.processes.some(process => process.pid === pid), `Missing required process ${pid}`);
+            samples.push(sample);
             await new Promise(resolve => setTimeout(resolve, 500));
         }
         fs.writeFileSync(path.join(output, 'metrics.json'), JSON.stringify({ startupMs, shells, samples,

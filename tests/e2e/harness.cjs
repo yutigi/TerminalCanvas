@@ -33,6 +33,18 @@ async function freePort() {
 async function probeCdp(port, request = fetch) {
     return (await request(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) })).ok;
 }
+async function connectRenderer(port, prefix) {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 10000 });
+    try {
+        const page = await until(() => browser.contexts().flatMap(context => context.pages())
+            .find(page => page.url().startsWith(prefix)), 'The main webview did not load.');
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        await page.waitForFunction(() => document.querySelector('.profile-button') && typeof workspace !== 'undefined' && typeof ready !== 'undefined' && ready,
+            null, { polling: 25 });
+        return { browser, page, errors, readyAt: Date.now() };
+    } catch (error) { await browser.close().catch(() => {}); throw error; }
+}
 async function launch({ phase, clean = false, env = {}, scale } = {}) {
     assert.equal(process.platform, 'win32', 'The E2E harness requires Windows WebView2.');
     const profile = path.join(root, '.cache', phase ? 'tauri-restoration-profile' : 'tauri-smoke-profile');
@@ -43,6 +55,7 @@ async function launch({ phase, clean = false, env = {}, scale } = {}) {
     const port = await freePort();
     const args = [`--remote-debugging-port=${port}`, '--disable-background-timer-throttling', '--disable-renderer-backgrounding'];
     if (scale) args.push(`--force-device-scale-factor=${scale}`);
+    const startedAt = Date.now();
     const child = spawn(executable, [phase ? `--restoration-smoke=${phase}` : '--smoke-test'], {
         cwd: root, env: { ...process.env, ...env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: args.join(' ') },
         stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false
@@ -60,18 +73,16 @@ async function launch({ phase, clean = false, env = {}, scale } = {}) {
             if (terminal) throw Object.assign(spawnError || new Error(`Host exited before CDP was ready:\n${logs}`), { terminal: true });
             return probeCdp(port);
         }, 'WebView2 did not expose CDP.', 30000);
-        browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 10000 });
-        const page = await until(() => browser.contexts().flatMap(context => context.pages())
-            .find(page => page.url().startsWith('http://tauri.localhost/')), 'The main webview did not load.');
-        const errors = [];
-        page.on('pageerror', error => errors.push(error.message));
-        await page.waitForFunction(() => document.querySelector('.profile-button') && typeof workspace !== 'undefined');
+        const connection = await connectRenderer(port, 'http://tauri.localhost/');
+        browser = connection.browser;
+        const page = connection.page;
+        const errors = connection.errors;
         await page.evaluate(() => {
             window.__e2eEvents = [];
             window.terminalCanvas.onEvent(event => window.__e2eEvents.push(event));
         });
         return {
-            page, child, profile, errors,
+            page, child, profile, errors, startupMs: connection.readyAt - startedAt,
             logs: () => logs,
             state: () => page.evaluate(() => window.__TAURI__.core.invoke('e2e_state')),
             output: id => page.evaluate(id => window.__e2eEvents.filter(event => event.type === 'data' && (!id || event.id === id))
@@ -143,4 +154,4 @@ async function screenshot(page, name) {
     return file;
 }
 const psQuote = value => "'" + value.replaceAll("'", "''") + "'";
-module.exports = { launch, until, probeCdp, hasOutputLine, ensureFocus, sendInput, click, key, screenshot, psQuote, root };
+module.exports = { launch, until, probeCdp, connectRenderer, freePort, hasOutputLine, ensureFocus, sendInput, click, key, screenshot, psQuote, root };

@@ -1,6 +1,11 @@
 name: Windows JavaScript baseline
 on:
   workflow_dispatch:
+    inputs:
+      compare_rust:
+        description: Build the Rust test host and measure both development hosts on this runner
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/windows-baseline.yml
@@ -28,8 +33,24 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Prepare the paired Rust measurement
+        if: inputs.compare_rust
+        run: |
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p tc-hook
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p terminal-canvas --features e2e
       - name: Capture the immutable pre-migration host
-        run: node scripts/capture-windows-baseline.cjs
+        id: reference
+        run: |
+          if ('${{ inputs.compare_rust }}' -eq 'true') { node scripts/capture-windows-baseline.cjs --compare-rust }
+          else { node scripts/capture-windows-baseline.cjs }
+      - name: Measure the matched Rust development host
+        if: inputs.compare_rust
+        run: node scripts/measure-windows-rust.cjs
       - name: Upload baseline measurements and logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -37,10 +58,12 @@ jobs:
           name: windows-electron-baseline
           path: |
             .cache/windows-baseline/report.json
+            .cache/windows-baseline/comparison.json
             .cache/windows-baseline/*.log
             .cache/windows-baseline/*.png
           if-no-files-found: error
       - name: Upload the original portable app for Windows 11 interoperability checks
+        if: always() && steps.reference.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: windows-electron-reference
