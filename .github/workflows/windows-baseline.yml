@@ -102,7 +102,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $relocated = Join-Path $env:RUNNER_TEMP 'TC kit ไทย'
           Move-Item -LiteralPath .cache/windows11-e2e-kit -Destination $relocated
-          & (Join-Path $relocated 'Run-Checks.ps1')
+          powershell.exe -NoProfile -File (Join-Path $relocated 'Run-Checks.ps1')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload only the validated runtime
         uses: actions/upload-artifact@v4
