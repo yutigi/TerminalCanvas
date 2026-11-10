@@ -10,7 +10,7 @@ const target = 'x86_64-pc-windows-msvc';
 function imports(bytes) {
     assert.equal(bytes.toString('ascii', 0, 2), 'MZ');
     const pe = bytes.readUInt32LE(0x3c);
-    assert.equal(bytes.readUInt16LE(pe + 4), 0x8664, 'The test runtime must be x64');
+    assert.equal(bytes.readUInt16LE(pe + 4), 0x8664, 'The Windows binary must be x64');
     const count = bytes.readUInt16LE(pe + 6), optional = pe + 24;
     assert.equal(bytes.readUInt16LE(optional), 0x20b);
     const sectionStart = optional + bytes.readUInt16LE(pe + 20);
@@ -28,7 +28,7 @@ function imports(bytes) {
         const name = offset(bytes.readUInt32LE(descriptor + 12));
         result.push(bytes.toString('ascii', name, bytes.indexOf(0, name)));
     }
-    assert.ok(!result.some(name => /^(?:vcruntime|msvcp|ucrtbased)/i.test(name)), 'The portable test build must use the static MSVC runtime');
+    assert.ok(!result.some(name => /^(?:vcruntime|msvcp|ucrtbased)/i.test(name)), 'The Windows binary must not depend on the MSVC redistributable or debug runtime');
     return result;
 }
 
