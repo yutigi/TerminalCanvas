@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { directoryReports, processDirectory, watchDirectory } = require('../src/terminal-cwd.cjs');
+// First-use CLR/PowerShell startup exceeded 10s on a fresh Windows CI runner.
+// Keep semantic assertions bounded without treating cold startup as a prompt failure.
+const POWERSHELL_TIMEOUT = 30000;
 
 test('directory reports handle every split, spaces, Unicode, quotes, BEL and ST', () => {
     for (const end of ['\x07', '\x1b\\']) {
@@ -87,7 +90,7 @@ test('PowerShell integration preserves the custom prompt, failed status and nati
     const script = `function global:prompt { "CUSTOM:$?:$global:LASTEXITCODE>" }; ${bootstrap}
         $global:LASTEXITCODE = 37; Write-Error 'expected failure' -ErrorAction SilentlyContinue
         $result = prompt; Write-Output ('RESULT=' + $result + ';LAST=' + $global:LASTEXITCODE)`;
-    const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: POWERSHELL_TIMEOUT });
     assert.equal(result.status, 0, result.error?.message || result.stderr);
     assert.match(result.stdout, /RESULT=CUSTOM:False:37>;LAST=37/);
     const reports = [];
@@ -136,7 +139,7 @@ for (const executable of ['powershell.exe', 'pwsh.exe']) {
             Write-Output ('LINE2=' + $line)
             function global:PSConsoleHostReadLine { throw 'reader failed' }
             $result = prompt`;
-        const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+        const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: POWERSHELL_TIMEOUT });
         if (executable === 'pwsh.exe' && result.error?.code === 'ENOENT') return t.skip('PowerShell 7 is not installed.');
         assert.equal(result.status, 0, result.error?.message || result.stderr);
         assert.equal(result.stderr, '');
@@ -160,7 +163,7 @@ for (const executable of ['powershell.exe', 'pwsh.exe']) {
                 ${bootstrap}
                 $result = prompt
                 ${reader ? "try { PSConsoleHostReadLine } catch { Write-Output ('CAUGHT=' + $_.Exception.Message) }" : ''}`;
-            const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+            const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: POWERSHELL_TIMEOUT });
             if (executable === 'pwsh.exe' && result.error?.code === 'ENOENT') return t.skip('PowerShell 7 is not installed.');
             assert.equal(result.status, 0, result.error?.message || result.stderr);
             assert.equal(result.stderr, '');
@@ -188,7 +191,7 @@ for (const executable of ['powershell.exe', 'pwsh.exe']) {
             Write-Error 'expected failure' -ErrorAction SilentlyContinue
             $result = prompt
             Write-Output ('RESULT2=' + $result + ';LAST=' + $global:LASTEXITCODE)`;
-        const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+        const result = spawnSync(executable, ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: POWERSHELL_TIMEOUT });
         if (executable === 'pwsh.exe' && result.error?.code === 'ENOENT') return t.skip('PowerShell 7 is not installed.');
         assert.equal(result.status, 0, result.error?.message || result.stderr);
         assert.equal(result.stderr, '');

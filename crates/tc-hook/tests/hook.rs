@@ -23,7 +23,9 @@ fn temp_folder(label: &str) -> PathBuf {
         .as_nanos();
     let folder = std::env::temp_dir().join(format!("tc-hook-{label}-{nanos}"));
     std::fs::create_dir_all(&folder).unwrap();
-    folder.canonicalize().unwrap()
+    // Keep shell-facing Windows paths compatible with cmd/PowerShell; std::canonicalize
+    // adds a verbatim namespace prefix that those command-discovery paths cannot use.
+    dunce::canonicalize(folder).unwrap()
 }
 
 /// The JSON event inside `\x1b]633;TC;<base64>\x07`.
@@ -65,7 +67,7 @@ fn emit_matches_the_javascript_hook() {
         assert!(output.status.success(), "{args:?}");
         let mut event = decode_report(&output.stdout);
         if let Some(cwd) = event.get("cwd").and_then(Value::as_str) {
-            let same = Path::new(cwd).canonicalize().ok() == Some(folder.clone());
+            let same = dunce::canonicalize(cwd).ok() == Some(folder.clone());
             event["cwd"] = json!(if same { "{{CWD}}" } else { "UNEXPECTED" });
         }
         // Field order matters too: compare the JSON text.
@@ -204,7 +206,7 @@ fn bash_wrappers_report_manual_launches_through_tc_hook() {
     }
     let integration = tc_pty::integration::prepare(
         &folder.join("integration"),
-        Path::new(HOOK),
+        dunce::simplified(Path::new(HOOK)),
         Platform::current(),
         "/bin/bash",
     )
@@ -254,7 +256,7 @@ fn bash_wrappers_report_manual_launches_through_tc_hook() {
     assert!(
         launches
             .iter()
-            .all(|launch| Path::new(launch["cwd"].as_str().unwrap()).canonicalize().unwrap() == folder)
+            .all(|launch| dunce::canonicalize(launch["cwd"].as_str().unwrap()).unwrap() == folder)
     );
     let codes: Vec<&Value> = ends.iter().map(|end| &end["exitCode"]).collect();
     assert_eq!(codes, [&json!(0), &json!(0), &json!(4)]);
@@ -272,7 +274,7 @@ fn the_claude_hook_command_records_the_session() {
     let folder = temp_folder("claude-hook");
     let integration = tc_pty::integration::prepare(
         &folder.join("integration"),
-        Path::new(HOOK),
+        dunce::simplified(Path::new(HOOK)),
         Platform::current(),
         "/bin/bash",
     )
@@ -350,8 +352,11 @@ mod windows {
         let folder = temp_folder("powershell");
         std::fs::write(folder.join("claude.cmd"), "@echo off\r\necho %*\r\nexit /b 0\r\n").unwrap();
         let settings = folder.join("settings with ' quote.json");
-        let source = tc_pty::shell::powershell_source(&settings.to_string_lossy())
-            + &format!("\nclaude\nclaude --resume {ID} --name 'name with spaces'\nprompt\n");
+        let fake = tc_pty::shell::ps_quote(&folder.join("claude.cmd").to_string_lossy());
+        let source = format!(
+            "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\nif ((Get-Command claude -CommandType Application -ErrorAction Stop).Source -ine {fake}) {{ throw 'The controlled Claude stand-in did not resolve.' }}\n{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nprompt\n",
+            tc_pty::shell::powershell_source(&settings.to_string_lossy())
+        );
         let output = powershell("powershell.exe", &source, &[], Some(&folder)).unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
@@ -365,8 +370,16 @@ mod windows {
             launches[0]["sessionId"].as_str().unwrap()
         ));
         assert_eq!(launches[1]["sessionId"], ID);
-        assert!(stdout.contains("name with spaces"), "{stdout}");
-        assert!(stdout.contains("settings with"), "{stdout}");
+        assert!(
+            stdout.contains("name with spaces"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout.contains("settings with"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         std::fs::remove_dir_all(folder).unwrap();
     }
 
@@ -376,7 +389,7 @@ mod windows {
         let folder = temp_folder("utf8");
         let integration = tc_pty::integration::prepare(
             &folder.join("integration"),
-            Path::new(HOOK),
+            dunce::simplified(Path::new(HOOK)),
             Platform::Windows,
             "powershell.exe",
         )
@@ -400,6 +413,8 @@ mod windows {
             .envs(integration.env.iter().cloned())
             .env("TC_LAUNCH_TOKEN", ID)
             .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
         child
@@ -408,8 +423,17 @@ mod windows {
             .unwrap()
             .write_all(input.to_string().as_bytes())
             .unwrap();
-        assert!(child.wait().unwrap().success());
-        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&integration.session_file).unwrap()).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let text = std::fs::read_to_string(&integration.session_file).unwrap_or_else(|error| {
+            panic!(
+                "Hook did not write {}: {error}; stdout={}; stderr={}",
+                integration.session_file.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        });
+        let saved: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
             saved,
             json!({ "provider": "claude", "sessionId": ID, "cwd": cwd, "token": ID })

@@ -12,6 +12,7 @@ serde_json.workspace = true
 tc-core.workspace = true
 
 [dev-dependencies]
+dunce.workspace = true
 tc-pty.workspace = true
 
 [lints]
