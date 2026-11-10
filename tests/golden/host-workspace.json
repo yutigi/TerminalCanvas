@@ -1,0 +1,142 @@
+{
+  "autosave": {
+    "version": 3,
+    "name": "Legacy image workspace ไทย",
+    "camera": {
+      "x": 17,
+      "y": -43,
+      "z": 0.65
+    },
+    "cards": [
+      {
+        "id": "legacy-card",
+        "type": "terminal",
+        "profile": "claude",
+        "title": "Claude Code",
+        "cwd": "C:\\Users\\tc\\Legacy ไทย",
+        "command": "claude",
+        "session": {
+          "provider": "claude",
+          "sessionId": "12345678-1234-4321-9876-123456789abc",
+          "cwd": "C:\\Users\\tc\\Legacy ไทย"
+        },
+        "x": 0,
+        "y": 0,
+        "w": 660,
+        "h": 430,
+        "groups": [
+          "legacy-group"
+        ]
+      }
+    ],
+    "items": [
+      {
+        "id": "legacy-note",
+        "type": "note",
+        "x": 700,
+        "y": 20,
+        "w": 200,
+        "h": 200,
+        "text": "Shared layout\nLegacy and Rust",
+        "color": "green",
+        "fontSize": "large",
+        "groups": [
+          "legacy-group"
+        ]
+      },
+      {
+        "id": "legacy-image",
+        "type": "image",
+        "x": 700,
+        "y": 300,
+        "w": 160,
+        "h": 120,
+        "asset": "4258699ba0181027db1c32e7d9360339ccf87658015a24cd1424a0a5bd1b329c.png"
+      },
+      {
+        "id": "legacy-wire",
+        "type": "line",
+        "start": {
+          "id": "legacy-card"
+        },
+        "end": {
+          "id": "legacy-note"
+        },
+        "arrow": true
+      }
+    ]
+  },
+  "portable": {
+    "version": 3,
+    "name": "Legacy image workspace ไทย",
+    "camera": {
+      "x": 17,
+      "y": -43,
+      "z": 0.65
+    },
+    "cards": [
+      {
+        "id": "legacy-card",
+        "type": "terminal",
+        "profile": "claude",
+        "title": "Claude Code",
+        "cwd": "C:\\Users\\tc\\Legacy ไทย",
+        "command": "claude",
+        "session": {
+          "provider": "claude",
+          "sessionId": "12345678-1234-4321-9876-123456789abc",
+          "cwd": "C:\\Users\\tc\\Legacy ไทย"
+        },
+        "x": 0,
+        "y": 0,
+        "w": 660,
+        "h": 430,
+        "groups": [
+          "legacy-group"
+        ]
+      }
+    ],
+    "items": [
+      {
+        "id": "legacy-note",
+        "type": "note",
+        "x": 700,
+        "y": 20,
+        "w": 200,
+        "h": 200,
+        "text": "Shared layout\nLegacy and Rust",
+        "color": "green",
+        "fontSize": "large",
+        "groups": [
+          "legacy-group"
+        ]
+      },
+      {
+        "id": "legacy-image",
+        "type": "image",
+        "x": 700,
+        "y": 300,
+        "w": 160,
+        "h": 120,
+        "asset": "4258699ba0181027db1c32e7d9360339ccf87658015a24cd1424a0a5bd1b329c.png"
+      },
+      {
+        "id": "legacy-wire",
+        "type": "line",
+        "start": {
+          "id": "legacy-card"
+        },
+        "end": {
+          "id": "legacy-note"
+        },
+        "arrow": true
+      }
+    ],
+    "assets": {
+      "4258699ba0181027db1c32e7d9360339ccf87658015a24cd1424a0a5bd1b329c.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQMgkDAAD4AJ3MaiF4AAAAAElFTkSuQmCC"
+    }
+  },
+  "imageFiles": {
+    "4258699ba0181027db1c32e7d9360339ccf87658015a24cd1424a0a5bd1b329c.png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQMgkDAAD4AJ3MaiF4AAAAAElFTkSuQmCC"
+  }
+}

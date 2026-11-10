@@ -1,0 +1,386 @@
+{
+  "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+  "emit": [
+    {
+      "args": [
+        "launch",
+        "claude",
+        "12345678-1234-4321-9876-123456789abc"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "launch",
+        "provider": "claude",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "{{CWD}}",
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "launch",
+        "codex",
+        ""
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "launch",
+        "provider": "codex",
+        "sessionId": "",
+        "cwd": "{{CWD}}",
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "launch"
+      ],
+      "token": null,
+      "event": {
+        "type": "launch",
+        "cwd": "{{CWD}}"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "0"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": 0,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "127"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": 127,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        ""
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": 0,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "abc"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": null,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        " 12 "
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": 12,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "0x1f"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": 31,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "1e3"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": 1000,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "-1"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": -1,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "Infinity"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": null,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end",
+        "2.5"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": 2.5,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "end"
+      ],
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "event": {
+        "type": "end",
+        "exitCode": null,
+        "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+      }
+    },
+    {
+      "args": [
+        "other",
+        "5"
+      ],
+      "token": null,
+      "event": {
+        "type": "other",
+        "exitCode": 5
+      }
+    }
+  ],
+  "record": [
+    {
+      "name": "valid",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": true,
+      "written": "{\"provider\":\"claude\",\"sessionId\":\"12345678-1234-4321-9876-123456789abc\",\"cwd\":\"/project\",\"token\":\"0f1e2d3c-4b5a-4968-8776-655443322110\"}"
+    },
+    {
+      "name": "uppercase ID",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789ABC",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": true,
+      "written": "{\"provider\":\"claude\",\"sessionId\":\"12345678-1234-4321-9876-123456789abc\",\"cwd\":\"/project\",\"token\":\"0f1e2d3c-4b5a-4968-8776-655443322110\"}"
+    },
+    {
+      "name": "codex provider",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "codex",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": true,
+      "written": "{\"provider\":\"codex\",\"sessionId\":\"12345678-1234-4321-9876-123456789abc\",\"cwd\":\"/project\",\"token\":\"0f1e2d3c-4b5a-4968-8776-655443322110\"}"
+    },
+    {
+      "name": "unknown provider",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "gemini",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "other event",
+      "input": {
+        "hook_event_name": "SubagentStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "bad ID",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "bad",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "missing cwd",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "cwd with a newline",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/a\nb",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "Unicode cwd",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "C:\\ไทย\\工作\\🚀",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": true,
+      "written": "{\"provider\":\"claude\",\"sessionId\":\"12345678-1234-4321-9876-123456789abc\",\"cwd\":\"C:\\\\ไทย\\\\工作\\\\🚀\",\"token\":\"0f1e2d3c-4b5a-4968-8776-655443322110\"}"
+    },
+    {
+      "name": "missing token",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": null,
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "bad token",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "not-a-token",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "missing session file",
+      "input": {
+        "hook_event_name": "SessionStart",
+        "session_id": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/project",
+        "transcript_path": "/private",
+        "secret": "credential"
+      },
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": false,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "number input",
+      "input": 5,
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    },
+    {
+      "name": "array input",
+      "input": [],
+      "provider": "claude",
+      "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "sessionFile": true,
+      "recorded": false,
+      "written": null
+    }
+  ]
+}

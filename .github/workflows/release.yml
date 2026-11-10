@@ -1,0 +1,59 @@
+# Build reviewable Windows artifacts. Publishing and clean-machine validation are separate gates.
+name: Windows release artifacts
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Install development dependencies
+        run: npm ci
+      - name: Validate the source and golden fixtures
+        run: cargo xtask check
+      - name: Build the hook and isolated E2E host
+        run: |
+          cargo build -p tc-hook
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p terminal-canvas --features e2e
+      - name: Require ten consecutive desktop and restoration passes
+        timeout-minutes: 90
+        run: |
+          for ($attempt = 1; $attempt -le 10; $attempt++) {
+            Write-Host "Desktop E2E run $attempt of 10"
+            npm run test:e2e
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Install the pinned stable Tauri 2 CLI
+        run: cargo install tauri-cli --version 2.12.4 --locked
+      - name: Build the NSIS installer and portable zip
+        # package-windows builds release binaries without the test-only feature.
+        run: cargo xtask package-windows
+      - name: Upload Windows distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-canvas-windows
+          path: |
+            release/*-setup.exe
+            release/*_portable.zip
+          if-no-files-found: error
+      - name: Upload desktop screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-e2e
+          path: .cache/tauri-*.png
+          if-no-files-found: ignore

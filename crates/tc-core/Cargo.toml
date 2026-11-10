@@ -1,0 +1,20 @@
+[package]
+name = "tc-core"
+description = "Terminal Canvas host logic with no UI or process dependencies: workspace validation, terminal metadata, image assets, and recovery state."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ada-url.workspace = true
+base64.workspace = true
+dirs.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

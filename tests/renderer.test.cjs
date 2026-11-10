@@ -4,7 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { randomUUID } = require('node:crypto');
-const { PROFILES, createWorkspace, createCard } = require('../src/workspace.cjs');
+const fixture = require('./golden/renderer.json');
+const PROFILES = fixture.profiles;
+// Clone host-captured JSON for UI state tests; validation and factory parity live in Rust.
+const createWorkspace = () => structuredClone(fixture.workspace);
+const createCard = (options = {}) => ({ ...structuredClone(fixture.cards[options.profile || 'shell']), ...options, id: randomUUID() });
 
 // A small DOM boundary substitute checks renderer boot/state without claiming visual coverage.
 class Element {

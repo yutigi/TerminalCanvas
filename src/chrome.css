@@ -1,0 +1,132 @@
+/* macOS WebKit and Chromium round "normal" and fractional line heights differently.
+   Keep the desktop controls on whole CSS pixel line boxes; canvas text and
+   xterm retain their own typography. renderer.js enables this sheet on macOS. */
+:where(.sidebar, .topbar, .canvas-bar, .empty-state, .canvas-toolbar,
+    .element-tools, footer, dialog, .card-header, .card-directory,
+    .terminal-placeholder, .minimap),
+:where(.sidebar, .topbar, .canvas-bar, .empty-state, .canvas-toolbar,
+    .element-tools, footer, dialog, .card-header, .card-directory,
+    .terminal-placeholder, .minimap) :where(*) {
+    line-height: calc(1em + 2px);
+}
+
+/* An inline SVG otherwise adds the font's descent to its wrapper. */
+button {
+    appearance: none;
+}
+
+[data-icon] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.brand {
+    line-height: 19px;
+}
+
+.brand span {
+    line-height: inherit;
+}
+
+.brand .version {
+    line-height: 9px;
+}
+
+#workspace-name {
+    height: 19px;
+    line-height: 19px;
+}
+
+.search {
+    height: 32px;
+    flex-shrink: 0;
+}
+
+.search input {
+    height: 14px;
+    line-height: 12px;
+}
+
+/* Preserve the old compact navigation and form boxes when the sidebar shrinks. */
+.nav-item {
+    min-height: 17.5px;
+}
+
+.tiny-label {
+    height: 11.5px;
+    line-height: 11px;
+}
+
+.field-label {
+    height: 11.5px;
+    line-height: 12px;
+}
+
+.canvas-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.workspace-badge small,
+.section-label,
+.badge,
+.breadcrumb,
+.save-state,
+.empty-features,
+.card-status,
+.card-directory,
+footer {
+    line-height: 11px;
+}
+
+.plugin-card small,
+.local-label,
+.local-label span,
+.empty-eyebrow,
+.eyebrow,
+.shortcut-key {
+    line-height: 9px;
+}
+
+.empty-state h1 {
+    line-height: calc(1em + 6px);
+}
+
+.empty-state > p {
+    line-height: 23px;
+}
+
+.terminal-placeholder p,
+.dialog-description {
+    line-height: 20px;
+}
+
+h2 {
+    line-height: 28px;
+}
+
+.field-hint {
+    line-height: 16px;
+}
+
+@media (max-width: 1200px) {
+    .nav-item {
+        min-height: 17px;
+    }
+
+    .brand {
+        line-height: 16px;
+    }
+
+    .brand .version {
+        line-height: 7px;
+    }
+}
+
+@media (max-height: 800px) {
+    .empty-state h1 {
+        line-height: 34px;
+    }
+}

@@ -7,12 +7,13 @@ const { EventEmitter } = require('node:events');
 
 test('desktop launch allows a visible window and removes Electron Node mode', () => {
     const env = { ELECTRON_RUN_AS_NODE: '1', PATH: 'sample-path' };
-    let launch;
+    let launch, vendored = false;
     const scripts = path.resolve(__dirname, '../scripts');
     vm.runInNewContext(fs.readFileSync(path.join(scripts, 'start.cjs'), 'utf8'), {
         require(name) {
             if (name === 'electron') return 'electron.exe';
             if (name === 'node:path') return path;
+            if (name === './vendor.cjs') return { vendor() { vendored = true; } };
             if (name === 'node:child_process') return { spawn(...args) {
                 launch = args;
                 return new EventEmitter();
@@ -24,6 +25,7 @@ test('desktop launch allows a visible window and removes Electron Node mode', ()
         process: { env, argv: ['node', 'start.cjs', '--example'] }
     });
     assert.equal(launch[0], 'electron.exe');
+    assert.equal(vendored, true);
     assert.deepEqual(Array.from(launch[1]), [path.resolve(scripts, '..'), '--example']);
     assert.notEqual(launch[2].windowsHide, true);
     assert.equal(launch[2].env.ELECTRON_RUN_AS_NODE, undefined);
