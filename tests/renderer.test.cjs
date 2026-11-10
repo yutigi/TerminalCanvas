@@ -1091,6 +1091,29 @@ test('restarting clears the previous live directory and still sends the configur
     assert.equal(elements.get('#world').children[0].querySelector('.card-directory span').textContent, board.cards[0].cwd);
 });
 
+test('startup cursor replies reach the PTY before the start response without accepting early typing', async () => {
+    const board = createWorkspace(), card = createCard(); board.cards.push(card);
+    let finishStart;
+    const pendingStart = new Promise(resolve => { finishStart = resolve; });
+    const { context, bridge } = await boot(board, { terminals: true,
+        respond: action => action === 'start' ? pendingStart : undefined });
+    const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+    terminal.cols = 80; terminal.rows = 24; terminal.write = (_data, done) => done();
+    const sent = []; bridge.input = (id, data) => sent.push({ id, data });
+    const starting = vm.runInContext('start(workspace.cards[0])', context); await flush();
+    terminal.dataHandler('early typing\r');
+    terminal.dataHandler('\x1b[1;1R'); // No query has arrived yet.
+    bridge.event({ type: 'data', id: card.id, data: '\x1b[6' });
+    bridge.event({ type: 'data', id: card.id, data: 'n' });
+    terminal.dataHandler('still early\r');
+    terminal.dataHandler('\x1b[1;1R');
+    terminal.dataHandler('\x1b[1;1R'); // The one query must not authorize another reply.
+    assert.deepEqual(sent, [{ id: card.id, data: '\x1b[1;1R' }]);
+    finishStart({ cwd: card.cwd }); await starting;
+    terminal.dataHandler('ready typing\r');
+    assert.deepEqual(sent.at(-1), { id: card.id, data: 'ready typing\r' });
+});
+
 test('terminal hyperlinks open only on a trusted primary click, without confirmation', async () => {
     let options;
     const terminal = {

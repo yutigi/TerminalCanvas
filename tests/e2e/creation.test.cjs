@@ -73,6 +73,16 @@ test('creation uses independent live directories, queues require review, and fol
 for (const shell of ['', 'pwsh', 'cmd.exe']) {
     test(`directory displays and recovery remain independent in ${shell || 'Windows PowerShell 5.1'}`, windows, async t => {
         const h = await launch({ clean: true }); t.after(() => h.dispose());
+        if (shell === 'cmd.exe') await h.page.evaluate(() => {
+            const nativeInvoke = invoke;
+            invoke = async (action, payload) => {
+                const result = await nativeInvoke(action, payload);
+                // Keep the renderer in 'starting' while real ConPTY output arrives.
+                // xterm must answer its cursor query before the IPC reply settles.
+                if (action === 'start') await new Promise(resolve => setTimeout(resolve, 500));
+                return result;
+            };
+        });
         const project = path.join(root, '.cache', 'tauri-cwd');
         const target = path.join(project, "folder with spaces 子 %25 # it's");
         await fs.mkdir(target, { recursive: true });

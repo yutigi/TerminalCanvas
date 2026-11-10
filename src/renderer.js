@@ -413,7 +413,13 @@ function mount(card) {
             theme: { background: '#15191f', foreground: '#c8d1dc', cursor: '#c8ecb5', selectionBackground: '#52694e80', black: '#29313d', red: '#e59a91', green: '#b5d69a', yellow: '#dfc68c', blue: '#94b5e8', magenta: '#baa0da', cyan: '#91cbc7', white: '#d5dce5', brightBlack: '#667486', brightRed: '#f0b2a9', brightGreen: '#c8ecb5', brightYellow: '#f1dbab', brightBlue: '#b2cdff', brightMagenta: '#d8bcf6', brightCyan: '#b1e4df', brightWhite: '#f0f4fa' }
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
-        s.terminal.onData(data => { if (s.status === 'running') bridge.input(card.id, data); });
+        s.terminal.onData(data => {
+            // ConPTY can ask for its cursor before the start invoke resolves.
+            // Answer an observed query while keeping early user typing blocked.
+            const startupReply = s.status === 'starting' && s.startupCursorQueries > 0 && /^\x1b\[\d+;\d+R$/.test(data);
+            if (startupReply) s.startupCursorQueries--;
+            if (s.status === 'running' || startupReply) bridge.input(card.id, data);
+        });
         s.terminal.onResize(({ cols, rows }) => { if (['running', 'starting'].includes(s.status)) bridge.resize(card.id, cols, rows); });
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
@@ -499,6 +505,7 @@ async function start(card, mode = card.session ? 'resume' : 'start') {
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
     s.generation++;
+    s.startupCursorQueries = 0; s.startupQueryTail = '';
     s.terminal.reset(); fitTerminal(s); showDirectory(s, null); setStatus(card, 'starting');
     try {
         clearTimeout(autosaveTimer);
@@ -794,6 +801,11 @@ if (bridge) {
             }
         }
         if (event.type === 'data') {
+            if (s?.status === 'starting') {
+                const output = (s.startupQueryTail || '') + event.data;
+                s.startupCursorQueries += [...output.matchAll(/\x1b\[6n/g)].length;
+                s.startupQueryTail = output.slice(-3);
+            }
             if (s?.terminal) s.terminal.write(event.data, () => bridge.acknowledge(event.id, event.data.length));
             else bridge.acknowledge(event.id, event.data.length);
         }
