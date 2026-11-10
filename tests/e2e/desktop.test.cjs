@@ -6,6 +6,7 @@ const { createHash } = require('node:crypto');
 const { launch, until, hasOutputLine, sendInput, click, key, screenshot, psQuote, root } = require('./harness.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 120000 };
 const { image } = require('./fixtures.cjs');
+const { powerShellLiteral } = require('../baseline/support.cjs');
 
 async function newTerminal(h, title = 'E2E terminal') {
     const folder = path.join(root, '.cache', 'tauri-e2e-project');
@@ -107,7 +108,7 @@ test('native first-click typing reaches xterm and shell directory tracking follo
     }
     await until(async () => !(await h.page.evaluate(card => invoke('duplicate-directory', card), card)).warning, 'The final typed command did not return to its prompt.');
     await h.page.evaluate(({ id, command }) => window.terminalCanvas.input(id, command + '\r'), {
-        id: card.id, command: `Set-Location -LiteralPath ${psQuote(changed)}`
+        id: card.id, command: `Set-Location -LiteralPath ${powerShellLiteral(changed)}`
     });
     let lastChoice;
     try {
@@ -131,16 +132,17 @@ test('native first-click typing reaches xterm and shell directory tracking follo
 test('64000-character input keeps order, output flood pauses, and Stop kills the process tree', windows, async t => {
     const h = await launch({ clean: true }); t.after(() => h.dispose());
     const { card, pids } = await ioFixture(h);
-    const paste = 'p'.repeat(64000), typed = 'typed-after-paste';
-    await h.page.evaluate(({ id, paste, typed }) => {
+    const paste = 'p'.repeat(64000), typed = 'typed-after-paste', unicode = 'native UTF-8 ไทย 工作 🚀';
+    await h.page.evaluate(({ id, paste, typed, unicode }) => {
         window.terminalCanvas.input(id, paste + '\r');
         window.terminalCanvas.input(id, typed + '\r');
-    }, { id: card.id, paste, typed });
+        window.terminalCanvas.input(id, unicode + '\r');
+    }, { id: card.id, paste, typed, unicode });
     const records = await until(async () => {
         const records = [...(await h.output(card.id)).matchAll(/INPUT_RECORD (\d+) ([a-f0-9]{64})/g)];
-        return records.length >= 2 && records;
+        return records.length >= 3 && records;
     }, 'Large paste and following input did not finish.');
-    assert.deepEqual(records.slice(0, 2).map(match => [Number(match[1]), match[2]]), [paste, typed]
+    assert.deepEqual(records.slice(0, 3).map(match => [Number(match[1]), match[2]]), [paste, typed, unicode]
         .map(value => [value.length, createHash('sha256').update(value).digest('hex')]));
     await h.page.evaluate(id => {
         const terminal = sessions.get(id).terminal;

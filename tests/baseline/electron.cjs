@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { app, clipboard } = require('electron');
-const { guardRestorationEnvironment } = require('./support.cjs');
+const { guardRestorationEnvironment, baselineShellInput, isolatePowerShellArguments } = require('./support.cjs');
 const [reference, output, mode] = process.argv.slice(2);
 assert.equal(process.platform, 'win32', 'The baseline requires native Windows');
 assert.ok(['smoke', 'save', 'reopen', 'measure'].includes(mode));
@@ -16,13 +16,15 @@ pty.spawn = (shell, args, options) => {
     }
     // Both native test hosts skip profiles; a profile must not replace the guarded PATH.
     if (/^(?:powershell|pwsh)(?:\.exe)?$/i.test(path.basename(shell))) {
-        args = ['-NoProfile', ...args];
+        args = isolatePowerShellArguments(args);
     }
     const terminal = nativeSpawn(shell, args, options);
     if (mode === 'save' || mode === 'reopen') {
         // These profiles contain only generated fixture commands and local stand-ins.
         // Preserve control bytes in JSON so a failed Unicode cd can be diagnosed.
         terminal.onData(data => console.error('BASELINE_RESTORATION_OUTPUT', JSON.stringify(data)));
+        const write = terminal.write;
+        terminal.write = function (data) { return write.call(this, baselineShellInput(data)); };
     }
     return terminal;
 };
@@ -128,7 +130,8 @@ do { $added=$false; foreach($p in $all) {
                 workingSetBytes: processes.reduce((sum, process) => sum + process.workingSetBytes, 0) });
             await new Promise(resolve => setTimeout(resolve, 500));
         }
-        fs.writeFileSync(path.join(output, 'metrics.json'), JSON.stringify({ startupMs, shells, samples }, null, 2));
+        fs.writeFileSync(path.join(output, 'metrics.json'), JSON.stringify({ startupMs, shells, samples,
+            outerSize: win.getSize(), contentSize: win.getContentSize() }, null, 2));
         fs.writeFileSync(path.join(output, 'idle.png'), (await win.webContents.capturePage()).toPNG());
         await win.webContents.executeJavaScript('void invoke("close", workspace)');
     }

@@ -14,7 +14,8 @@ publishing disabled. Runtime and test source hashes must remain unchanged.
 
 The bootstrap observes the original host through its existing renderer/manager
 interfaces. Test PowerShell sessions use `-NoProfile`, matching the Rust test
-host. Restoration refuses to spawn unless every PATH spelling starts with the
+host. Test shells disable PSReadLine file history and predictions using the same
+startup fixture in both hosts. Restoration refuses to spawn unless every PATH spelling starts with the
 fixture's local CLI directory and its Claude stand-in exists. No real provider
 is invoked. All workspaces, generated tools, images, and app storage stay in the
 fresh baseline directory.
@@ -27,9 +28,20 @@ failure or parent-pipe EOF. No clipboard data is printed or written to disk, and
 the archived smoke source and assertions stay unchanged. The guard log must
 confirm restoration before smoke is accepted.
 
+The native smoke window reapplies the original application's requested 1500×960
+outer size. Windows otherwise clamps its initial window to the hosted display,
+covering fixed selection/link coordinates with floating controls. For restoration,
+the Windows line editor can drop a non-BMP character from a standalone typed `cd`.
+The bootstrap recognizes only that complete generated command and constructs the
+same UTF-8 folder argument inside PowerShell. Thai, Chinese, and emoji remain in
+the actual folder and every original metadata assertion; other input is unchanged.
+The Rust suite separately hashes direct UTF-8 input through a controlled native
+child and retains the complete Unicode cwd/restore checks.
+
 `report.json` records test counts, each step's exit status, OS/CPU/RAM/Node
 versions, three startup timings, nine native process-tree samples, package sizes,
-and source-integrity checks. Startup runs from spawning the Electron process to
+and source-integrity checks. It also records the harness commit, Windows edition,
+and each measured window's outer/content dimensions. Startup runs from spawning the Electron process to
 the renderer's ready state. Each memory sample includes the desktop host, browser
 children, ConPTY descendants, and all four shells; it excludes the sampling
 PowerShell process and its descendants. Private commit and summed working sets

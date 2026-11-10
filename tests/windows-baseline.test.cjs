@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { testSummary, guardRestorationEnvironment } = require('./baseline/support.cjs');
+const { testSummary, guardRestorationEnvironment, baselineShellInput, isolatePowerShellArguments } = require('./baseline/support.cjs');
 const { withSavedClipboard } = require('./baseline/clipboard.cjs');
 const { EventEmitter } = require('node:events');
 const { PassThrough, Writable } = require('node:stream');
@@ -15,6 +15,30 @@ test('baseline counts require a completed, nonempty, successful native test repo
     assert.throws(() => testSummary(tap.replace('# tests 12', '# tests 0')), /must execute/);
     assert.throws(() => testSummary(tap.replace('# fail 0', '# fail 1')), /tests failed/);
     assert.throws(() => testSummary(tap.replace('# cancelled 0', '# cancelled 1')), /cancelled/);
+});
+
+test('baseline input adaptation preserves the full Unicode directory and leaves other input untouched', () => {
+    const folder = "C:\\project's folder\\ไทย 工作 🚀";
+    const command = `Set-Location -LiteralPath '${folder.replaceAll("'", "''")}'\r`;
+    const adapted = baselineShellInput(command);
+    assert.ok(!/[^\x00-\x7f]/.test(adapted));
+    const encoded = /FromBase64String\('([^']+)'\)/.exec(adapted)[1];
+    assert.equal(Buffer.from(encoded, 'base64').toString('utf8'), folder);
+    for (const data of ["Set-Location -LiteralPath 'C:\\工作'\r", "Write-Output '🚀'\r", command.slice(0, -1), command + "Write-Output 'next'\r"]) {
+        assert.equal(baselineShellInput(data), data, 'Only the complete affected fixture command is adapted');
+    }
+});
+
+test('the baseline shares isolated history settings while preserving the original Unicode bootstrap', () => {
+    const original = "Write-Output 'ไทย 工作 🚀'";
+    const args = ['-NoExit', '-EncodedCommand', Buffer.from(original, 'utf16le').toString('base64')];
+    const isolated = isolatePowerShellArguments(args);
+    const script = Buffer.from(isolated.at(-1), 'base64').toString('utf16le');
+    assert.equal(isolated[0], '-NoProfile');
+    assert.ok(script.includes('-HistorySaveStyle SaveNothing'));
+    assert.ok(script.includes('-PredictionSource None'));
+    assert.ok(script.endsWith(original));
+    assert.equal(Buffer.from(args.at(-1), 'base64').toString('utf16le'), original, 'Caller arguments are not mutated');
 });
 
 function clipboardGuard({ acknowledge = true } = {}) {

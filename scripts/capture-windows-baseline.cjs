@@ -14,7 +14,7 @@ const bootstrap = path.join(root, 'tests/baseline/electron.cjs');
 const report = { schema: 1, status: 'incomplete', capturedAt: new Date().toISOString(),
     reference: require('../tests/visual/reference.json').commit,
     platform: { os: os.release(), arch: os.arch(), cpus: os.cpus().map(cpu => cpu.model), totalMemoryBytes: os.totalmem(), node: process.version },
-    configuration: 'Unpackaged development host; isolated profiles; PowerShell -NoProfile; controlled text clipboard with external native restoration; no provider calls',
+    configuration: 'Unpackaged development host; isolated profiles; PowerShell -NoProfile with history/prediction disabled; controlled text clipboard with external native restoration; full Unicode cwd constructed inside PowerShell; no provider calls',
     measurements: 'Startup: process spawn to renderer ready. Memory: three native process-tree samples after four idle prompts; private commit and summed working sets (shared pages may be counted more than once). No OS cache flush.',
     stages: {} };
 let ownsOutput = false;
@@ -55,6 +55,10 @@ async function main() {
     assert.equal(process.platform, 'win32', 'Capture the baseline on native Windows');
     fs.mkdirSync(path.dirname(output), { recursive: true });
     fs.mkdirSync(output); ownsOutput = true; save();
+    report.harnessCommit = (await run('harness-source', 'git', ['rev-parse', 'HEAD'], { cwd: root })).trim();
+    const platform = await run('windows-platform', 'powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        '$os=Get-CimInstance Win32_OperatingSystem; [pscustomobject]@{caption=$os.Caption;version=$os.Version;build=$os.BuildNumber} | ConvertTo-Json -Compress'], { cwd: root, timeout: 30000 });
+    report.platform.windows = JSON.parse(platform.replace(/^\uFEFF/, '')); save();
     await run('archive', 'git', ['archive', '--format=tar', `--output=${path.join(output, 'reference.tar')}`, report.reference], { cwd: root });
     fs.mkdirSync(reference);
     await run('extract', 'tar.exe', ['-xf', path.join(output, 'reference.tar'), '-C', reference], { cwd: root });

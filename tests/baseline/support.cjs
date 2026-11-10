@@ -29,4 +29,28 @@ function guardRestorationEnvironment(env, tools) {
         'The stand-in must remain inside the controlled tools directory');
 }
 
-module.exports = { testSummary, guardRestorationEnvironment };
+function powerShellLiteral(value) {
+    return `([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(value, 'utf8').toString('base64')}')))`;
+}
+
+function baselineShellInput(data) {
+    const match = /^Set-Location -LiteralPath '((?:[^'\r\n]|'')*)'\r$/u.exec(data);
+    if (!match || !/[\u{10000}-\u{10ffff}]/u.test(match[1])) return data;
+    // Windows' line editor can discard non-BMP input. Construct the same full
+    // Unicode argument in PowerShell; keep the archived cwd assertions unchanged.
+    return `Set-Location -LiteralPath ${powerShellLiteral(match[1].replace(/''/g, "'"))}\r`;
+}
+
+function isolatePowerShellArguments(args) {
+    const isolated = [...args];
+    if (!isolated.some(argument => argument.toLowerCase() === '-noprofile')) isolated.unshift('-NoProfile');
+    const encoded = isolated.findIndex(argument => argument.toLowerCase() === '-encodedcommand');
+    if (encoded >= 0 && isolated[encoded + 1]) {
+        const prefix = fs.readFileSync(path.join(__dirname, '../fixtures/powershell-test-isolation.ps1'), 'utf8');
+        const original = Buffer.from(isolated[encoded + 1], 'base64').toString('utf16le');
+        isolated[encoded + 1] = Buffer.from(prefix + '\n' + original, 'utf16le').toString('base64');
+    }
+    return isolated;
+}
+
+module.exports = { testSummary, guardRestorationEnvironment, powerShellLiteral, baselineShellInput, isolatePowerShellArguments };

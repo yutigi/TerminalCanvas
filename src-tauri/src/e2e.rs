@@ -37,6 +37,27 @@ fn isolated_request(request: &SpawnRequest) -> SpawnRequest {
     {
         isolated.args.insert(0, "-NoProfile".into());
     }
+    if matches!(shell.as_str(), "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe")
+        && let Some(encoded) = isolated
+            .args
+            .iter()
+            .position(|arg| arg.eq_ignore_ascii_case("-EncodedCommand"))
+        && let Some(argument) = isolated.args.get_mut(encoded + 1)
+    {
+        let bytes = tc_core::node::base64_decode(argument);
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        if bytes.len().is_multiple_of(2)
+            && let Ok(script) = String::from_utf16(&units)
+        {
+            let prefix = include_str!("../../tests/fixtures/powershell-test-isolation.ps1");
+            *argument = tc_pty::shell::powershell_args(&format!("{prefix}\n{script}"))
+                .pop()
+                .unwrap();
+        }
+    }
     isolated
 }
 
@@ -156,6 +177,30 @@ mod tests {
         assert!(arguments.starts_with("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection "));
         assert!(arguments.contains("--autoplay-policy=no-user-gesture-required"));
         assert!(arguments.ends_with("--remote-debugging-port=9234 --force-device-scale-factor=1.25"));
+    }
+
+    #[test]
+    fn powershell_test_history_is_isolated_without_changing_the_integration_script() {
+        let script = "Write-Output 'integration ไทย 工作 🚀'";
+        let request = SpawnRequest {
+            shell: "powershell.exe".into(),
+            args: tc_pty::shell::powershell_args(script),
+            cwd: "/test".into(),
+            cols: 80,
+            rows: 24,
+            env: Default::default(),
+        };
+        let isolated = isolated_request(&request);
+        let bytes = tc_core::node::base64_decode(isolated.args.last().unwrap());
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        let actual = String::from_utf16(&units).unwrap();
+        assert!(actual.contains("-HistorySaveStyle SaveNothing"));
+        assert!(actual.contains("-PredictionSource None"));
+        assert!(actual.ends_with(script));
+        assert_eq!(isolated.args[0], "-NoProfile");
     }
 
     #[test]
