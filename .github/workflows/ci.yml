@@ -26,6 +26,9 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The visual golden reference is an immutable ancestor, not the shallow PR merge.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -39,6 +42,8 @@ jobs:
           rustc --version
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Install Linux webview libraries
         if: runner.os == 'Linux'
@@ -74,6 +79,22 @@ jobs:
           mkdir -p .cache/native-board-check
           xcrun swiftc -module-cache-path .cache/swift-module-cache tests/manual/macos-clipboard-guard.swift -o .cache/native-board-check/clipboard-guard
           .cache/native-board-check/clipboard-guard --self-test
+
+      - name: Chromium and WebKit rendered layout and arrow pixels
+        if: runner.os == 'macOS'
+        run: |
+          npm ci --prefix tests/visual
+          npm run test:layout -- --verify-regression
+
+      - name: Upload rendered layout evidence
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-renderer-parity
+          path: |
+            .cache/layout-check/*.png
+            .cache/layout-check/*.json
+          if-no-files-found: ignore
 
       - name: Test-only host compiles and passes its tests
         run: cargo test -p terminal-canvas --features e2e

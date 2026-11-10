@@ -140,15 +140,37 @@ fn record(provider: &str) -> bool {
     let mut input = Vec::new();
     // A string of 65,536 UTF-16 units takes at most three bytes per unit.
     let limit = INPUT_UNITS * 3 + 1;
-    if io::stdin().lock().take(limit as u64).read_to_end(&mut input).is_err() || input.len() >= limit {
+    let read = io::stdin().lock().take(limit as u64).read_to_end(&mut input);
+    #[cfg(debug_assertions)]
+    if env::var_os("TC_HOOK_TEST_DIAGNOSTICS").is_some() {
+        eprintln!(
+            "hook stdin: bytes={}, io={:?}, utf8_bom={}",
+            input.len(),
+            read.as_ref().err().and_then(io::Error::raw_os_error),
+            input.starts_with(&[0xef, 0xbb, 0xbf])
+        );
+    }
+    if read.is_err() || input.len() >= limit {
         return false;
     }
     let text = String::from_utf8_lossy(&input);
     if utf16_len(&text) > INPUT_UNITS {
         return false;
     }
-    let Ok(input) = serde_json::from_str::<Value>(&text) else {
-        return false;
+    let input = match serde_json::from_str::<Value>(&text) {
+        Ok(input) => input,
+        Err(_error) => {
+            #[cfg(debug_assertions)]
+            if env::var_os("TC_HOOK_TEST_DIAGNOSTICS").is_some() {
+                eprintln!(
+                    "hook JSON: {:?}, line={}, column={}",
+                    _error.classify(),
+                    _error.line(),
+                    _error.column()
+                );
+            }
+            return false;
+        }
     };
     let (Some(file), Some(token)) = (env::var_os("TC_SESSION_FILE"), token()) else {
         return false;
@@ -170,7 +192,15 @@ fn record_session(input: &Value, provider: &str, file: &Path, token: &str) -> bo
     }
     let mut saved = serde_json::to_value(&session).expect("sessions serialize");
     saved["token"] = token.into();
-    atomic::write(file, saved.to_string().as_bytes(), Access::Private).is_ok()
+    let result = atomic::write(file, saved.to_string().as_bytes(), Access::Private);
+    #[cfg(debug_assertions)]
+    if env::var_os("TC_HOOK_TEST_DIAGNOSTICS").is_some() {
+        eprintln!(
+            "hook write: io={:?}",
+            result.as_ref().err().and_then(io::Error::raw_os_error)
+        );
+    }
+    result.is_ok()
 }
 
 #[cfg(test)]

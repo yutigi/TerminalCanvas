@@ -14,12 +14,16 @@ class LayoutHarness: NSObject, WKNavigationDelegate {
     var viewports: [[Int]] = []
     var viewportIndex = 0
     var report: [String: Any] = [:]
-    let scenes = ["empty", "launch", "card"]
+    var negativeArrowFill: [String: Any] = [:]
+    var scenes: [String] = []
+    var verifyRegression = false
 
     func start() throws {
         let data = try Data(contentsOf: output.appendingPathComponent("reference.json"))
         let settings = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         viewports = settings["viewports"] as! [[Int]]
+        scenes = settings["scenes"] as! [String]
+        verifyRegression = settings["verifyRegression"] as? Bool ?? false
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         let mock = try String(contentsOf: output.appendingPathComponent("mock.js"), encoding: .utf8)
@@ -55,7 +59,7 @@ class LayoutHarness: NSObject, WKNavigationDelegate {
             viewportIndex += 1
             if viewportIndex < viewports.count { loadViewport(); return }
             do {
-                let data = try JSONSerialization.data(withJSONObject: ["engine": "WKWebView", "scenes": report], options: [.prettyPrinted, .sortedKeys])
+                let data = try JSONSerialization.data(withJSONObject: ["engine": "WKWebView", "scenes": report, "negativeArrowFill": negativeArrowFill], options: [.prettyPrinted, .sortedKeys])
                 try data.write(to: output.appendingPathComponent("\(label).json"))
                 exit(0)
             } catch { fail(error) }
@@ -64,17 +68,46 @@ class LayoutHarness: NSObject, WKNavigationDelegate {
         let size = viewports[viewportIndex]
         let scene = scenes[index]
         let key = "\(size[0])x\(size[1])-\(scene)"
+        captureScene(scene, key: key) { metrics in
+            self.report[key] = metrics
+            if scene == "board" && self.verifyRegression && label == "webkit" {
+                self.webview.evaluateJavaScript("window.layoutArrowFillFault(true)") { _, error in
+                    if let error = error { self.fail(error); return }
+                    self.captureScene(scene, key: "missing-fill-\(key)") { broken in
+                        self.negativeArrowFill[key] = broken
+                        self.webview.evaluateJavaScript("window.layoutArrowFillFault(false)") { _, error in
+                            if let error = error { self.fail(error); return }
+                            self.capture(index + 1)
+                        }
+                    }
+                }
+            } else {
+                self.capture(index + 1)
+            }
+        }
+    }
+
+    func captureScene(_ scene: String, key: String, completion: @escaping ([String: Any]) -> Void) {
         webview.callAsyncJavaScript("return await window.captureLayout(scene)", arguments: ["scene": scene], in: nil, in: .page) { result in
             switch result {
             case .failure(let error): self.fail(error)
             case .success(let value):
-                self.report[key] = value
+                guard var metrics = value as? [String: Any] else { exit(1) }
                 self.webview.takeSnapshot(with: nil) { image, error in
                     if let error = error { self.fail(error); return }
                     guard let tiff = image?.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
                     do { try png.write(to: output.appendingPathComponent("\(label)-\(key).png")) }
                     catch { self.fail(error); return }
-                    self.capture(index + 1)
+                    let dataURL = "data:image/png;base64," + png.base64EncodedString()
+                    self.webview.callAsyncJavaScript("return await window.sampleLayoutPixels(dataURL, lines)",
+                        arguments: ["dataURL": dataURL, "lines": metrics["lines"] ?? []], in: nil, in: .page) { result in
+                        switch result {
+                        case .failure(let error): self.fail(error)
+                        case .success(let pixels):
+                            metrics["pixels"] = pixels
+                            completion(metrics)
+                        }
+                    }
                 }
             }
         }

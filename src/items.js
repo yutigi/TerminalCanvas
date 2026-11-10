@@ -147,10 +147,14 @@ function renderLine(item) {
     const path = `M${start.x} ${start.y}L${end.x} ${end.y}`;
     view.hit.setAttribute('d', path);
     view.stroke.setAttribute('d', path);
-    // Draw the former marker directly: WebKit does not paint its context-stroke fill.
+    // Match the old marker at its fixed 2px stroke: 7 * 2 / 10 = 1.4 units,
+    // anchored at refX 9. Draw directly because WebKit cannot paint context-stroke.
+    view.head.style.display = item.arrow ? '' : 'none';
     view.head.setAttribute('d', item.arrow ? 'M-12.6 -7L1.4 0L-12.6 7Z' : '');
-    const angle = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
-    view.head.setAttribute('transform', `translate(${end.x} ${end.y}) rotate(${angle})`);
+    if (item.arrow) {
+        const angle = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
+        view.head.setAttribute('transform', `translate(${end.x} ${end.y}) rotate(${angle})`);
+    }
     view.element.classList.toggle('attached', !!(item.start.id || item.end.id));
     [start, end].forEach((point, index) => { view.handles[index].setAttribute('cx', String(point.x)); view.handles[index].setAttribute('cy', String(point.y)); });
 }

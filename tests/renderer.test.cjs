@@ -323,8 +323,13 @@ test('arrowheads follow endpoint direction, remain finite at zero length, and di
     }
     vm.runInContext('workspace.items[0].arrow = false; renderLines()', context);
     assert.equal(head.attributes.get('d'), '', 'plain lines have no arrowhead');
+    assert.equal(head.style.display, 'none', 'the no-arrow state is explicitly hidden');
+    const lastTransform = head.attributes.get('transform');
+    vm.runInContext('workspace.items[0].end = { x: 300, y: 400 }; renderLines()', context);
+    assert.equal(head.attributes.get('transform'), lastTransform, 'plain lines skip arrow rotation work');
     vm.runInContext('workspace.items[0].arrow = true; renderLines()', context);
     assert.match(head.attributes.get('d'), /Z$/, 'restoring the arrow redraws its head');
+    assert.equal(head.style.display, '');
 });
 test('creation tools draw a sticky note, edit it in place, and return to the select tool', async () => {
     const { elements, context } = await boot(createWorkspace());

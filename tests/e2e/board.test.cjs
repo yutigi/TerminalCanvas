@@ -6,6 +6,31 @@ const { launch, until, sendInput, click, key, screenshot, root } = require('./ha
 const { withSavedClipboard, fixtureScene, clipboardRead, choose } = require('./support.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 120000 };
 const { image } = require('./fixtures.cjs');
+const { arrowPaintFailures } = require('../visual/arrow-paint.cjs');
+
+test('WebView2 arrow pixels preserve plain, colored, and selected lines in forced colors', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const fixture = JSON.parse(await fs.readFile(path.join(root, 'tests/golden/renderer.json'), 'utf8'));
+    await h.page.evaluate(fixture => { window.layoutFixture = fixture; }, fixture);
+    await h.page.evaluate(await fs.readFile(path.join(root, 'tests/visual/probe.js'), 'utf8'));
+    const capture = async name => {
+        const scene = await h.page.evaluate(() => window.captureLayout('board'));
+        const png = await h.page.screenshot({ path: path.join(root, '.cache', `tauri-arrow-${name}.png`) });
+        scene.pixels = await h.page.evaluate(({ dataURL, lines }) => window.sampleLayoutPixels(dataURL, lines),
+            { dataURL: 'data:image/png;base64,' + png.toString('base64'), lines: scene.lines });
+        return scene;
+    };
+    assert.deepEqual(arrowPaintFailures(await capture('normal'), 'WebView2 normal'), []);
+    await h.page.emulateMedia({ forcedColors: 'active' });
+    const forced = await capture('forced-colors');
+    assert.equal(forced.forcedColorsActive, true);
+    assert.deepEqual(arrowPaintFailures(forced, 'WebView2 forced colors'), []);
+    await h.page.emulateMedia({ forcedColors: 'none' });
+    await h.page.evaluate(() => window.layoutArrowFillFault(true));
+    const broken = arrowPaintFailures(await capture('missing-fill'), 'WebView2 missing fill');
+    assert.ok(broken.some(failure => failure.includes('arrowhead pixel')), 'Removing fill must fail the actual pixel guard.');
+    await h.page.evaluate(() => window.layoutArrowFillFault(false));
+});
 
 test('minimap native navigation preserves zoom and Focus mode hides the overview', windows, async t => {
     const h = await launch({ clean: true }); t.after(() => h.dispose());

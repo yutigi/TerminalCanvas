@@ -412,6 +412,7 @@ mod windows {
             .args(["/d", "/s", "/c", &command])
             .envs(integration.env.iter().cloned())
             .env("TC_LAUNCH_TOKEN", ID)
+            .env("TC_HOOK_TEST_DIAGNOSTICS", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

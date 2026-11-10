@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { compare } = require('../tests/visual/compare.cjs');
+const { arrowPaintFailures, reportArrowFailures, forcedColorsFailures } = require('../tests/visual/arrow-paint.cjs');
 
 const root = path.resolve(__dirname, '..');
 const harness = path.join(root, 'tests/visual');
@@ -13,7 +14,9 @@ const arg = process.argv.find(value => value.startsWith('--electron='));
 const repositoryArg = process.argv.find(value => value.startsWith('--reference-repo='));
 const repository = repositoryArg ? path.resolve(repositoryArg.slice('--reference-repo='.length)) : root;
 if (process.platform !== 'darwin') throw new Error('This cross-engine check requires macOS WebKit and Xcode command line tools.');
-const electron = arg ? path.resolve(arg.slice('--electron='.length)) : require('electron');
+const testElectron = path.join(harness, 'node_modules/electron');
+const electron = arg ? path.resolve(arg.slice('--electron='.length))
+    : require(fs.existsSync(testElectron) ? testElectron : 'electron');
 const run = (command, args, options = {}) => execFileSync(command, args, { cwd: root, stdio: 'inherit', timeout: 60000, ...options });
 
 fs.mkdirSync(output, { recursive: true });
@@ -50,7 +53,9 @@ contextBridge.exposeInMainWorld('terminalCanvas', {
     invoke: async action => action === 'initialize' ? { ...fixture, platform: 'darwin', home: '/tmp' } : { ok: true },
     input() {}, resize() {}, acknowledge() {}, onEvent() {}
 });`);
-for (const file of ['probe.js', 'reference.json']) fs.copyFileSync(path.join(harness, file), path.join(output, file));
+fs.copyFileSync(path.join(harness, 'probe.js'), path.join(output, 'probe.js'));
+fs.writeFileSync(path.join(output, 'reference.json'), JSON.stringify({ ...config,
+    verifyRegression: process.argv.includes('--verify-regression') }, null, 4) + '\n');
 run('xcrun', ['swiftc', '-module-cache-path', path.join(output, 'swift-module-cache'), path.join(harness, 'webkit.swift'), '-o', path.join(output, 'webkit')]);
 console.log(`Rendering previous JavaScript UI: ${config.commit}`);
 run(electron, [path.join(harness, 'electron.cjs'), reference, output, 'legacy']);
@@ -60,8 +65,13 @@ const read = name => JSON.parse(fs.readFileSync(path.join(output, `${name}.json`
 const failures = [
     ...compare(read('legacy'), read('chromium'), config.legacyTolerance).map(message => `Legacy: ${message}`),
     ...compare(read('chromium'), read('webkit'), config.engineTolerance).map(message => `WebKit: ${message}`),
+    ...reportArrowFailures(read('legacy'), { requirePath: false }).map(message => `Legacy paint: ${message}`),
+    ...reportArrowFailures(read('chromium')).map(message => `Chromium paint: ${message}`),
+    ...reportArrowFailures(read('webkit')).map(message => `WebKit paint: ${message}`),
+    ...forcedColorsFailures(read('chromium')),
 ];
 let regressionDifferences;
+const arrowFillRegressionDifferences = {};
 if (process.argv.includes('--verify-regression')) {
     console.log('Checking that the original WebKit shift is detected…');
     run(path.join(output, 'webkit'), [reference, output, 'unfixed']);
@@ -69,9 +79,17 @@ if (process.argv.includes('--verify-regression')) {
     if (!regressionDifferences) {
         failures.push('The negative control did not detect the original WebKit layout shift.');
     }
+    for (const engine of ['chromium', 'webkit']) {
+        const broken = Object.entries(read(engine).negativeArrowFill || {});
+        if (broken.length !== config.viewports.length) failures.push(`${engine}: missing arrow-fill negative controls`);
+        const differences = broken.flatMap(([name, scene]) => arrowPaintFailures(scene, `${engine} ${name} missing fill`));
+        arrowFillRegressionDifferences[engine] = differences.length;
+        if (!differences.length) failures.push(`${engine}: the pixel guard did not detect missing arrowhead fill`);
+    }
 }
 fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ reference: config.commit, platform: process.platform,
     electron: read('legacy').engine.electron, chrome: read('legacy').engine.chrome,
-    viewports: config.viewports, regressionDifferences, failures }, null, 2) + '\n');
+    viewports: config.viewports, scenes: config.scenes, regressionDifferences, arrowFillRegressionDifferences,
+    forcedColorsScenes: Object.keys(read('chromium').forcedColors).length, failures }, null, 2) + '\n');
 if (failures.length) throw new Error(`${failures.length} layout differences:\n${failures.slice(0, 24).join('\n')}\nSee ${output}`);
-console.log(`Layout parity passed: ${config.viewports.length * 3} scenes; previous UI within ${config.legacyTolerance}px, Chromium/WebKit within ${config.engineTolerance}px.\nScreenshots and measurements: ${output}`);
+console.log(`Layout parity passed: ${config.viewports.length * config.scenes.length} scenes; previous UI within ${config.legacyTolerance}px, Chromium/WebKit within ${config.engineTolerance}px. Arrowhead pixels and forced colors passed.\nScreenshots and measurements: ${output}`);
