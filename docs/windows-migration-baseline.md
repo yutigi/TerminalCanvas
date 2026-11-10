@@ -51,5 +51,41 @@ native sampler, checks normal shutdown and all shell PIDs, and uploads
 `comparison.json` alongside the raw reference report. Compare timings from that
 shared-observer run rather than mixing them with the original 393 ms observation.
 
-The Rust release distribution comparison and clean Windows 11 installer/portable
-and interoperability checks remain open.
+The Rust distribution was built after the complete three-platform validation and
+ten native desktop suites in [run 42876975230](https://github.com/yutigi/TerminalCanvas/actions/runs/42876975230).
+The reusable workflow verified the caller's validated SHA before packaging normal
+release binaries without the test-only feature.
+
+| Distribution | Bytes | Scope |
+| --- | ---: | --- |
+| Original Electron portable EXE | 114,453,226 | Self-extracting portable application |
+| Original Electron unpacked app | 407,690,815 | Includes its bundled Chromium/Node runtime |
+| Rust NSIS installer | 3,153,585 | Can download the system WebView2 Runtime if absent |
+| Rust portable ZIP | 4,490,586 | Requires the system WebView2 Runtime |
+| Rust portable application EXE | 13,457,920 | x64 normal release host |
+| Rust hook EXE | 329,216 | x64 colocated sidecar |
+
+The Rust ZIP has exactly those two executables. Their combined unpacked size is
+13,787,136 bytes. This is application distribution size, not the total disk cost
+of the separately installed WebView2 Runtime, and the two portable formats use
+different compression/launch mechanisms. The installer SHA-256 is
+`dde88fb453e723febd558e4302fb15651ac30ab872d5cc931df6d6b5f0898b8d`;
+the portable ZIP SHA-256 is
+`ecddd9f734d9e4f09882731ddefa91b8e8d726cf0f0fc7385654f5bde611dba1`.
+[Download the reviewed artifacts](https://github.com/yutigi/TerminalCanvas/actions/runs/42876975230/artifacts/13793932227).
+
+The first shared-observer development comparison, [run 42878494112](https://github.com/yutigi/TerminalCanvas/actions/runs/42878494112),
+recorded median ready observations of 528 ms for Electron and 721 ms for the
+Rust debug/e2e host; private commit was 575,774,720 versus 497,836,032 bytes,
+and summed working sets were 840,466,432 versus 852,279,296 bytes. Thus this run
+showed slower startup and slightly higher summed working sets despite lower
+private commit. It does not demonstrate release startup or resident-memory gains.
+A follow-up handshake observes the empty ready UI before either host starts its
+shells, eliminating asymmetric shell-startup contention. Its first rerun stalled
+on the second reference launch; that refinement has no completed comparison yet.
+The earlier complete raw run is retained with this limitation.
+
+Clean Windows 11 normal-user installer/portable execution, the separate full
+22-case Windows 11 suite, and automatic Electron autosave/image interoperability
+checks remain open. The [manual checklist](../tests/manual/windows11-checklist.md)
+and read-only PowerShell checker separate file equality from native observations.
