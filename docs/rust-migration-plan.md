@@ -320,7 +320,7 @@ Recorded 2026-11-09:
 
 ## Progress
 
-Updated 2026-11-11. Electron remains the default. Draft PR [#16](https://github.com/yutigi/TerminalCanvas/pull/16) contains the transitional host and validation work; the final removal/default-command patch is prepared separately and has not been applied.
+Updated 2026-11-11. This isolated validation branch prepares the Rust default and legacy removal; the transitional PR keeps Electron as its default until the gates pass. Draft PR [#16](https://github.com/yutigi/TerminalCanvas/pull/16) contains the transitional host and validation work; the final removal/default-command patch is prepared separately and has not been applied.
 
 | Gate | Evidence and remaining work |
 | --- | --- |

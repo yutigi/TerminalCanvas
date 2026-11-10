@@ -1,34 +1,40 @@
 # Terminal Canvas
 
-A desktop canvas for managing multiple AI terminals. Keep a shell, Claude Code, Codex, Gemini CLI, or your own command in separate movable cards, each with its own project folder.
+A desktop canvas for managing multiple AI terminals, hosted by Tauri 2 and Rust with xterm.js.
+Keep independent shells, Claude Code, Codex, Gemini CLI, and custom commands in movable cards.
+WebCanvas integration remains planned.
 
-This initial implementation shares Electron with the neighboring WebCanvas project. WebCanvas integration is planned; it is not included yet.
-
-![Terminal Canvas desktop UI showing the empty workspace, terminal profiles, and canvas controls.](docs/images/terminal-canvas.png)
+![Terminal Canvas desktop UI](docs/images/terminal-canvas.png)
 
 ## Run locally
 
-Use Node.js 22.12+ and npm. Windows 10 1809+ or Windows 11 is the primary target. The standard Windows setup uses the node-pty binary included in the dependency when it passes a real terminal check inside Electron.
+Use Rust 1.95 (pinned by `rust-toolchain.toml`) and Node.js 22.12+ for development tools.
+Nothing in the shipped application requires Node, Electron, or node-pty.
 
-```powershell
-npm install
-npm run rebuild
-npm start
+Platform requirements:
+
+- Windows 10 1809+ or Windows 11: MSVC Build Tools with a Windows SDK and C++20 support, plus the
+  WebView2 Runtime. MSVC Spectre-mitigated libraries are not needed.
+- macOS: Xcode Command Line Tools.
+- Ubuntu/Debian: a C++20 compiler and `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`,
+  `librsvg2-dev`, and `patchelf`.
+
+```sh
+npm ci
+cargo build -p tc-hook
+cargo run -p terminal-canvas
 ```
 
-`npm install` needs access to the npm registry and Electron downloads. `npm run rebuild` verifies node-pty inside Electron on Windows and compiles it from source only if the existing binary fails. Other platforms compile from source. Rerun it after changing Electron or native dependencies. AI CLIs must already be installed, available on your `PATH`, and authenticated; Terminal Canvas does not install or sign in to them.
+`npm start` also launches the Rust application. Build the hook before the first launch so shell
+integration can capture sessions. `build.rs` copies the pinned xterm files from `node_modules`
+into ignored `src/vendor/`; if dependencies are missing, it asks you to run `npm ci`.
+No Tauri CLI or browser preview server is needed for the development loop. AI tools must already
+be installed on PATH and authenticated; Terminal Canvas does not install or sign in to them.
 
-A dependency lockfile is included. Use `npm ci` instead of `npm install` for an exact install from that lockfile.
-
-After installing, a `postinstall` step (`scripts/patch-node-pty.cjs`) applies node-pty 1.2's guard to node-pty 1.1.0's Windows console list helper. Without it, closing a terminal printed an uncaught `AttachConsole failed` stack trace, because the helper tried to attach to a shell that had already exited. The step is idempotent, leaves unrecognized node-pty versions unchanged, and can be removed after upgrading to a node-pty release that includes the guard.
-
-### Source-build troubleshooting
-
-To force compilation, run `npm run rebuild -- --from-source`. Windows source builds require Python and Visual Studio Build Tools with Desktop development with C++, a Windows SDK, and MSVC Spectre-mitigated libraries matching the compiler toolset and target architecture. If you see `MSB8040: Spectre-mitigated libraries are required`, open **Visual Studio Installer → Modify → Individual components**, install those matching libraries, then retry the source build. The default Windows rebuild can use the verified bundled binary without these compiler components.
-
-`npm run build` also invokes native compilation through electron-builder, so packaging currently requires the source-build prerequisites.
-
-For a dependency-free **layout preview**, run `npm run dev` and visit [localhost:4174](http://127.0.0.1:4174). The preview supports card layout and browser-local recovery; it cannot launch shells, choose native folders, or open/save workspace files. It does not simulate AI output.
+The browser-only layout preview has been retired. A normal launch uses the same `terminal-canvas`
+configuration folder as the Electron build, preserving its autosave and content-addressed images.
+For an isolated test workspace, build/run with `--features e2e`; it always uses a test profile,
+even without command-line flags. Release builds reject the `e2e` feature.
 
 ## Use the workspace
 
@@ -136,71 +142,66 @@ The supported resume commands and Claude hook input are described in the [Codex 
 
 | Command | Purpose |
 | --- | --- |
-| `npm start` | Launch the Electron desktop app |
-| `npm run dev` | Serve the layout preview on loopback port 4174 |
-| `npm run rebuild` | Verify the Windows native binary in Electron, or rebuild when needed |
-| `npm run icons` | Regenerate native PNG/ICO icons from `src/assets/logo.svg` using the Rust resvg task |
-| `npm run check` | Check JavaScript syntax and the package manifest |
-| `npm test` | Run icon, workspace, board geometry, image asset, minimap, session metadata/recovery, shell integration, directory-tracking, external-link, terminal pointer mapping, terminal-manager, rebuild, node-pty patch, renderer, undo, terminal clipboard IPC, board clipboard, and smoke-helper tests (no npm test framework; Windows prompt checks invoke built-in PowerShell and optionally PowerShell 7) |
-| `npm run test:smoke` | Check fresh-shell duplication, queued-command safety, folder-picker defaults/cancellation, the desktop renderer, native terminal copy/paste and interruption, board clipboard commands, native hyperlink clicks without confirmation (with the OS launch intercepted), minimap navigation, live shell directory changes, first-click terminal typing, terminal text selection, copying, and mouse reports at several zoom levels and in Focus mode, board items (image loading, image cleanup, connector hit testing, note typing, grouping, undo/redo, copy/paste), real PTY output, resize, and cleanup; save `.cache/smoke-creation.png`, `.cache/smoke-links.png`, `.cache/smoke.png`, `.cache/smoke-first-click.png`, `.cache/smoke-board.png`, `.cache/smoke-clipboard.png`, and `.cache/cwd smoke/*.png` |
-| `npm run test:restoration` | Windows: run two Electron launches with an isolated recovery profile and controlled CLI substitute; verify manual AI capture, actual shell folder changes, hook metadata, close-time flush, stopped cards on reopening, exact-ID resume, and a fresh shell; save `.cache/restoration.png` |
-| `npm run build` | Package an unsigned Windows portable executable in `release/` |
+| `npm ci` | Install the three pinned development dependencies; no native Node install scripts run |
+| `cargo run -p terminal-canvas` / `npm start` | Run the Rust desktop host; build `tc-hook` first |
+| `cargo xtask check` | rustfmt, clippy, Rust and JavaScript tests, syntax, native icons, and golden parity |
+| `cargo test --workspace` | Host/process tests and every golden fixture; the style parity test needs Node on PATH |
+| `npm test` | Renderer, geometry, pointer, minimap, bridge, and E2E-helper unit tests |
+| `cargo xtask syntax` / `npm run check` | Parse JavaScript and the package manifest without executing scripts |
+| `node scripts/capture-golden.cjs --check` | Reproduce frozen Electron-era behavior fixtures from the test-only oracle |
+| `cargo xtask icons [--check]` | Generate/verify native icons with pinned resvg, without Electron or a display |
+| `npm run test:e2e` | Windows WebView2 desktop/restoration suite after building the E2E app and hook |
+| `cargo xtask package-windows` / `npm run build` | Windows NSIS installer and portable zip preparation |
 
-Terminal-manager tests use a controlled PTY substitute; the smoke test requires installed desktop dependencies and checks the real native integration. It sends native mouse and keyboard input and waits until the page has dispatched each sequence before checking the result, because native input and page scripts reach the renderer on separate channels. Before each sequence it takes back window focus if another window took it, because native keys reach the focused element only while the window has focus. The smoke test uses the system clipboard and puts back everything that was on it afterwards. Image cleanup runs against the smoke test's own profile in `.cache/smoke-profile`, never your assets folder. Screenshot capture retries transient `UnknownVizError` failures up to five times, requesting a repaint and waiting 100 ms between attempts. Persistent failures, unrelated errors, and empty captures still fail the test. Current integrated Windows validation passed syntax checks, all 172 automated tests, the complete desktop smoke suite, and the two-launch restoration test after merging the clipboard and canvas editing PRs. Restoration uses an isolated profile and controlled local CLI substitute; real provider authentication/resume and Linux/macOS desktops remain unverified. The combined desktop smoke test includes native GitHub hyperlink clicks, unsafe-scheme rejection, and live shell directory changes. Its terminal selection check, at 45%, 65%, 80%, 100%, and 150% zoom and in Focus mode, also passed with `npm run test:smoke -- --force-device-scale-factor=1.25` and `=1.5`; without the pointer correction, every non-100% zoom case fails. A separate native-click check previously launched the real default browser without confirmation. The board and hyperlink screenshots were visually inspected. Before the smoke test waited for native input, its first-click focus check failed intermittently (5 of 14 runs) even though the terminal received focus a moment later. Before it took back window focus, the board check `typing reaches the note editor without triggering tool shortcuts` failed whenever the smoke window lost focus mid-run (1 of 6 runs here, 4 of 13 in earlier runs on `main`); blurring the window before that check reproduced the failure every time. The native icon comparison against the SVG passed previously. The node-pty `AttachConsole failed` shutdown message no longer appears in smoke runs with the install patch (0 occurrences in 8 runs, compared with 8–9 per run without it). The default rebuild command passed previously; forced source compilation is blocked on this machine by missing MSVC Spectre-mitigated libraries. The working-directory hotfix also passed real Windows PowerShell 5.1, PowerShell 7, and cmd directory checks (spaces, Unicode and reserved characters, independent terminals, failed directory changes, unavailable provider locations, and normal output) plus the full desktop smoke test. Follow-up regression checks cover strict-mode prompts with an absent or existing native exit code in both PowerShell versions, and local-machine/localhost UNC URI decoding. Packaging was attempted and failed with `MSB8040: Spectre-mitigated libraries are required for this project`; the required MSVC libraries remain missing. Linux and macOS desktop validation remains unavailable.
+For Windows E2E, install PowerShell 7 as well as the built-in Windows shells, build with
+`cargo build -p tc-hook` and `cargo build -p terminal-canvas --features e2e`, then run
+`node tests/e2e/preflight.cjs` and `npm run test:e2e`. Playwright connects to WebView2 over a debugging port set only in the child test
+process; the test build supplies it through the native API on elevated Windows. Test workspace/webview files stay under `.cache/tauri-smoke-profile` or
+`.cache/tauri-restoration-profile`. Controlled local CLI substitutes do not contact providers.
+Clipboard tests preserve native formats, and test-only PowerShell shells skip user profiles and disable file history/predictions to keep the fixtures isolated. Native screenshots are saved as `.cache/tauri-*.png`.
 
-The clipboard bridge awaits Electron 45 asynchronous reads/writes before returning IPC results and enforcing text limits. Pending paste is tied to the originating process generation, so a terminal restart discards stale clipboard responses. Clipboard smoke fixtures are isolated from live shell repaints; real process interruption is checked separately in each view. Native text-field checks use Command on macOS and Control elsewhere. The smoke harness disables background animation/timer throttling so native shell helpers cannot suspend its frame-based assertions.
+`tests/reference/node-host/` contains frozen, standalone compatibility oracles, not an application
+host. They use Node built-ins only, are invoked only by the golden capture, and are excluded from
+Tauri's frontend and distribution. Rust tests replay all captured fixtures; UI tests read JSON
+factory fixtures. Golden updates must be intentional and reviewed.
 
-The Duplicate readiness regression is fixed: all 189 integrated automated tests and syntax/package checks pass, along with the full Windows desktop smoke suite and two-launch restoration test. Native queued-command checks in Windows PowerShell 5.1 and PowerShell 7 require folder review while the later pasted command runs and verify direct duplication recovers in the final folder. The creation workflow also verifies the review dialog opens without starting a process. Regression tests cover accepted-line invalidation, missing/replaced/throwing readers, reader output and status, custom prompts, strict mode, and native exit status. Packaging and other-platform limitations above still apply.
+Windows cleanup uses the documented local `portable-pty` patch in `vendor/portable-pty/PATCH.md`.
+A mandatory kill-on-close Job Object is attached in process creation before startup children can
+escape. Unix Stop signals process groups. The PTY backend has a reader, writer, and exit waiter;
+output pauses at 256,000 unacknowledged UTF-16 units and resumes below 32,000. Input is applied in
+per-terminal sequence order, and the host actor owns all mutable terminal/recovery state.
 
-### Rust host (in progress)
+## Windows distribution
 
-The Electron host is being replaced by a Rust host on Tauri 2, following [docs/rust-migration-plan.md](docs/rust-migration-plan.md). The Electron app stays the one you run and ship until the plan's last phase. So far the repository has the Cargo workspace and CI (Phase 0); `crates/tc-core`, the host logic that needs no UI and no child processes (Phase 1); and the process layer (Phase 2): `crates/tc-pty` starts shells in PTYs and tracks their folders and AI sessions, and `crates/tc-hook` is the small sidecar the shell integration runs in place of `session-hook.cjs`. The Tauri host, Windows E2E suite, and packaging preparation are now implemented and under native validation.
+Install the pinned CLI with `cargo install tauri-cli --version 2.12.4 --locked`, then run
+`cargo xtask package-windows` on Windows. It builds the release hook and uses `cargo tauri build`
+with `src-tauri/bundle.windows.json`. Artifacts in `release/` are an NSIS installer and a portable zip
+containing `Terminal Canvas.exe` and `tc-hook.exe` next to each other. The installer can download the
+WebView2 Runtime; the portable zip requires it already installed. The manual release-artifact
+workflow validates source and ten consecutive Windows E2E runs before uploading; it does not
+publish a release.
 
-Install Rust with rustup; `rust-toolchain.toml` pins Rust 1.95 with rustfmt and clippy. `tc-core` parses URLs with Ada, the parser inside Node, so it also compiles C++20: use Visual Studio Build Tools on Windows (no Spectre libraries needed), Xcode Command Line Tools on macOS, or GCC/Clang on Linux.
+## Cutover validation status
 
-| Command | Purpose |
-| --- | --- |
-| `cargo test --workspace` | Run the Rust tests, including every golden fixture and the item-style parity check (needs `node` on PATH) |
-| `cargo xtask check` | Run rustfmt, clippy with warnings as errors, `npm run check`, both test suites, and the golden fixture check |
-| `cargo xtask syntax` | Check JavaScript syntax and the package manifest without executing scripts |
-| `node scripts/capture-golden.cjs` | Record what the JavaScript host modules do into `tests/golden/`; with `--check`, fail if the files are out of date |
-| `npm run test:layout -- --verify-regression` | macOS: compare fifteen rendered scenes with the pre-migration Electron UI and native WebKit; save PNGs and geometry under `.cache/layout-check/` |
-| `cargo build -p tc-hook`, then `cargo run -p tc-pty --example drive -- [--shell bash\|zsh\|pwsh\|cmd] [--ai]` | Start a real shell without the UI, change its folder, and print what the host sees; with `--ai`, also check that stand-ins for Claude Code and Codex have their session IDs captured. Prints `PASS` or `FAIL` |
+This is the prepared cutover candidate. It must not replace the transitional default until the
+remaining gates in [the migration plan](docs/rust-migration-plan.md#progress) pass. The transitional
+build passed three-platform CI, ten consecutive 22-case native Windows suites, original-host
+baseline capture, and Windows packaging. Candidate `cargo xtask check` passed locally with 126
+normal Rust tests, 25 test-host checks, 93 JavaScript passes/one Windows-only skip, and all 18
+goldens, plus formatting, clippy, syntax, and icons. The final candidate still needs native CI and
+packaging validation. Clean Windows 11 full-suite, installer/portable and automatic Electron
+workspace/image compatibility checks are pending; see the [checklist](tests/manual/windows11-checklist.md).
+Native macOS file drop also remains unverified.
 
-Windows process cleanup uses a documented local patch to pinned `portable-pty` 0.9.0 (`vendor/portable-pty/PATCH.md`). The host creates a kill-on-close Job Object before spawn and includes it in process creation, rather than optionally attaching a running shell afterwards. Invalid job setup prevents launch. The Unix implementation remains unchanged. Native Windows tests now pass immediate job membership, invalid-job rejection, and descendant cleanup after Stop, close, and host kill.
+Source lives in `src/`, `crates/`, and `src-tauri/`; development tasks live in `xtask/`. See
+[the architecture](docs/architecture.md) and `AGENTS.md` for layout and constraints.
 
-The Tauri host is now implemented in `src-tauri/`, with `src/bridge.js` preserving the renderer API. It is still under validation; `npm start` continues to run Electron. To try the Rust app, build its hook first with `cargo build -p tc-hook`, then run `cargo run -p terminal-canvas`. No Tauri CLI or frontend dev server is needed. The app uses the same `terminal-canvas` data folder as Electron, so a normal launch opens your existing workspace.
+Rendered layout has a separate [visual parity check](tests/visual/README.md). It extracts the actual JavaScript UI at commit `f489d3b`, renders it in Electron, and compares the current UI in Electron and macOS WKWebView at three content sizes. Fifteen scenes pass: current controls stay within 1.5 CSS pixels of the historical layout, and current Chromium/WebKit control and icon bounds agree within 0.5 pixels with matching colors. The negative control detects the original WebKit shifts. A macOS-only compatibility stylesheet makes control line boxes, icon wrappers, and input heights explicit so browser rounding cannot accumulate into shifted rows and dialog buttons; Windows/Linux retain their existing typography. The Tauri window also subtracts measured native decorations so its initial/minimum outer dimensions match Electron's 1500×960/1000×680. The rebuilt native macOS app was visually checked and closed with status 0. Windows/Linux visual results remain unverified.
 
-Requirements for the Rust desktop build:
+The transitional Rust build completed native macOS Save, repeated Save, portable Export, and Open into an empty test profile with the image rendered and saved terminals stopped. The [manual file verifier](tests/manual/README.md) checks those outputs with the frozen legacy oracle here. A pre-migration Electron process rewrote the Rust autosave unchanged and Rust reopened it, but Electron visual inspection was refused by Computer Use and remains unverified. Candidate-specific full manual checks and Windows runtime gates remain open.
 
-- Windows: MSVC Build Tools, including the Windows SDK, and the WebView2 Runtime; the Spectre libraries are not needed.
-- macOS: Xcode Command Line Tools. Tauri keeps its standard macOS Edit menu for native Command-key editing shortcuts.
-- Ubuntu/Debian: a C++20 compiler plus `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, and `patchelf`.
+The transitional Rust build also passed native macOS controlled-Bash capture, stopped restoration, exact-ID Resume, and Start fresh shell across two launches. The [manual restoration fixture](tests/manual/README.md#bash-session-restoration) checks executable paths before every shell starts; logs show four provider calls, six shells, preserved metadata, and all six PIDs gone after exit. This does not replace candidate-specific full manual or Windows validation. Generated command permission descriptors are ignored; removing them before the candidate build regenerated all 27 descriptors and its 25 test-host checks passed.
 
-For an isolated test launch, run `cargo run -p terminal-canvas --features e2e -- --smoke-test`. Its workspace and webview data live under `.cache/tauri-smoke-profile`; test builds default there even without flags, so launching a test bundle cannot open normal user data. The test-only commands query host state, focus/request closing the window, and intercept link opens; test builds keep the production close-confirmation flow; compiling this feature in a release profile is rejected. On Windows, build with `cargo build -p tc-hook` and `cargo build -p terminal-canvas --features e2e`, then run `node tests/e2e/preflight.cjs` and `npm run test:e2e`. Playwright connects to WebView2 over CDP; the harness sets its debugging port only in the child test process, and the Windows test build passes those arguments through the native API for elevated WebView2 hosts. The two-launch restoration test uses `.cache/tauri-restoration-profile` and controlled local Claude/Codex substitutes. Its PowerShell shells skip user profiles and disable file history/predictions so the fixtures stay isolated; normal builds keep normal login profiles. Screenshots are saved as `.cache/tauri-*.png`.
+The [macOS clipboard guard](tests/manual/README.md#preserve-the-macos-clipboard-during-native-checks) keeps native clipboard formats in memory for manual tests. Its private self-test and general restoration checks passed locally; the macOS CI job is configured for the private test only. The transitional build subsequently passed native board copy/cut/paste, undo/redo and PNG paste, exact xterm copy and single paste in canvas/Focus, and real Ctrl+C interruption. Original clipboard formats and prior test profiles were restored; the app exited 0. Native drawing/group/minimap checks also passed; native macOS file drop remains unverified.
 
-Current validation is recorded in the [migration plan](docs/rust-migration-plan.md#progress). [CI run 42876975230](https://github.com/yutigi/TerminalCanvas/actions/runs/42876975230) passed Windows, macOS, and Ubuntu, followed by ten consecutive native Windows desktop suites (22 cases each, 220 passes, zero skips) and Windows packaging. The original Windows JavaScript baseline also passed its 189 tests, native smoke, and two-launch restoration; [baseline measurements](docs/windows-migration-baseline.md) preserve the raw evidence and measurement limits. The hosted runner is Windows Server 2025; the required Windows 11 checks remain separate.
-
-Native macOS checks passed shell input/output, cwd/duplication/Stop, Cancel/Confirm close, native field editing, Save/Export/Open with matching image bytes and stopped cards, and controlled two-launch provider recovery. Native board copy/cut/paste, undo/redo, image paste, terminal copy/paste in canvas/Focus, real Ctrl+C interruption, drawing, attached arrows, grouping/movement, and minimap keyboard navigation also passed. Runs used isolated profiles; the original clipboard formats and prior test profiles were restored. Native macOS file drop remains unverified. Windows E2E covers file drop, creation/folder dialogs, three-shell directory displays, selection, clipboard, links, board/image workflows, crash recovery, and process-tree cleanup.
-
-Windows packaging preparation is available with `cargo install tauri-cli --version 2.12.4 --locked`, then `cargo xtask package-windows` (or `npm run package:rust`). The task builds the release hook, stages it as a Tauri sidecar, runs `cargo tauri build` with `src-tauri/bundle.windows.json`, and writes an NSIS installer and a portable zip to `release/`. Both contain `Terminal Canvas.exe` and `tc-hook.exe` in the same installed/extracted folder. The installer can download the WebView2 Runtime if needed; the portable zip requires it already installed. Windows E2E checks also require PowerShell 7. `.github/workflows/release.yml` builds reviewable artifacts after source validation and ten native E2E passes, reusing the exact validated commit when called by CI; it does not publish a release. Packaging passed in run 42876975230; normal-user installation and portable execution on clean Windows 11 remain unverified. The [Windows 11 checklist](tests/manual/windows11-checklist.md) covers automatic recovery from the original Electron app and image/layout equivalence. Its PowerShell 5.1 checker passed positive and negative fixtures on native Windows. A portable test runtime bundles Node, PowerShell 7, and the isolated debug host so the separate 22-case Windows 11 suite needs no compiler installation; its relocated CI validation is in progress.
-
-Native icons now use the pinned Rust resvg renderer: `cargo xtask icons` generates them, and `cargo xtask icons --check` verifies them without Electron or a display. The regenerated PNG and nine-size ICO were visually compared against the previous logo. Renderer unit tests now clone `tests/golden/renderer.json`; Rust checks those captured defaults against its own factories.
-
-The golden fixtures record the JavaScript behavior the Rust host must keep: workspace validation and its error messages, the terminal directory and session decoders, image assets, shell integration text, and Node's lenient base64 and UTF-8 decoding. The Rust tests replay every case, and split each terminal stream at every byte to check that output arriving in pieces gives the same result. Platform, home folder, and hostname are fixed in the script, so every machine writes the same files. Regenerate them only after changing JavaScript behavior on purpose, and review the diff.
-
-Rendered layout has a separate [visual parity check](tests/visual/README.md). It extracts the actual JavaScript UI at commit `f489d3b`, renders it in Electron, and compares the current UI in Electron and macOS WKWebView at three content sizes. Fifteen scenes pass: current controls stay within 1.5 CSS pixels of the historical layout, and current Chromium/WebKit control and icon bounds agree within 0.5 pixels with matching colors. The negative control detects the original WebKit shifts. A macOS-only compatibility stylesheet makes control line boxes, icon wrappers, and input heights explicit so browser rounding cannot accumulate into shifted rows and dialog buttons; Windows/Linux retain their existing typography. The Tauri window subtracts measured native decorations and clamps initial bounds to the monitor work area, preserving Electron's 1500×960/1000×680 default/minimum behavior. The rebuilt native macOS app was visually checked and closed with status 0. Windows/Linux visual results remain unverified.
-
-CI (`.github/workflows/ci.yml`) runs on Windows, macOS, and Linux with Node 22: the JavaScript checks and tests, the golden check, rustfmt, clippy, and the Rust tests. Install npm dependencies with Node 22; npm 11 (Node 24 and later) rejects `package-lock.json` because of missing optional Windows packages. On macOS and Linux, three terminal-manager tests that feed real folders through Windows file URL decoding are skipped.
-
-Source lives in `src/`, scripts in `scripts/`, tests in `tests/`, and design notes in [docs/architecture.md](docs/architecture.md). `AGENTS.md` records the current layout, commands, and migration constraints.
-
-The sidebar, browser favicon, desktop window, and Windows executable use the same logo. After editing `src/assets/logo.svg`, run `npm run icons` and include the updated `icon.png` and `icon.ico` assets. Run `npm run icons -- --check` to verify they match the SVG. Restart the desktop app to see a new window icon; rebuild the portable executable to update its file icon.
-
-Native file workflow artifacts can be checked with the [manual round-trip verifier](tests/manual/README.md). It validates complete layouts and image bytes against the legacy modules; native UI and process observations remain separate. An exact pre-migration Electron process also rewrote the Rust autosave unchanged, and Rust reopened that output with its image rendered. Electron visual inspection remains pending because Computer Use did not approve that app.
-
-The [manual Bash restoration fixture](tests/manual/README.md#bash-session-restoration) uses only local Claude/Codex stand-ins, checks executable resolution before each shell starts, and records exact resume arguments and Unicode directories. File/PID verification is separate from native UI observations. Tauri regenerates command permission descriptors from `src-tauri/build.rs`; `src-tauri/permissions/autogenerated/` is ignored.
-
-A [macOS clipboard guard](tests/manual/README.md#preserve-the-macos-clipboard-during-native-checks) preserves native formats in memory during manual tests. Its private-pasteboard self-test is configured in macOS CI; general clipboard restoration was also checked locally. Native board/xterm clipboard and image-paste checks passed with exact selected-text and single-paste observations; the guard restored the original native formats byte for byte.
-
-PR [#16](https://github.com/yutigi/TerminalCanvas/pull/16) includes the layout and arrowhead review fixes. Rendered regression scenes check actual creation/style controls and arrowhead pixels, deliberately reject missing fill in both engines, and cover Chromium forced colors. Native WebView2 repeats normal/forced-color/negative arrow coverage in the passing desktop suites. Install the separately locked visual test runtime with `npm ci --prefix tests/visual`; it is excluded from application dependencies and bundles.
+The renderer regression suite now checks fifteen scenes, actual arrowhead PNG pixels, deliberate missing-fill failures in Chromium/WebKit, and Chromium forced-colors colors. Install the locked test-only runtime with `npm ci --prefix tests/visual`; it remains outside application dependencies. WebView2 repeated the paint checks in all ten passing native Windows suites. The Unicode hook and direct Unicode input/cwd tests passed. The separate Windows 11 and candidate gates remain open; see PR #16 and the migration plan.

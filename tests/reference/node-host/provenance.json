@@ -1,0 +1,12 @@
+{
+    "commit": "f489d3b726690ffa3b0132fdc400f8dc31a460db",
+    "files": {
+        "workspace.cjs": "c8dd540f85c1d6da418b97145c357cb1ae9caf0f0d91041bb2003fcd90fca3a7",
+        "session-metadata.cjs": "1092a186d25e4ba504463c703b08a3f40b6f55aa0ce52590816f791cdfc67c09",
+        "terminal-cwd.cjs": "4d6e6823bd414cc7b9255ab565170a8944f0f990f53c0dedcde91140443d00f3",
+        "assets.cjs": "96c04d306abf3ccbfbe0b6a20fbb26285bd7e4d38b9088a85552fc6f3ce48405",
+        "shell-integration.cjs": "04309f93cdbdf050ecfb2cb296d3346f233cbcd01213e75366fbe6e4a663938c",
+        "session-hook.cjs": "5c68920dad8813812c936d64657588bb8fd2b37ff7ad6e3040cfb1b4325534c0",
+        "item-styles.js": "b15b7ded1ae6b549b2ee0060f1c8fa45f0ef2f45d98d3ff2af41900ff541498f"
+    }
+}
