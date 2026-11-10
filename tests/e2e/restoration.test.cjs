@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { launch, until, hasOutputLine, psQuote, screenshot, root } = require('./harness.cjs');
+const { powerShellLiteral } = require('../baseline/support.cjs');
 const ids = { claude: '12345678-1234-4321-9876-123456789abc', codex: '0f1e2d3c-4b5a-4968-8776-655443322110' };
 
 test('two launches recover Claude and Codex IDs, resume exactly, and retain metadata in a fresh shell', {
@@ -45,7 +46,7 @@ console.log('SESSION_TEST_DONE:' + provider);
         cards.push(card);
         await until(async () => !(await first.page.evaluate(card => invoke('duplicate-directory', card), card)).warning, 'Shell did not reach its prompt.');
         const marker = `STANDIN_RESOLVED:${provider}`;
-        const command = `$env:Path=${psQuote(tools + path.delimiter)}+$env:Path; Set-Location -LiteralPath ${psQuote(changed)}; `
+        const command = `$env:Path=${psQuote(tools + path.delimiter)}+$env:Path; Set-Location -LiteralPath ${powerShellLiteral(changed)}; `
             + `if ((Get-Command ${provider} -CommandType Application).Source -ieq ${psQuote(path.join(tools, `${provider}.cmd`))}) { 'STANDIN_' + 'RESOLVED:${provider}' } else { throw 'Uncontrolled provider executable' }`;
         await first.page.evaluate(({ id, command }) => window.terminalCanvas.input(id, command + '\r'), { id: card.id, command });
         await until(async () => hasOutputLine(await first.output(card.id), marker), 'The controlled application did not resolve; no provider was invoked.');
