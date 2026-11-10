@@ -106,7 +106,9 @@ async function main() {
                             if (child.exitCode !== null || child.signalCode) throw Object.assign(new Error('Reference exited before CDP'), { terminal: true });
                             return comparison.probeCdp(port);
                         }, 'Reference benchmark CDP did not start.', 30000);
-                        return comparison.connectRenderer(port, 'file:');
+                        const connection = await comparison.connectRenderer(port, 'file:');
+                        fs.writeFileSync(path.join(folder, 'observer-ready'), 'ready');
+                        return connection;
                     })();
                     observed.catch(() => {});
                 }) });

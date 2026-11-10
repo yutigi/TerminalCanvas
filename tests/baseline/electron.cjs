@@ -97,6 +97,11 @@ if (mode === 'measure') {
     async function measure(win) {
         await wait(() => win.webContents.executeJavaScript('typeof ready !== "undefined" && ready'), 'The reference renderer did not initialize');
         const startupMs = Date.now() - Number(process.env.TC_BASELINE_SPAWN_MS);
+        if (process.env.TC_BENCHMARK_PORT) {
+            // Observe the empty, ready workspace before either benchmark starts
+            // its four shells, avoiding asymmetric startup CPU contention.
+            await wait(() => fs.existsSync(path.join(output, 'observer-ready')), 'The external startup observer did not acknowledge readiness');
+        }
         const { createWorkspace, createCard } = require(path.join(reference, 'src/workspace.cjs'));
         const cwd = fs.realpathSync.native(output);
         const board = createWorkspace();
