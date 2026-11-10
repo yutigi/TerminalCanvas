@@ -143,6 +143,15 @@ test('native terminal clipboard shortcuts paste once, preserve native fields, an
             await input(h.page, real.id, `Write-Output '${marker}'; Start-Sleep -Seconds 30\r`);
             await until(async () => hasOutputLine(await h.output(real.id), marker), 'Blocking command did not start.');
             await key(h.page, 'Control+c');
+            // Keyup confirms browser dispatch, not completion of PowerShell's
+            // asynchronous pipeline cancellation. Its prompt must return before
+            // the next command can avoid being discarded with interrupted input.
+            try {
+                await until(async () => !(await h.page.evaluate(card => invoke('duplicate-directory', card), real)).warning,
+                    'The native interrupt did not return PowerShell to its prompt.', 10000);
+            } catch (error) {
+                throw new Error(`${error.message}\n${(await h.output(real.id)).slice(-3000)}`, { cause: error });
+            }
             await input(h.page, real.id, `Write-Output 'RESUMED_${focus}'\r`);
             await until(async () => hasOutputLine(await h.output(real.id), `RESUMED_${focus}`), 'Shell did not resume after a native interrupt.');
             await h.page.evaluate(id => invoke('stop', { id }), real.id);
