@@ -80,7 +80,14 @@ for (const shell of ['', 'pwsh', 'cmd.exe']) {
         const first = await startTerminal(h.page, { title: shell || 'Default shell', cwd: project, command: shell });
         const second = await startTerminal(h.page, { title: 'Independent shell', cwd: project, x: 700 });
         const displayed = id => h.page.locator(`[data-id="${id}"] .card-directory span`).textContent();
-        await until(async () => await displayed(first.id) === project && await displayed(second.id) === project, 'Initial directories did not reach the UI.');
+        try {
+            await until(async () => await displayed(first.id) === project && await displayed(second.id) === project, 'Initial directories did not reach the UI.');
+        } catch (error) {
+            console.error('Initial directory observations:', JSON.stringify({ project,
+                first: await displayed(first.id), second: await displayed(second.id),
+                firstOutput: await h.output(first.id), secondOutput: await h.output(second.id) }));
+            throw error;
+        }
         const cmd = shell === 'cmd.exe';
         await input(h.page, first.id, cmd ? `cd /d "${target}"\r` : `Set-Location -LiteralPath ${psQuote(target)}\r`);
         await until(async () => await displayed(first.id) === target, 'Changed directory was not displayed.');

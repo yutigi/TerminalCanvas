@@ -6,6 +6,10 @@ on:
         description: Build the Rust test host and measure both development hosts on this runner
         type: boolean
         default: false
+      kit_only:
+        description: Validate the relocated Windows 11 test kit without repeating the baseline
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/windows-baseline.yml
@@ -23,6 +27,7 @@ concurrency:
 
 jobs:
   baseline:
+    if: ${{ !inputs.kit_only }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -72,3 +77,47 @@ jobs:
           path: .cache/windows-baseline/reference/release/*.exe
           compression-level: 0
           if-no-files-found: error
+
+  windows11-test-kit:
+    if: ${{ inputs.kit_only }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install pinned test dependencies
+        run: npm ci
+      - name: Build and validate the relocated kit
+        shell: pwsh
+        run: |
+          node scripts/package-windows-test.cjs --pwsh-home "$PSHOME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $relocated = Join-Path $env:RUNNER_TEMP 'TC kit ไทย'
+          Move-Item -LiteralPath .cache/windows11-e2e-kit -Destination $relocated
+          & (Join-Path $relocated 'Run-Checks.ps1')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload only the validated runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows11-e2e-kit
+          path: ${{ runner.temp }}/TC kit ไทย/
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows11-kit-diagnostics
+          path: |
+            ${{ runner.temp }}/TC kit ไทย/.cache/windows11-e2e.log
+            ${{ runner.temp }}/TC kit ไทย/.cache/tauri-*.png
+          include-hidden-files: true
+          if-no-files-found: ignore
