@@ -115,6 +115,16 @@ pub struct TestRun {
 
 impl TestRun {
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
+        let root = std::env::var_os("TC_E2E_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
+        if !root.is_absolute() {
+            return Err("The test root must be absolute.".into());
+        }
+        Self::from_args_in(args, root)
+    }
+
+    fn from_args_in(args: impl IntoIterator<Item = String>, root: PathBuf) -> Result<Self, String> {
         let mut profile = None;
         for arg in args {
             let name = if arg == "--smoke-test" {
@@ -131,13 +141,12 @@ impl TestRun {
                 if profile.is_some() {
                     return Err("Choose one test profile flag.".into());
                 }
-                profile = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.cache").join(name));
+                profile = Some(root.join(".cache").join(name));
             }
         }
         // A test build must never fall back to the user's real workspace, even when launched
         // through a native app bundle that supplies no command-line arguments.
-        let profile =
-            profile.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.cache/tauri-smoke-profile"));
+        let profile = profile.unwrap_or_else(|| root.join(".cache/tauri-smoke-profile"));
         Ok(Self {
             profile,
             links: Mutex::new(Vec::new()),
@@ -191,6 +200,17 @@ pub fn e2e_focus(webview: Webview, _run: State<'_, TestRun>) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relocated_test_binaries_keep_profiles_under_the_explicit_test_root() {
+        let root = std::env::temp_dir().join("relocated kit ไทย 工作");
+        let run = TestRun::from_args_in(["--restoration-smoke=save".into()], root.clone()).unwrap();
+        assert_eq!(run.profile, root.join(".cache/tauri-restoration-profile"));
+        assert_eq!(
+            TestRun::from_args_in([], root.clone()).unwrap().profile,
+            root.join(".cache/tauri-smoke-profile")
+        );
+    }
 
     #[test]
     fn emulated_browser_dpi_retains_the_logical_app_minimum() {

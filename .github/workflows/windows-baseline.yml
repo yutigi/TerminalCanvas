@@ -43,6 +43,8 @@ jobs:
           cargo build -p tc-hook
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build -p terminal-canvas --features e2e
+      - name: Verify the Windows 11 file checker with positive and negative fixtures
+        run: node --test tests/windows-manual-verifier.test.cjs
       - name: Capture the immutable pre-migration host
         id: reference
         run: |

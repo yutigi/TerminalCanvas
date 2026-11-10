@@ -57,7 +57,7 @@ async function launch({ phase, clean = false, env = {}, scale } = {}) {
     if (scale) args.push(`--force-device-scale-factor=${scale}`);
     const startedAt = Date.now();
     const child = spawn(executable, [phase ? `--restoration-smoke=${phase}` : '--smoke-test'], {
-        cwd: root, env: { ...process.env, ...env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: args.join(' ') },
+        cwd: root, env: { ...process.env, ...env, TC_E2E_ROOT: root, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: args.join(' ') },
         stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false
     });
     let logs = '', terminal = false, spawnError;

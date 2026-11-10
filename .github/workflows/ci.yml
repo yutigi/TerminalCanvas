@@ -154,6 +154,27 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
+      - name: Build and relocate the portable Windows 11 test runtime
+        if: runner.os == 'Windows'
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          node scripts/package-windows-test.cjs --pwsh-home "$PSHOME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $relocated = Join-Path $env:RUNNER_TEMP 'TC kit ไทย'
+          Move-Item -LiteralPath .cache/windows11-e2e-kit -Destination $relocated
+          & (Join-Path $relocated 'Run-Checks.ps1')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload the validated Windows 11 test runtime
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows11-e2e-kit
+          path: ${{ runner.temp }}/TC kit ไทย/
+          include-hidden-files: true
+          if-no-files-found: error
+
   windows-artifacts:
     name: Windows distribution artifacts
     needs: test
