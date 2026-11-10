@@ -4,6 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { testSummary, guardRestorationEnvironment } = require('./baseline/support.cjs');
+const { withSavedClipboard } = require('./baseline/clipboard.cjs');
+const { EventEmitter } = require('node:events');
+const { PassThrough, Writable } = require('node:stream');
 
 test('baseline counts require a completed, nonempty, successful native test report', () => {
     const tap = '# tests 12\n# pass 10\n# fail 0\n# cancelled 0\n# skipped 2\n# todo 0\n';
@@ -12,6 +15,40 @@ test('baseline counts require a completed, nonempty, successful native test repo
     assert.throws(() => testSummary(tap.replace('# tests 12', '# tests 0')), /must execute/);
     assert.throws(() => testSummary(tap.replace('# fail 0', '# fail 1')), /tests failed/);
     assert.throws(() => testSummary(tap.replace('# cancelled 0', '# cancelled 1')), /cancelled/);
+});
+
+function clipboardGuard({ acknowledge = true } = {}) {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    let restored = false;
+    child.stdin = new Writable({ write(data, _encoding, done) {
+        assert.equal(data.toString(), 'restore\n');
+        restored = true;
+        if (acknowledge) child.stdout.write('CLIPBOARD_RESTORED\n');
+        done(); setImmediate(() => child.emit('exit', 0));
+    } });
+    return { launch: () => { setImmediate(() => child.stdout.write('CLIPBOARD_SAVED\n')); return child; },
+        restored: () => restored };
+}
+
+test('baseline clipboard restoration finishes even when the Electron smoke task fails', async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-baseline-clipboard-'));
+    const guard = clipboardGuard();
+    try {
+        await assert.rejects(withSavedClipboard(async () => { throw new Error('smoke child failed'); },
+            path.join(folder, 'guard.log'), guard.launch), /smoke child failed/);
+        assert.ok(guard.restored());
+        assert.match(fs.readFileSync(path.join(folder, 'guard.log'), 'utf8'), /CLIPBOARD_RESTORED/);
+    } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('baseline clipboard checks reject an exit without a native restoration acknowledgement', async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-baseline-clipboard-'));
+    const guard = clipboardGuard({ acknowledge: false });
+    try {
+        await assert.rejects(withSavedClipboard(async () => {}, path.join(folder, 'guard.log'), guard.launch), /must be restored/);
+        assert.ok(guard.restored());
+    } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
 test('baseline restoration refuses an uncontrolled or ambiguous PATH before any provider can run', () => {

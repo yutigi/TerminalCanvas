@@ -6,6 +6,7 @@ const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { testSummary } = require('../tests/baseline/support.cjs');
+const { withSavedClipboard } = require('../tests/baseline/clipboard.cjs');
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, '.cache/windows-baseline');
 const reference = path.join(output, 'reference');
@@ -13,7 +14,7 @@ const bootstrap = path.join(root, 'tests/baseline/electron.cjs');
 const report = { schema: 1, status: 'incomplete', capturedAt: new Date().toISOString(),
     reference: require('../tests/visual/reference.json').commit,
     platform: { os: os.release(), arch: os.arch(), cpus: os.cpus().map(cpu => cpu.model), totalMemoryBytes: os.totalmem(), node: process.version },
-    configuration: 'Unpackaged development host; isolated profiles; PowerShell -NoProfile; no provider calls',
+    configuration: 'Unpackaged development host; isolated profiles; PowerShell -NoProfile; controlled text clipboard with external native restoration; no provider calls',
     measurements: 'Startup: process spawn to renderer ready. Memory: three native process-tree samples after four idle prompts; private commit and summed working sets (shared pages may be counted more than once). No OS cache flush.',
     stages: {} };
 let ownsOutput = false;
@@ -76,7 +77,9 @@ async function main() {
     const tests = fs.readdirSync(path.join(reference, 'tests')).filter(name => name.endsWith('.test.cjs')).map(name => path.join('tests', name));
     report.tests = testSummary(await run('tests', process.execPath, ['--test', '--test-reporter=tap', ...tests])); save();
     const electron = require(path.join(reference, 'node_modules/electron'));
-    await run('smoke', electron, [bootstrap, reference, output, 'smoke', '--smoke-test'], { timeout: 600000 });
+    await withSavedClipboard(() => run('smoke', electron, [bootstrap, reference, output, 'smoke', '--smoke-test'],
+        { timeout: 600000, env: { TC_BASELINE_CLIPBOARD_GUARDED: '1' } }), path.join(output, 'clipboard-guard.log'));
+    report.smokeClipboardRestored = true; save();
     for (const phase of ['save', 'reopen']) {
         await run(`restoration-${phase}`, electron, [bootstrap, reference, output, phase, `--restoration-smoke=${phase}`], { timeout: 120000 });
     }

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { app } = require('electron');
+const { app, clipboard } = require('electron');
 const { guardRestorationEnvironment } = require('./support.cjs');
 const [reference, output, mode] = process.argv.slice(2);
 assert.equal(process.platform, 'win32', 'The baseline requires native Windows');
@@ -20,6 +20,18 @@ pty.spawn = (shell, args, options) => {
     }
     return nativeSpawn(shell, args, options);
 };
+
+if (mode === 'smoke') {
+    assert.equal(process.env.TC_BASELINE_CLIPBOARD_GUARDED, '1', 'Native smoke requires the external clipboard guard');
+    const smoke = require(path.join(reference, 'scripts/smoke.cjs'));
+    const originalRun = smoke.run;
+    smoke.run = async options => {
+        // The original clipboard fixture cannot construct a ClipboardItem for an
+        // empty native item. Give that unchanged fixture a controlled text item.
+        await clipboard.writeText('Terminal Canvas baseline clipboard fixture');
+        return originalRun(options);
+    };
+}
 
 if (mode === 'measure') {
     fs.mkdirSync(output, { recursive: true });

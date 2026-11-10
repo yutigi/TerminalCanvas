@@ -19,6 +19,14 @@ fixture's local CLI directory and its Claude stand-in exists. No real provider
 is invoked. All workspaces, generated tools, images, and app storage stay in the
 fresh baseline directory.
 
+The original smoke clipboard fixture cannot snapshot an empty native clipboard
+item. Before smoke, the existing native Windows guard materializes all original
+formats in a separate process; the bootstrap then supplies a known text item.
+The guard restores the original clipboard after the Electron child ends, including
+failure or parent-pipe EOF. No clipboard data is printed or written to disk, and
+the archived smoke source and assertions stay unchanged. The guard log must
+confirm restoration before smoke is accepted.
+
 `report.json` records test counts, each step's exit status, OS/CPU/RAM/Node
 versions, three startup timings, nine native process-tree samples, package sizes,
 and source-integrity checks. Startup runs from spawning the Electron process to
