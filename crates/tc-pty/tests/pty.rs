@@ -9,12 +9,18 @@ use tc_core::workspace::create_card;
 use tc_pty::PtyBackend;
 use tc_pty::manager::{Config, EventSink, SessionEvent, SessionKey, TerminalManager};
 
+#[cfg(any(windows, test))]
+#[path = "support/cursor.rs"]
+mod cursor;
+
 struct Live {
     manager: TerminalManager,
     inbox: Receiver<(SessionKey, SessionEvent)>,
     events: Vec<Value>,
     /// Every `data` event so far, joined.
     output: String,
+    #[cfg(windows)]
+    cursor: cursor::CursorQuery,
 }
 
 impl Live {
@@ -29,6 +35,8 @@ impl Live {
             inbox,
             events: Vec::new(),
             output: String::new(),
+            #[cfg(windows)]
+            cursor: cursor::CursorQuery::default(),
         }
     }
 
@@ -39,7 +47,14 @@ impl Live {
             for event in self.manager.take_events() {
                 let event = serde_json::to_value(event).unwrap();
                 if event["type"] == "data" {
-                    self.output.push_str(event["data"].as_str().unwrap());
+                    let data = event["data"].as_str().unwrap();
+                    self.output.push_str(data);
+                    #[cfg(windows)]
+                    for _ in 0..self.cursor.feed(data) {
+                        self.manager
+                            .write(event["id"].as_str().unwrap(), cursor::POSITION)
+                            .unwrap();
+                    }
                 } else {
                     self.events.push(event);
                 }
@@ -261,6 +276,7 @@ mod windows {
             let mut live = Live::new(Config::from_environment());
             let (card, id) = card(json!({ "command": command }));
             live.manager.start(&card, None, None, None).unwrap();
+            wait_for_prompt(&mut live, &id);
             let cd = if command == "cmd" {
                 format!("cd /d \"{target}\"\r")
             } else {
@@ -304,6 +320,7 @@ mod windows {
         let mut live = Live::new(Config::from_environment());
         let (card, id) = card(json!({}));
         live.manager.start(&card, None, None, None).unwrap();
+        wait_for_prompt(&mut live, &id);
         live.manager
             .write(&id, "$p = Start-Process -PassThru -NoNewWindow ping -ArgumentList '-n','300','127.0.0.1'; 'ch' + 'ild=' + $p.Id\r")
             .unwrap();
@@ -322,5 +339,17 @@ mod windows {
             .unwrap();
         let alive = String::from_utf8_lossy(&listing.stdout).contains(&child.to_string());
         assert!(!alive, "the job object ends processes the shell started");
+    }
+
+    fn wait_for_prompt(live: &mut Live, id: &str) {
+        assert!(
+            live.pump(Duration::from_secs(30), |live| {
+                live.events
+                    .iter()
+                    .any(|event| event["type"] == "cwd" && event["id"] == id)
+            }),
+            "the shell must finish its ConPTY cursor handshake before input: {}",
+            live.output
+        );
     }
 }

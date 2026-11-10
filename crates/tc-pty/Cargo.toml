@@ -23,6 +23,7 @@ windows-sys.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
+dunce.workspace = true
 
 [lints]
 workspace = true

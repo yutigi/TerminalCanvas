@@ -23,6 +23,10 @@ use tc_core::workspace::create_card;
 use tc_pty::manager::{Config, EventSink, HOOK_POLL_INTERVAL, Integrations, SessionEvent, SessionKey, TerminalManager};
 use tc_pty::{DirectoryRequest, PtyBackend, TerminalEvent};
 
+#[cfg(any(windows, test))]
+#[path = "../tests/support/cursor.rs"]
+mod cursor;
+
 const CLAUDE_ID: &str = "12345678-1234-4321-9876-123456789abc";
 const CODEX_ID: &str = "abcdef01-1234-4321-9876-123456789abc";
 
@@ -57,6 +61,8 @@ struct Driver {
     verbose: bool,
     output: String,
     last_poll: Instant,
+    #[cfg(windows)]
+    cursor: cursor::CursorQuery,
 }
 
 impl Driver {
@@ -89,8 +95,18 @@ impl Driver {
 
     fn show(&mut self, event: &TerminalEvent) {
         match event {
-            TerminalEvent::Data { data, .. } => {
+            TerminalEvent::Data { id, data } => {
                 self.output.push_str(data);
+                // ConPTY inherits the cursor by asking its terminal for a position.
+                // Without xterm, the UI-free driver must supply that response itself.
+                #[cfg(windows)]
+                for _ in 0..self.cursor.feed(data) {
+                    self.manager
+                        .write(id, cursor::POSITION)
+                        .expect("answer the terminal cursor query");
+                }
+                #[cfg(not(windows))]
+                let _ = id;
                 if self.verbose {
                     self.log("output", format!("{data:?}"));
                 }
@@ -160,9 +176,10 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
     let root = std::env::temp_dir().join(format!("tc drive {}", std::process::id()));
     let target = root.join("folder with spaces 子");
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-    let root = root.canonicalize().map_err(|e| e.to_string())?;
-    let target = target.canonicalize().map_err(|e| e.to_string())?;
-    let target_text = target.to_string_lossy().trim_start_matches(r"\\?\").to_owned();
+    // Native shells must discover the stand-ins through ordinary Windows paths.
+    let root = dunce::canonicalize(root).map_err(|e| e.to_string())?;
+    let target = dunce::canonicalize(target).map_err(|e| e.to_string())?;
+    let target_text = target.to_string_lossy().into_owned();
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let hook = exe.parent().and_then(Path::parent).map(|dir| {
@@ -201,6 +218,8 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
         verbose,
         output: String::new(),
         last_poll: Instant::now(),
+        #[cfg(windows)]
+        cursor: cursor::CursorQuery::default(),
     };
     let card =
         serde_json::to_value(create_card(&json!({ "cwd": root.to_string_lossy(), "command": command })).unwrap())
@@ -219,7 +238,17 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
     );
 
     let result = (|| {
-        driver.wait("the first prompt", Duration::from_secs(20), |d| !d.output.is_empty())?;
+        driver.wait("the first prompt", Duration::from_secs(30), |d| {
+            if platform.is_windows() {
+                d.manager
+                    .snapshot()
+                    .get(&id)
+                    .is_some_and(|metadata| metadata.cwd == started.metadata.cwd)
+                    && d.output.contains('>')
+            } else {
+                !d.output.is_empty()
+            }
+        })?;
         std::thread::sleep(Duration::from_millis(500));
         driver
             .manager
@@ -263,7 +292,7 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
                 let quoted = tools_text.replace('\'', "''");
                 (
                     format!("$env:PATH = '{quoted};' + $env:PATH\r"),
-                    "if ((Get-Command claude -CommandType Application).Source -like ($env:PATH.Split(';')[0] + '*')) { 'STAND' + 'IN=OK' }\r".to_owned(),
+                    "if ((Get-Command claude -CommandType Application).Source -eq (Join-Path ($env:PATH.Split(';')[0]) 'claude.cmd')) { 'STAND' + 'IN=OK' }\r".to_owned(),
                 )
             } else {
                 let quoted = tools_text.replace('\'', "'\\''");
