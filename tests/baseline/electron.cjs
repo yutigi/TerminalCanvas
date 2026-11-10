@@ -36,7 +36,14 @@ if (mode === 'smoke') {
             if (Number.isFinite(event.x) && Number.isFinite(event.y)) point = { x: event.x, y: event.y, type: event.type };
             return sendInput.call(this, event);
         };
-        try { return await originalRun(options); }
+        try {
+            return await originalRun({ ...options, createCard(cardOptions = {}) {
+                // On the hosted 681px content viewport, the unchanged link fixture
+                // otherwise clicks the floating creation toolbar over its first cell.
+                const placement = cardOptions.title === 'Hyperlink smoke terminal' ? { x: 80 } : {};
+                return options.createCard({ ...cardOptions, ...placement });
+            } });
+        }
         catch (error) {
             try {
                 const diagnostics = await contents.executeJavaScript(`(() => {
