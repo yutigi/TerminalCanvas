@@ -29,7 +29,29 @@ if (mode === 'smoke') {
         // The original clipboard fixture cannot construct a ClipboardItem for an
         // empty native item. Give that unchanged fixture a controlled text item.
         await clipboard.writeText('Terminal Canvas baseline clipboard fixture');
-        return originalRun(options);
+        const contents = options.win.webContents;
+        const sendInput = contents.sendInputEvent;
+        let point;
+        contents.sendInputEvent = function (event) {
+            if (Number.isFinite(event.x) && Number.isFinite(event.y)) point = { x: event.x, y: event.y, type: event.type };
+            return sendInput.call(this, event);
+        };
+        try { return await originalRun(options); }
+        catch (error) {
+            try {
+                const diagnostics = await contents.executeJavaScript(`(() => {
+                    const point = ${JSON.stringify(point || null)}, hit = point && document.elementFromPoint(point.x, point.y);
+                    const rect = element => element && JSON.parse(JSON.stringify(element.getBoundingClientRect()));
+                    return { workspace: workspace.name, width: innerWidth, height: innerHeight, focused: document.hasFocus(), point,
+                        hit: hit && { tag: hit.tagName, className: String(hit.className), tool: hit.closest('[data-tool]')?.dataset.tool },
+                        createToolbar: rect(document.querySelector('.create-toolbar')),
+                        terminalScreen: rect(document.querySelector('.xterm-screen')) };
+                })()`);
+                console.error('BASELINE_SMOKE_DIAGNOSTICS', JSON.stringify(diagnostics));
+                fs.writeFileSync(path.join(output, 'smoke-failure.png'), (await contents.capturePage()).toPNG());
+            } catch (captureError) { console.error('Baseline failure capture:', captureError.message); }
+            throw error;
+        } finally { contents.sendInputEvent = sendInput; }
     };
 }
 
