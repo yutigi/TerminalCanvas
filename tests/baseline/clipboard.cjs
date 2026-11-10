@@ -14,7 +14,7 @@ async function withSavedClipboard(task, log, launch = spawn) {
     child.stdin.on('error', error => { errors += error.message; });
     const exited = new Promise(resolve => {
         child.once('error', error => { failure = error; ended = true; resolve(null); });
-        child.once('exit', code => { ended = true; resolve(code); });
+        child.once('close', code => { ended = true; resolve(code); });
     });
     const wait = async (check, message) => {
         const deadline = Date.now() + 30000;

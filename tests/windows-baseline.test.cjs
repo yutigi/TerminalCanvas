@@ -24,8 +24,13 @@ function clipboardGuard({ acknowledge = true } = {}) {
     child.stdin = new Writable({ write(data, _encoding, done) {
         assert.equal(data.toString(), 'restore\n');
         restored = true;
-        if (acknowledge) child.stdout.write('CLIPBOARD_RESTORED\n');
-        done(); setImmediate(() => child.emit('exit', 0));
+        done();
+        // A child can exit before Node has delivered its remaining stdout.
+        setImmediate(() => child.emit('exit', 0));
+        setTimeout(() => {
+            if (acknowledge) child.stdout.write('CLIPBOARD_RESTORED\n');
+            child.stdout.end(); child.stderr.end(); child.emit('close', 0);
+        }, 100);
     } });
     return { launch: () => { setImmediate(() => child.stdout.write('CLIPBOARD_SAVED\n')); return child; },
         restored: () => restored };
