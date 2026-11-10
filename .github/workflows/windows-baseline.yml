@@ -10,13 +10,6 @@ on:
         description: Validate the relocated Windows 11 test kit without repeating the baseline
         type: boolean
         default: false
-  pull_request:
-    paths:
-      - .github/workflows/windows-baseline.yml
-      - scripts/capture-windows-baseline.cjs
-      - tests/baseline/**
-      - tests/windows-baseline.test.cjs
-      - tests/visual/reference.json
 
 permissions:
   contents: read

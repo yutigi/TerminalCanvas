@@ -59,9 +59,16 @@ machines.
 
 The `Windows JavaScript baseline` workflow uploads reports, logs, screenshots,
 and a separate original portable EXE for later Windows 11 compatibility checks.
-It runs when the baseline harness/reference changes and can also be dispatched
-after its workflow is available on the default branch. The first native execution
-is required before treating this implementation as recorded baseline evidence.
+Dispatch it when a new historical capture is needed. Complete captures are already
+recorded below. The frozen Electron build can intermittently hang during shutdown
+after its smoke assertions finish, so rebuilding that old application is not an
+automatic PR check. The product's three-platform tests, behavior goldens, rendered
+comparison, and ten native Windows desktop suites remain in `CI` on every PR.
+
+For test-kit changes, dispatch with `kit_only=true` to build static-runtime test
+binaries and run all 22 cases after relocation, using Windows PowerShell 5.1.
+This separate job uploads a runtime only after a complete pass. It does not
+replace the full product CI or the required Windows 11 execution.
 
 The [first recorded Windows baseline](../../docs/windows-migration-baseline.md)
 passed the complete native sequence. To compare both development hosts on the
