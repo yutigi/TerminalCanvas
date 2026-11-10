@@ -172,6 +172,17 @@ fn create_window(app: &tauri::App, host: &Arc<Host>) -> tauri::Result<()> {
     } else {
         builder
     };
+    #[cfg(all(windows, feature = "e2e"))]
+    let builder = if let Some(arguments) =
+        e2e::browser_arguments(std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok().as_deref())
+    {
+        // WebView2 150+ ignores environment overrides in an elevated host. The
+        // explicit API is honored; this forwarding is absent from normal builds.
+        eprintln!("Supplying test WebView2 arguments through the native API.");
+        builder.additional_browser_args(&arguments)
+    } else {
+        builder
+    };
     let window = builder.build()?;
     // Electron's width/height (and minima) include native decorations. Tauri's sizing
     // methods address the content area. Measure the actual frame at this display's DPI

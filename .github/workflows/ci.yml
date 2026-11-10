@@ -137,6 +137,8 @@ jobs:
         timeout-minutes: 90
         shell: pwsh
         run: |
+          node tests/e2e/preflight.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           for ($attempt = 1; $attempt -le 10; $attempt++) {
             Write-Host "Desktop E2E run $attempt of 10"
             npm run test:e2e

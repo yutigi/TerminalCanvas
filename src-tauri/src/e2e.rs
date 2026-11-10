@@ -9,6 +9,17 @@ use tc_pty::manager::{Backend, EventSink, Process, SessionKey, SpawnRequest};
 
 use crate::host::Host;
 
+/// Elevated WebView2 hosts ignore environment-based switch overrides. Supply the
+/// test process's arguments through the API while keeping pinned Wry's defaults.
+#[cfg(any(windows, test))]
+pub fn browser_arguments(additional: Option<&str>) -> Option<String> {
+    additional.filter(|value| !value.trim().is_empty()).map(|value| {
+        format!(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required {value}"
+        )
+    })
+}
+
 // User PowerShell profiles can rebuild PATH after the harness prepends its controlled tools.
 // Test shells skip those profiles, so an automatic resume can never fall through to a real CLI.
 pub struct TestBackend(pub tc_pty::PtyBackend);
@@ -135,6 +146,17 @@ pub fn e2e_focus(webview: Webview, _run: State<'_, TestRun>) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_test_browser_arguments_keep_the_production_wry_defaults() {
+        assert_eq!(browser_arguments(None), None);
+        assert_eq!(browser_arguments(Some("  ")), None);
+        let arguments =
+            browser_arguments(Some("--remote-debugging-port=9234 --force-device-scale-factor=1.25")).unwrap();
+        assert!(arguments.starts_with("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection "));
+        assert!(arguments.contains("--autoplay-policy=no-user-gesture-required"));
+        assert!(arguments.ends_with("--remote-debugging-port=9234 --force-device-scale-factor=1.25"));
+    }
 
     #[test]
     fn powershell_test_shells_cannot_replace_the_controlled_tool_path_from_a_profile() {
