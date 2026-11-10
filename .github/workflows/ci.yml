@@ -150,3 +150,8 @@ jobs:
           name: windows-desktop-e2e
           path: .cache/tauri-*.png
           if-no-files-found: ignore
+
+  windows-artifacts:
+    name: Windows distribution artifacts
+    needs: test
+    uses: ./.github/workflows/release.yml
