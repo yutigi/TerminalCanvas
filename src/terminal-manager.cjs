@@ -39,7 +39,7 @@ class TerminalManager {
             ? path.win32.join(this.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
             : (this.env.SHELL || '/bin/bash');
         let command = mode === 'fresh' ? '' : mode === 'resume'
-            ? (card.session.provider === 'codex' ? `codex resume ${card.session.sessionId}` : `claude --resume ${card.session.sessionId}`)
+            ? (card.session.provider === 'codex' ? `codex resume ${card.session.sessionId}` : `${card.session.provider} --resume ${card.session.sessionId}`)
             : card.command;
         // Integrate explicit shell launchers directly, preserving their selected shell.
         if (windows && /^(?:pwsh|powershell|cmd)(?:\.exe)?$/i.test(command.trim())) {
@@ -47,8 +47,15 @@ class TerminalManager {
         }
         const integration = this.integration?.({ shell, platform: this.platform });
         const args = integration?.args || (windows ? (/^cmd(?:\.exe)?$/i.test(shell) ? [] : powershellArgs()) : ['-l']);
-        const env = { ...this.env, ...integration?.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERMINAL_CANVAS: '1' };
+        // A new terminal is a fresh context, even when the app was started from one of its own terminals.
+        const inherited = Object.fromEntries(Object.entries(this.env).filter(([key]) => !/^TC_/.test(key)));
+        const env = { ...inherited, ...integration?.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERMINAL_CANVAS: '1' };
         delete env.ELECTRON_RUN_AS_NODE;
+        if (integration?.pathPrepend) {
+            // Windows keeps one case-insensitive Path entry; never add a second PATH key.
+            const key = Object.keys(env).find(name => name.toUpperCase() === 'PATH') || 'PATH';
+            env[key] = integration.pathPrepend + (windows ? ';' : ':') + (env[key] || '');
+        }
         if (windows) env.PROMPT = '$E]9;9;$P$E\\' + (env.PROMPT || '$P$G');
         let terminal;
         try { terminal = this.spawn(shell, args, { name: 'xterm-256color', cwd, cols, rows, env }); }
