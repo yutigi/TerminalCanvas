@@ -1,0 +1,183 @@
+# Runs on every pull request and on main (docs/rust-migration-plan.md, "Development and CI").
+# All three jobs must pass before a merge. Windows is the primary target.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The visual golden reference is an immutable ancestor, not the shallow PR merge.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          # npm 10 (Node 22) accepts package-lock.json; npm 11 asks for optional Windows packages.
+          node-version: 22
+          cache: npm
+
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install Linux webview libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: JavaScript syntax
+        run: npm run check
+
+      - name: UI and host tests (JavaScript)
+        run: npm test
+
+      - name: Golden fixtures are current and machine-independent
+        run: node scripts/capture-golden.cjs --check
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Native icons match the shared SVG
+        run: cargo xtask icons --check
+
+      - name: Clipboard preservation guard (private pasteboard only)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p .cache/native-board-check
+          xcrun swiftc -module-cache-path .cache/swift-module-cache tests/manual/macos-clipboard-guard.swift -o .cache/native-board-check/clipboard-guard
+          .cache/native-board-check/clipboard-guard --self-test
+
+      - name: Chromium and WebKit rendered layout and arrow pixels
+        if: runner.os == 'macOS'
+        run: |
+          npm ci --prefix tests/visual
+          npm run test:layout -- --verify-regression
+
+      - name: Upload rendered layout evidence
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-renderer-parity
+          path: |
+            .cache/layout-check/*.png
+            .cache/layout-check/*.json
+          if-no-files-found: ignore
+
+      - name: Test-only host compiles and passes its tests
+        run: cargo test -p terminal-canvas --features e2e
+
+      - name: Test-only host clippy
+        run: cargo clippy -p terminal-canvas --all-targets --features e2e -- -D warnings
+
+      # Phase 2 done-checks: real shells report directories (and, with integration, AI sessions)
+      # through the UI-free example. The AI CLIs are local stand-ins; nothing calls a service.
+      - name: Build tc-hook for the shell integration
+        run: cargo build -p tc-hook
+
+      - name: Drive Bash (directories, Duplicate, Claude and Codex capture)
+        if: runner.os != 'Windows'
+        run: cargo run -p tc-pty --example drive -- --shell bash --ai
+
+      - name: Drive zsh (polled directories)
+        if: runner.os == 'macOS'
+        run: cargo run -p tc-pty --example drive -- --shell zsh
+
+      # One step per shell: a multi-line PowerShell step only fails on its last command.
+      - name: Drive Windows PowerShell 5.1 (directories, readiness, Claude and Codex capture)
+        if: runner.os == 'Windows'
+        run: cargo run -p tc-pty --example drive -- --ai
+
+      - name: Drive PowerShell 7
+        if: runner.os == 'Windows'
+        run: cargo run -p tc-pty --example drive -- --shell pwsh --ai
+
+      - name: Drive cmd
+        if: runner.os == 'Windows'
+        run: cargo run -p tc-pty --example drive -- --shell cmd
+
+      - name: Build the isolated desktop E2E host
+        if: runner.os == 'Windows'
+        run: cargo build -p terminal-canvas --features e2e
+
+      - name: WebView2 desktop and restoration parity (10 consecutive runs)
+        if: runner.os == 'Windows'
+        timeout-minutes: 90
+        shell: pwsh
+        run: |
+          node tests/e2e/preflight.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          for ($attempt = 1; $attempt -le 10; $attempt++) {
+            Write-Host "Desktop E2E run $attempt of 10"
+            npm run test:e2e
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Upload desktop E2E screenshots
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-e2e
+          path: .cache/tauri-*.png
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+      - name: Build and relocate the portable Windows 11 test runtime
+        if: runner.os == 'Windows'
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          node scripts/package-windows-test.cjs --pwsh-home "$PSHOME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $relocated = Join-Path $env:RUNNER_TEMP 'TC kit ไทย'
+          Move-Item -LiteralPath .cache/windows11-e2e-kit -Destination $relocated
+          powershell.exe -NoProfile -File (Join-Path $relocated 'Run-Checks.ps1')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload the validated Windows 11 test runtime
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows11-e2e-kit
+          path: ${{ runner.temp }}/TC kit ไทย/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  windows-artifacts:
+    name: Windows distribution artifacts
+    needs: test
+    uses: ./.github/workflows/release.yml
+    with:
+      validated_sha: ${{ github.sha }}

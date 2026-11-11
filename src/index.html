@@ -3,13 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: tc-asset:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: tc-asset: http://tc-asset.localhost; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
     <title>Terminal Canvas</title>
     <link rel="icon" href="./assets/logo.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+    <link rel="stylesheet" href="vendor/xterm.css">
     <link rel="stylesheet" href="./styles.css">
-    <script src="../node_modules/@xterm/xterm/lib/xterm.js" defer></script>
-    <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js" defer></script>
+    <link id="platform-chrome" rel="stylesheet" href="./chrome.css" media="not all">
+    <script src="vendor/xterm.js" defer></script>
+    <script src="vendor/addon-fit.js" defer></script>
+    <script src="./bridge.js" defer></script>
     <script src="./minimap.js" defer></script>
     <script src="./canvas-geometry.js" defer></script>
     <script src="./terminal-pointer.js" defer></script>
@@ -47,7 +49,7 @@
         </header>
         <div class="canvas-bar"><div class="canvas-caption"><span class="status-dot"></span><strong id="running-count">0 running</strong><span class="bar-divider"></span><span>Many minds. One workspace.</span></div><div class="bar-actions"><button id="arrange"><span data-icon="grid"></span>Arrange</button><button id="focus-toggle" disabled><span data-icon="maximize"></span>Focus</button><span class="bar-divider"></span><button id="fit"><span data-icon="scan"></span>Fit canvas</button></div></div>
         <section id="viewport" class="viewport" tabindex="0" aria-label="Terminal canvas. Drag empty space to pan; Shift and drag to select an area; Control and scroll to zoom.">
-            <div id="world" class="world"><svg id="line-layer" class="line-layer" width="1" height="1" aria-hidden="true"><defs><marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="context-stroke"/></marker></defs></svg><div id="draft" class="draft" hidden></div><div id="selection-box" class="selection-box" hidden></div></div>
+            <div id="world" class="world"><svg id="line-layer" class="line-layer" width="1" height="1" aria-hidden="true"></svg><div id="draft" class="draft" hidden></div><div id="selection-box" class="selection-box" hidden></div></div>
             <div id="empty-state" class="empty-state">
                 <div class="empty-eyebrow"><span class="status-dot"></span>YOUR NEXT IDEA STARTS HERE</div>
                 <div class="terminal-art" aria-hidden="true"><div class="art-back art-left"><span>CC</span><i></i><i></i><i></i></div><div class="art-back art-right"><span>GM</span><i></i><i></i><i></i></div><div class="art-front"><div><b></b><b></b><b></b><span>terminal canvas</span></div><p><span>❯</span> <em></em></p><i></i><i></i></div></div>

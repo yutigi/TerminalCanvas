@@ -1,0 +1,34 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The main window may call the app's own commands, and nothing else: no file system, shell, or other plugin permissions reach JavaScript.",
+  "windows": [
+    "main"
+  ],
+  "local": true,
+  "permissions": [
+    "allow-initialize",
+    "allow-create-card",
+    "allow-autosave",
+    "allow-save",
+    "allow-save-as",
+    "allow-export",
+    "allow-open",
+    "allow-new",
+    "allow-close",
+    "allow-duplicate-directory",
+    "allow-start",
+    "allow-stop",
+    "allow-pick-folder",
+    "allow-import-image",
+    "allow-pick-image",
+    "allow-unused-images",
+    "allow-delete-unused-images",
+    "allow-open-link",
+    "allow-clipboard-read",
+    "allow-clipboard-write",
+    "allow-input",
+    "allow-resize",
+    "allow-ack"
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "profiles": [
+    {
+      "id": "shell",
+      "name": "Terminal",
+      "command": "",
+      "color": "#94a3b8",
+      "initials": ">_"
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "command": "claude",
+      "color": "#d6a181",
+      "initials": "CC"
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "command": "codex",
+      "color": "#8dd9bd",
+      "initials": "CX"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "command": "gemini",
+      "color": "#93b4ff",
+      "initials": "GM"
+    },
+    {
+      "id": "custom",
+      "name": "Custom command",
+      "command": "",
+      "color": "#c4a3ff",
+      "initials": "AI"
+    }
+  ],
+  "workspace": {
+    "version": 3,
+    "name": "My AI workspace",
+    "camera": {
+      "x": 48,
+      "y": 48,
+      "z": 1
+    },
+    "cards": [],
+    "items": []
+  },
+  "cards": {
+    "shell": {
+      "id": "fixture-shell",
+      "type": "terminal",
+      "profile": "shell",
+      "title": "Terminal",
+      "cwd": "",
+      "command": "",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430
+    },
+    "claude": {
+      "id": "fixture-claude",
+      "type": "terminal",
+      "profile": "claude",
+      "title": "Claude Code",
+      "cwd": "",
+      "command": "claude",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430
+    },
+    "codex": {
+      "id": "fixture-codex",
+      "type": "terminal",
+      "profile": "codex",
+      "title": "Codex",
+      "cwd": "",
+      "command": "codex",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430
+    },
+    "gemini": {
+      "id": "fixture-gemini",
+      "type": "terminal",
+      "profile": "gemini",
+      "title": "Gemini CLI",
+      "cwd": "",
+      "command": "gemini",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430
+    },
+    "custom": {
+      "id": "fixture-custom",
+      "type": "terminal",
+      "profile": "custom",
+      "title": "Custom command",
+      "cwd": "",
+      "command": "",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430
+    }
+  }
+}

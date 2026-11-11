@@ -1,0 +1,5334 @@
+{
+  "cases": [
+    {
+      "name": "stream order with character splits",
+      "options": {
+        "cwd": "/old",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]7;file://localhost/new%20folder\u001b\\\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL25ldyBmb2xkZXIifQ==\u0007session id: \u001b[32m12345678-1234-4321-9876-123456789abc\u001b[0m\n\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIwZjFlMmQzYy00YjVhLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAiLCJleGl0Q29kZSI6MH0=\u0007\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjbGF1ZGUiLCJ0b2tlbiI6ImFiY2RlZjAxLTEyMzQtNDMyMS05ODc2LTEyMzQ1Njc4OWFiYyIsImN3ZCI6Ii9vdGhlciIsInNlc3Npb25JZCI6ImFiY2RlZjAxLTEyMzQtNDMyMS05ODc2LTEyMzQ1Njc4OWFiYyJ9\u0007",
+        "ordinary output\n"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/new folder"
+          }
+        },
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/new folder"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/new folder",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/new folder"
+            }
+          }
+        },
+        {
+          "type": "end",
+          "event": {
+            "type": "end",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "exitCode": 0
+          }
+        },
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "claude",
+            "token": "abcdef01-1234-4321-9876-123456789abc",
+            "cwd": "/other",
+            "sessionId": "abcdef01-1234-4321-9876-123456789abc"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/other",
+            "session": {
+              "provider": "claude",
+              "sessionId": "abcdef01-1234-4321-9876-123456789abc",
+              "cwd": "/other"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/other",
+        "launch": {
+          "provider": "claude",
+          "token": "abcdef01-1234-4321-9876-123456789abc"
+        },
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "output cannot replace a session without a launch",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "a random UUID 12345678-1234-4321-9876-123456789abc\n",
+        "\u001b]7;file://remote/private\u0007",
+        "Example: codex resume 12345678-1234-4321-9876-123456789abc\nclaude --resume abcdef01-1234-4321-9876-123456789abc\nsession id: 12345678-1234-4321-9876-123456789abc\n",
+        "To continue this session, run codex resume 12345678-1234-4321-9876-123456789abc\n",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjbGF1ZGUiLCJ0b2tlbiI6IjEyMzQ1Njc4LTEyMzQtNDMyMS05ODc2LTEyMzQ1Njc4OWFiYyIsInNlc3Npb25JZCI6IjEyMzQ1Njc4LTEyMzQtNDMyMS05ODc2LTEyMzQ1Njc4OWFiYyIsImN3ZCI6Ii9wcm9qZWN0In0=\u0007",
+        "To continue this session, run codex resume abcdef01-1234-4321-9876-123456789abc\nclaude --resume abcdef01-1234-4321-9876-123456789abc\n",
+        "\u001b]633;TC;not-json\u0007",
+        {
+          "$text": [
+            [
+              "x",
+              100000
+            ]
+          ]
+        }
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "claude",
+            "token": "12345678-1234-4321-9876-123456789abc",
+            "sessionId": "12345678-1234-4321-9876-123456789abc",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": {
+              "provider": "claude",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "claude",
+          "token": "12345678-1234-4321-9876-123456789abc"
+        },
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": false
+    },
+    {
+      "name": "Codex headers only between its launch and end",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwiZXhpdENvZGUiOjF9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMTIzNDU2NzgtMTIzNC00MzIxLTk4NzYtMTIzNDU2Nzg5YWJjIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "Example: codex resume abcdef01-1234-4321-9876-123456789abc\nThe docs say session id: abcdef01-1234-4321-9876-123456789abc\nclaude --resume abcdef01-1234-4321-9876-123456789abc\n",
+        "session id: 12345678-1234-4321-9876-123456789abc\n",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiJhYmNkZWYwMS0xMjM0LTQzMjEtOTg3Ni0xMjM0NTY3ODlhYmMiLCJleGl0Q29kZSI6MH0=\u0007",
+        "To continue this session, run codex resume abcdef01-1234-4321-9876-123456789abc\n",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIxMjM0NTY3OC0xMjM0LTQzMjEtOTg3Ni0xMjM0NTY3ODlhYmMiLCJleGl0Q29kZSI6MH0=\u0007",
+        "session id: 12345678-1234-4321-9876-123456789abc\nTo continue this session, run codex resume 12345678-1234-4321-9876-123456789abc\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "12345678-1234-4321-9876-123456789abc",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "abcdef01-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "end",
+          "event": {
+            "type": "end",
+            "token": "12345678-1234-4321-9876-123456789abc",
+            "exitCode": 0
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "warnings",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]633;TC;eyJ0eXBlIjoid2FybmluZyIsIm1lc3NhZ2UiOiJ",
+            [
+              "3d",
+              341
+            ],
+            "yJ9\u0007"
+          ]
+        },
+        {
+          "$text": [
+            "\u001b]633;TC;eyJ0eXBlIjoid2FybmluZyIsIm1lc3NhZ2UiOiJ",
+            [
+              "3d",
+              341
+            ],
+            "3cifQ==\u0007"
+          ]
+        },
+        "\u001b]633;TC;eyJ0eXBlIjoid2FybmluZyIsIm1lc3NhZ2UiOiLwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qAIn0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoid2FybmluZyIsIm1lc3NhZ2UiOiLwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qA8J+agPCfmoDwn5qAeCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoid2FybmluZyIsIm1lc3NhZ2UiOjV9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoid2FybmluZyJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoid2FybmluZyIsIm1lc3NhZ2UiOiIifQ==\u0007"
+      ],
+      "events": [
+        {
+          "type": "warning",
+          "message": {
+            "$text": [
+              [
+                "w",
+                512
+              ]
+            ]
+          }
+        },
+        {
+          "type": "warning",
+          "message": {
+            "$text": [
+              [
+                "🚀",
+                256
+              ]
+            ]
+          }
+        },
+        {
+          "type": "warning",
+          "message": ""
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "cwd events",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL25leHQifQ==\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoicmVsYXRpdmUifQ==\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiIn0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiYVxuYiJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiZGVsfyJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjo1fQ==\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjYyJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MifQ==\u0007"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/next"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "relative"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "del"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": {
+              "$text": [
+                "/",
+                [
+                  "c",
+                  4095
+                ]
+              ]
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": {
+          "$text": [
+            "/",
+            [
+              "c",
+              4095
+            ]
+          ]
+        },
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "launch variants",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjbGF1ZGUiLCJ0b2tlbiI6IjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCIsImN3ZCI6Ii9wcm9qZWN0In0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjbGF1ZGUiLCJ0b2tlbiI6IjBGMUUyRDNDLTRCNUEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCIsImN3ZCI6Ii9wcm9qZWN0Iiwic2Vzc2lvbklkIjoiMTIzNDU2NzgtMTIzNC00MzIxLTk4NzYtMTIzNDU2Nzg5QUJDIn0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJnZW1pbmkiLCJ0b2tlbiI6IjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCIsImN3ZCI6Ii9wcm9qZWN0In0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoibm90LWEtdG9rZW4iLCJjd2QiOiIvcHJvamVjdCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiIn0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjo1fQ==\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjbGF1ZGUiLCJ0b2tlbiI6IjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCIsImN3ZCI6Ii9wcm9qZWN0Iiwic2Vzc2lvbklkIjoiYmFkIn0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjbGF1ZGUiLCJ0b2tlbiI6IjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCIsImN3ZCI6Ii9wcm9qZWN0Iiwic2Vzc2lvbklkIjo3fQ==\u0007"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "claude",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "claude",
+            "token": "0F1E2D3C-4B5A-4968-8776-655443322110",
+            "cwd": "/project",
+            "sessionId": "12345678-1234-4321-9876-123456789ABC"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": {
+              "provider": "claude",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "claude",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project",
+            "sessionId": "bad"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "claude",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project",
+            "sessionId": 7
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "claude",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "launch token inside an array",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjpbIjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCJdLCJjd2QiOiIvcHJvamVjdCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIwZjFlMmQzYy00YjVhLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAiLCJleGl0Q29kZSI6MH0=\u0007",
+        "session id: 12345678-1234-4321-9876-123456789abc\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": [
+              "0f1e2d3c-4b5a-4968-8776-655443322110"
+            ],
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": [
+            "0f1e2d3c-4b5a-4968-8776-655443322110"
+          ]
+        },
+        "bufferLength": 0,
+        "textLength": 1
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "launch token nested arrays",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjpbWyIwZjFlMmQzYy00YjVhLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAiXV0sImN3ZCI6Ii9wcm9qZWN0In0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjpbIjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCIsIjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCJdLCJjd2QiOiIvcHJvamVjdCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjpbbnVsbCwiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIl0sImN3ZCI6Ii9wcm9qZWN0In0=\u0007"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": [
+              [
+                "0f1e2d3c-4b5a-4968-8776-655443322110"
+              ]
+            ],
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": [
+            [
+              "0f1e2d3c-4b5a-4968-8776-655443322110"
+            ]
+          ]
+        },
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "end variants",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIwZjFlMmQzYy00YjVhLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAifQ==\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIwRjFFMkQzQy00QjVBLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAifQ==\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIn0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIwZjFlMmQzYy00YjVhLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAiLCJleGl0Q29kZSI6MywiZXh0cmEiOnRydWV9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIwZjFlMmQzYy00YjVhLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAifQ==\u0007"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "end",
+          "event": {
+            "type": "end",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "exitCode": 3,
+            "extra": true
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "non-object events",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;NQ==\u0007",
+        "\u001b]633;TC;bnVsbA==\u0007",
+        "\u001b]633;TC;ImxhdW5jaCI=\u0007",
+        "\u001b]633;TC;W10=\u0007",
+        "\u001b]633;TC;\u0007"
+      ],
+      "events": [],
+      "state": {
+        "cwd": "/project",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "lenient base64",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBl \n\tIjoiY3dkIiwiY3dkIjoiL2I2NCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL2I2NCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoi!$Y3dkIiwiY3dkIjoiL2I2NCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoi=Y3dkIiwiY3dkIjoiL2I2NCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL+WtkCJ9\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL2JhZP/lrSJ9\u0007"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/b64"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/b64"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/b64"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/子"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/bad��"
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/bad��",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "OSC 7 with directories",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]7;file:///a%20b\u0007",
+        "\u001b]7;file://localhost/c\u0007",
+        "\u001b]7;file://remote/d\u0007",
+        "\u001b]7;file:///bad%\u0007",
+        "\u001b]7;file:///e%0Af\u0007",
+        "\u001b]7;http://localhost/g\u0007",
+        "\u001b]7;file:///del%7F\u0007",
+        "\u001b]7;file:///C:/h\u0007",
+        "\u001b]7;file://tc-host/i\u0007"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/a b"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/c"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/del"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/C:/h"
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/C:/h",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "OSC 7 on Windows",
+      "options": {
+        "cwd": "C:\\project",
+        "platform": "win32",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]7;file:///C:/a%20b\u0007",
+        "\u001b]7;file:///unix\u0007",
+        "\u001b]7;file://server/share\u0007",
+        "\u001b]7;file://localhost/C:/c\u0007"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "C:\\a b"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "C:\\c"
+          }
+        }
+      ],
+      "state": {
+        "cwd": "C:\\c",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "OSC 7 without directories",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": false
+      },
+      "chunks": [
+        "\u001b]7;file:///a\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL3N0aWxsIn0=\u0007"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/still"
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/still",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "Codex patterns",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "SESSION ID: 12345678-1234-4321-9876-123456789ABC\n",
+        "  \tsession id:\tabcdef01-1234-4321-9876-123456789abc.\n",
+        "session id: 12345678-1234-4321-9876-123456789abcx\n",
+        "session id: 12345678-1234-4321-9876-123456789abc_\n",
+        "session id: 12345678-1234-4321-9876-123456789abc子\n",
+        "session id: ------------------------------------\n",
+        "xsession id: 12345678-1234-4321-9876-123456789abc\n",
+        "\rTo continue this session, run codex resume abcdef01-1234-4321-9876-123456789abc\r",
+        "To continue this session, run codex resume 12345678-1234-4321-9876-123456789abc\nsession id: abcdef01-1234-4321-9876-123456789abc\n",
+        "session id: abcdef01-1234-4321-9876-123456789abc\nTo continue this session, run codex resume 12345678-1234-4321-9876-123456789abc\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "abcdef01-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "abcdef01-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "abcdef01-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "abcdef01-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 1
+      },
+      "splitInvariant": false
+    },
+    {
+      "name": "Codex header split by ANSI across chunks",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "session id: \u001b[3",
+        "2m12345678-1234-4321-9876-123456789abc\u001b[0m\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 1
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "Codex header split across chunks",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "session id: 12345678-1234-4321-9",
+        "876-123456789abc\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 1
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "Codex header ID followed later by a letter",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "session id: 12345678-1234-4321-9876-123456789abc",
+        "x\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 2
+      },
+      "splitInvariant": false
+    },
+    {
+      "name": "Codex text window",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        {
+          "$text": [
+            [
+              "y",
+              5000
+            ]
+          ]
+        },
+        "\nsession id: 12345678-1234-4321-9876-123456789abc\n",
+        {
+          "$text": [
+            [
+              "z",
+              4090
+            ]
+          ]
+        },
+        "\nsession id: abcdef01-1234-4321-9876-123456789abc\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "abcdef01-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 1
+      },
+      "splitInvariant": false
+    },
+    {
+      "name": "Codex header beyond the window",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "\nsession id: 12345678-1234-4321-9876-123456789abc",
+        {
+          "$text": [
+            [
+              "z",
+              4100
+            ]
+          ]
+        }
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 4096
+      },
+      "splitInvariant": false
+    },
+    {
+      "name": "unterminated OSC beyond the buffer",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        {
+          "$text": [
+            "\u001b]633;TC;",
+            [
+              "q",
+              40000
+            ]
+          ]
+        },
+        "\u0007",
+        "\nsession id: 12345678-1234-4321-9876-123456789abc\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 1
+      },
+      "splitInvariant": false
+    },
+    {
+      "name": "escape at a chunk end",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "text\u001b",
+        "]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL2pvaW5lZCJ9\u0007"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/joined"
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/joined",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "escape then text at a chunk end",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjb2RleCIsInRva2VuIjoiMGYxZTJkM2MtNGI1YS00OTY4LTg3NzYtNjU1NDQzMzIyMTEwIiwiY3dkIjoiL3Byb2plY3QifQ==\u0007",
+        "session id: \u001b",
+        "[1m12345678-1234-4321-9876-123456789abc\n"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "codex",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "/project"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/project",
+            "session": null
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "session": {
+              "provider": "codex",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "/project"
+            }
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/project",
+        "launch": {
+          "provider": "codex",
+          "token": "0f1e2d3c-4b5a-4968-8776-655443322110"
+        },
+        "bufferLength": 0,
+        "textLength": 1
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "nested OSC start in payload",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]0;title\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL25lc3RlZCJ9\u0007"
+      ],
+      "events": [],
+      "state": {
+        "cwd": "/project",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "ST terminator",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoiY3dkIiwiY3dkIjoiL3N0In0=\u001b\\"
+      ],
+      "events": [
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "/st"
+          }
+        }
+      ],
+      "state": {
+        "cwd": "/st",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "BEL before ST",
+      "options": {
+        "cwd": "/project",
+        "platform": "linux",
+        "directories": true
+      },
+      "chunks": [
+        "\u001b]633;TC;abc\u0007def\u001b\\"
+      ],
+      "events": [],
+      "state": {
+        "cwd": "/project",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    },
+    {
+      "name": "Windows Claude launch",
+      "options": {
+        "cwd": "C:\\project",
+        "platform": "win32",
+        "directories": false
+      },
+      "chunks": [
+        "\u001b]633;TC;eyJ0eXBlIjoibGF1bmNoIiwicHJvdmlkZXIiOiJjbGF1ZGUiLCJ0b2tlbiI6IjBmMWUyZDNjLTRiNWEtNDk2OC04Nzc2LTY1NTQ0MzMyMjExMCIsImN3ZCI6IkM6XFxwcm9qZWN0Iiwic2Vzc2lvbklkIjoiMTIzNDU2NzgtMTIzNC00MzIxLTk4NzYtMTIzNDU2Nzg5YWJjIn0=\u0007",
+        "\u001b]633;TC;eyJ0eXBlIjoiZW5kIiwidG9rZW4iOiIwZjFlMmQzYy00YjVhLTQ5NjgtODc3Ni02NTU0NDMzMjIxMTAiLCJleGl0Q29kZSI6MX0=\u0007"
+      ],
+      "events": [
+        {
+          "type": "launch",
+          "event": {
+            "type": "launch",
+            "provider": "claude",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "cwd": "C:\\project",
+            "sessionId": "12345678-1234-4321-9876-123456789abc"
+          }
+        },
+        {
+          "type": "change",
+          "patch": {
+            "cwd": "C:\\project",
+            "session": {
+              "provider": "claude",
+              "sessionId": "12345678-1234-4321-9876-123456789abc",
+              "cwd": "C:\\project"
+            }
+          }
+        },
+        {
+          "type": "end",
+          "event": {
+            "type": "end",
+            "token": "0f1e2d3c-4b5a-4968-8776-655443322110",
+            "exitCode": 1
+          }
+        }
+      ],
+      "state": {
+        "cwd": "C:\\project",
+        "launch": null,
+        "bufferLength": 0,
+        "textLength": 0
+      },
+      "splitInvariant": true
+    }
+  ],
+  "osc7": [
+    {
+      "uri": "file://",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file:///",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file:///C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file:///C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file:///c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file:///C|",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file:///C:",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file:///C",
+      "win32": [],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file:///share/a%20folder",
+      "win32": [],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file:///share/encoded%5cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file:///share/encoded%5Cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file:///a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///%E5%AD%90",
+      "win32": [],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file:///%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///a/../b",
+      "win32": [],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file:///a/./b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file:////double",
+      "win32": [],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file:///a?query",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file:///a#frag",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file:///a%23b%3Fc",
+      "win32": [],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file:///a b",
+      "win32": [],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file:///a\tb",
+      "win32": [],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file:///a\\b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file:///tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file:///del%7Fx",
+      "win32": [],
+      "linux": [
+        "/delx"
+      ]
+    },
+    {
+      "uri": "file:///C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file:///C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file:///D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file:///%43:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file:///~user",
+      "win32": [],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file:///a:b",
+      "win32": [
+        "a:b"
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file:///子/🚀",
+      "win32": [],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://localhost",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://localhost/",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://localhost/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/C|",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://localhost/C",
+      "win32": [],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://localhost/share/a%20folder",
+      "win32": [],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://localhost/share/encoded%5cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://localhost/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://localhost/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/%E5%AD%90",
+      "win32": [],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://localhost/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/a/../b",
+      "win32": [],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://localhost/a/./b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://localhost//double",
+      "win32": [],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://localhost/a?query",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://localhost/a#frag",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://localhost/a%23b%3Fc",
+      "win32": [],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://localhost/a b",
+      "win32": [],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://localhost/a\tb",
+      "win32": [],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://localhost/a\\b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://localhost/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost/del%7Fx",
+      "win32": [],
+      "linux": [
+        "/delx"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://localhost/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/%43:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/~user",
+      "win32": [],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://localhost/a:b",
+      "win32": [
+        "a:b"
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://localhost/子/🚀",
+      "win32": [],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C|",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C",
+      "win32": [],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/share/a%20folder",
+      "win32": [],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/share/encoded%5cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/%E5%AD%90",
+      "win32": [],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/a/../b",
+      "win32": [],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a/./b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST//double",
+      "win32": [],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a?query",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a#frag",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a%23b%3Fc",
+      "win32": [],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a b",
+      "win32": [],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a\tb",
+      "win32": [],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a\\b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LOCALHOST/del%7Fx",
+      "win32": [],
+      "linux": [
+        "/delx"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/%43:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/~user",
+      "win32": [],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a:b",
+      "win32": [
+        "a:b"
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/子/🚀",
+      "win32": [],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://LocalHost",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C|",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C",
+      "win32": [],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/share/a%20folder",
+      "win32": [],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/share/encoded%5cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/%E5%AD%90",
+      "win32": [],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/a/../b",
+      "win32": [],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a/./b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost//double",
+      "win32": [],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a?query",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a#frag",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a%23b%3Fc",
+      "win32": [],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a b",
+      "win32": [],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a\tb",
+      "win32": [],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a\\b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://LocalHost/del%7Fx",
+      "win32": [],
+      "linux": [
+        "/delx"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/%43:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/~user",
+      "win32": [],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a:b",
+      "win32": [
+        "a:b"
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/子/🚀",
+      "win32": [],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://tc-host",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://tc-host/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://TC-HOST/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://server/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://user@localhost/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a%20b/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/C:/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/C:/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/c|/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/C|",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/C:",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/C",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/share/a%20folder",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/share/encoded%5cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/%E5%AD%90",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a/../b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a/./b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b//double",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a?query",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a#frag",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a%23b%3Fc",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a\tb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a\\b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/del%7Fx",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/C:/%2e%2e/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/C:/a%20b/",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/D:\\x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/%43:/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/~user",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/a:b",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://a b/子/🚀",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C|",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:",
+      "win32": [
+        "C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C",
+      "win32": [],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/share/a%20folder",
+      "win32": [],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/share/encoded%5cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/share/encoded%5Cseparator",
+      "win32": [],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a%2fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/a%2Fb",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/%E5%AD%90",
+      "win32": [],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/%FF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/%C0%AF",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/%ED%A0%80",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/a%",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/a%zz",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/a/../b",
+      "win32": [],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a/./b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost//double",
+      "win32": [],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a?query",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a#frag",
+      "win32": [],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a%23b%3Fc",
+      "win32": [],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a b",
+      "win32": [],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a\tb",
+      "win32": [],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a\\b",
+      "win32": [],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/tab%09x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/nul%00x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "file://%6Cocalhost/del%7Fx",
+      "win32": [],
+      "linux": [
+        "/delx"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/%43:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/~user",
+      "win32": [],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a:b",
+      "win32": [
+        "a:b"
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/子/🚀",
+      "win32": [],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file:///",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://",
+      "win32": [],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///",
+          [
+            "a",
+            4095
+          ]
+        ]
+      },
+      "win32": [],
+      "linux": [
+        {
+          "$text": [
+            "/",
+            [
+              "a",
+              4095
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///",
+          [
+            "a",
+            4096
+          ]
+        ]
+      },
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///C:/",
+          [
+            "a",
+            4093
+          ]
+        ]
+      },
+      "win32": [
+        {
+          "$text": [
+            "C:\\",
+            [
+              "a",
+              4093
+            ]
+          ]
+        }
+      ],
+      "linux": []
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///C:/",
+          [
+            "a",
+            4094
+          ]
+        ]
+      },
+      "win32": [],
+      "linux": []
+    }
+  ],
+  "sessionMetadata": [
+    {
+      "input": null,
+      "result": null
+    },
+    {
+      "input": 5,
+      "result": null
+    },
+    {
+      "input": "codex",
+      "result": null
+    },
+    {
+      "input": {},
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/x"
+      },
+      "result": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/x"
+      }
+    },
+    {
+      "input": {
+        "provider": "claude",
+        "sessionId": "12345678-1234-4321-9876-123456789ABC",
+        "cwd": "/x",
+        "extra": 1
+      },
+      "result": {
+        "provider": "claude",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/x"
+      }
+    },
+    {
+      "input": {
+        "provider": "Codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "/x"
+      },
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": ""
+      },
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "a\u001fb"
+      },
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "ab"
+      },
+      "result": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": "ab"
+      }
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc\n",
+        "cwd": "/x"
+      },
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678123443219876123456789abc",
+        "cwd": "/x"
+      },
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "g2345678-1234-4321-9876-123456789abc",
+        "cwd": "/x"
+      },
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": {
+          "$text": [
+            "/",
+            [
+              "x",
+              4095
+            ]
+          ]
+        }
+      },
+      "result": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": {
+          "$text": [
+            "/",
+            [
+              "x",
+              4095
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": {
+          "$text": [
+            "/",
+            [
+              "x",
+              4096
+            ]
+          ]
+        }
+      },
+      "result": null
+    },
+    {
+      "input": {
+        "provider": "codex",
+        "sessionId": "12345678-1234-4321-9876-123456789abc",
+        "cwd": 5
+      },
+      "result": null
+    }
+  ]
+}

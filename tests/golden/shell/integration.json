@@ -1,0 +1,166 @@
+{
+  "executables": {
+    "win32": "C:\\Program Files\\Terminal Canvas\\Terminal Canvas.exe",
+    "linux": "/opt/Terminal Canvas/terminal-canvas",
+    "darwin": "/Applications/Terminal Canvas.app/Contents/MacOS/Terminal Canvas"
+  },
+  "integration": [
+    {
+      "platform": "win32",
+      "shell": "powershell.exe",
+      "result": {
+        "args": [
+          "-NoLogo",
+          "-NoExit",
+          "-ExecutionPolicy",
+          "RemoteSigned",
+          "-EncodedCommand",
+          "{{ENCODED_SCRIPT}}"
+        ],
+        "command": null,
+        "env": {
+          "TC_SESSION_FILE": "{{SESSION}}",
+          "TC_NODE": "C:\\Program Files\\Terminal Canvas\\Terminal Canvas.exe",
+          "TC_HOOK": "{{HOOK}}"
+        },
+        "files": [
+          ".ps1",
+          ".settings.json"
+        ],
+        "scriptMatchesSource": true
+      }
+    },
+    {
+      "platform": "win32",
+      "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      "result": {
+        "args": [
+          "-NoLogo",
+          "-NoExit",
+          "-ExecutionPolicy",
+          "RemoteSigned",
+          "-EncodedCommand",
+          "{{ENCODED_SCRIPT}}"
+        ],
+        "command": null,
+        "env": {
+          "TC_SESSION_FILE": "{{SESSION}}",
+          "TC_NODE": "C:\\Program Files\\Terminal Canvas\\Terminal Canvas.exe",
+          "TC_HOOK": "{{HOOK}}"
+        },
+        "files": [
+          ".ps1",
+          ".settings.json"
+        ],
+        "scriptMatchesSource": true
+      }
+    },
+    {
+      "platform": "win32",
+      "shell": "cmd.exe",
+      "result": null
+    },
+    {
+      "platform": "win32",
+      "shell": "C:\\Windows\\System32\\CMD.EXE",
+      "result": null
+    },
+    {
+      "platform": "linux",
+      "shell": "/bin/bash",
+      "result": {
+        "args": [
+          "--login",
+          "-i"
+        ],
+        "command": "source '{{SCRIPT}}'",
+        "env": {
+          "TC_SESSION_FILE": "{{SESSION}}",
+          "TC_NODE": "/opt/Terminal Canvas/terminal-canvas",
+          "TC_HOOK": "{{HOOK}}"
+        },
+        "files": [
+          ".bash",
+          ".settings.json"
+        ],
+        "scriptMatchesSource": true
+      }
+    },
+    {
+      "platform": "linux",
+      "shell": "/bin/zsh",
+      "result": {
+        "args": null,
+        "command": null,
+        "env": {
+          "TC_SESSION_FILE": "{{SESSION}}",
+          "TC_NODE": "/opt/Terminal Canvas/terminal-canvas",
+          "TC_HOOK": "{{HOOK}}"
+        },
+        "files": [
+          ".bash",
+          ".settings.json"
+        ],
+        "scriptMatchesSource": true
+      }
+    },
+    {
+      "platform": "darwin",
+      "shell": "/bin/zsh",
+      "result": {
+        "args": null,
+        "command": null,
+        "env": {
+          "TC_SESSION_FILE": "{{SESSION}}",
+          "TC_NODE": "/Applications/Terminal Canvas.app/Contents/MacOS/Terminal Canvas",
+          "TC_HOOK": "{{HOOK}}"
+        },
+        "files": [
+          ".bash",
+          ".settings.json"
+        ],
+        "scriptMatchesSource": true
+      }
+    },
+    {
+      "platform": "darwin",
+      "shell": "/opt/homebrew/bin/bash",
+      "result": {
+        "args": [
+          "--login",
+          "-i"
+        ],
+        "command": "source '{{SCRIPT}}'",
+        "env": {
+          "TC_SESSION_FILE": "{{SESSION}}",
+          "TC_NODE": "/Applications/Terminal Canvas.app/Contents/MacOS/Terminal Canvas",
+          "TC_HOOK": "{{HOOK}}"
+        },
+        "files": [
+          ".bash",
+          ".settings.json"
+        ],
+        "scriptMatchesSource": true
+      }
+    },
+    {
+      "platform": "linux",
+      "shell": "/bin/sh",
+      "result": {
+        "args": null,
+        "command": null,
+        "env": {
+          "TC_SESSION_FILE": "{{SESSION}}",
+          "TC_NODE": "/opt/Terminal Canvas/terminal-canvas",
+          "TC_HOOK": "{{HOOK}}"
+        },
+        "files": [
+          ".bash",
+          ".settings.json"
+        ],
+        "scriptMatchesSource": true
+      }
+    }
+  ],
+  "remaining": []
+}

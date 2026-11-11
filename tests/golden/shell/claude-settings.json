@@ -1,0 +1,54 @@
+{
+  "win32": {
+    "settings": {
+      "hooks": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {{ENCODED_COMMAND}}",
+                "timeout": 5
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "encodedCommand": "$reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.Encoding]::UTF8); $payload = $reader.ReadToEnd(); $reader.Dispose(); $OutputEncoding = New-Object Text.UTF8Encoding $false; $env:ELECTRON_RUN_AS_NODE = '1'; $payload | & 'C:\\Program Files\\Terminal Canvas\\Terminal Canvas.exe' '{{HOOK}}' claude"
+  },
+  "linux": {
+    "settings": {
+      "hooks": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "ELECTRON_RUN_AS_NODE=1 '/opt/Terminal Canvas/terminal-canvas' '{{HOOK}}' claude",
+                "timeout": 5
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "darwin": {
+    "settings": {
+      "hooks": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "ELECTRON_RUN_AS_NODE=1 '/Applications/Terminal Canvas.app/Contents/MacOS/Terminal Canvas' '{{HOOK}}' claude",
+                "timeout": 5
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

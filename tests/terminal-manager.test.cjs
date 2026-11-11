@@ -243,10 +243,11 @@ test('process lookups are scoped to sessions, disposed on exit, and ignored afte
     manager.stopAll(); assert.ok(watchers.every(w => w.disposed));
 });
 
+const windowsFolders = process.platform !== 'win32' && 'Feeds real host folders through Windows file URL decoding, so it needs a Windows file system.';
 function report(_launch, cwd, ready = true) {
     return '\x1b]7;' + (cwd ? pathToFileURL(cwd).href : '') + '\x07\x1b]777;tc-ready;' + (ready ? '1' : '0') + '\x07';
 }
-test('tracks changed directories per Windows session without sending commands or copying an AI process', async t => {
+test('tracks changed directories per Windows session without sending commands or copying an AI process', { skip: windowsFolders }, async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-directory-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const nested = path.join(root, 'nested space', "project's 日本語");
@@ -277,7 +278,7 @@ test('tracks changed directories per Windows session without sending commands or
     assert.match((await manager.directory(a)).warning, /could not be determined/, 'restarts must not reuse a previous directory');
 });
 
-test('missing or non-filesystem current directories offer the launch folder then home for review', async t => {
+test('missing or non-filesystem current directories offer the launch folder then home for review', { skip: windowsFolders }, async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fallback-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const launch = path.join(root, 'launch'), current = path.join(root, 'deleted directory');
@@ -304,7 +305,7 @@ test('Linux resolves the live shell process directory and unsupported platforms 
     assert.ok((await mac.manager.directory(card)).warning);
 });
 
-test('queued Windows input requires an idle prompt even when intermediate directories are valid', async () => {
+test('queued Windows input requires an idle prompt even when intermediate directories are valid', { skip: windowsFolders }, async () => {
     const { manager, processes } = harness();
     const card = createCard({ cwd: process.cwd() }); manager.start(card);
     processes[0].data(report(null, process.cwd()));

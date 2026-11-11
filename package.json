@@ -7,13 +7,16 @@
     "scripts": {
         "start": "node scripts/start.cjs",
         "dev": "node scripts/preview.cjs",
-        "check": "node scripts/check.cjs",
+        "check": "cargo xtask syntax",
         "test": "node --test tests/*.test.cjs",
         "test:smoke": "node scripts/start.cjs --smoke-test",
         "test:restoration": "node scripts/test-restoration.cjs",
+        "test:e2e": "node --test --test-concurrency=1 tests/e2e/*.test.cjs",
+        "test:layout": "node scripts/check-layout.cjs",
         "rebuild": "node scripts/rebuild.cjs",
-        "postinstall": "node scripts/patch-node-pty.cjs",
-        "icons": "node scripts/icons.cjs",
+        "postinstall": "node scripts/patch-node-pty.cjs && node scripts/vendor.cjs",
+        "icons": "cargo xtask icons",
+        "package:rust": "cargo xtask package-windows",
         "build": "electron-builder --win portable"
     },
     "dependencies": {
@@ -24,15 +27,28 @@
     "devDependencies": {
         "@electron/rebuild": "4.2.1",
         "electron": "45.2.3",
-        "electron-builder": "26.18.0"
+        "electron-builder": "26.18.0",
+        "playwright-core": "1.65.0"
     },
-    "engines": { "node": ">=22.12" },
+    "engines": {
+        "node": ">=22.12"
+    },
     "build": {
         "appId": "local.terminalcanvas.desktop",
         "productName": "Terminal Canvas",
-        "directories": { "output": "release" },
-        "files": ["src/**/*", "package.json"],
-        "asarUnpack": ["node_modules/node-pty/**/*"],
-        "win": { "target": "portable", "icon": "src/assets/icon.ico" }
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "src/**/*",
+            "package.json"
+        ],
+        "asarUnpack": [
+            "node_modules/node-pty/**/*"
+        ],
+        "win": {
+            "target": "portable",
+            "icon": "src/assets/icon.ico"
+        }
     }
 }

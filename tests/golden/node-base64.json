@@ -1,0 +1,1637 @@
+[
+  {
+    "input": "YQ==",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "YQ",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "YQ=",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "YQ==YQ==",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "YWJj",
+    "hex": "616263",
+    "utf8": "abc"
+  },
+  {
+    "input": "YW Jj",
+    "hex": "616263",
+    "utf8": "abc"
+  },
+  {
+    "input": "YW$Jj",
+    "hex": "616263",
+    "utf8": "abc"
+  },
+  {
+    "input": "YW-_",
+    "hex": "616fbf",
+    "utf8": "ao�"
+  },
+  {
+    "input": "Y",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "YWJjZ",
+    "hex": "616263",
+    "utf8": "abc"
+  },
+  {
+    "input": "=YWJj",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "Y=Q=",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "YWJ=Yw==",
+    "hex": "6162",
+    "utf8": "ab"
+  },
+  {
+    "input": "!!!!",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "YWJj!ZGVm",
+    "hex": "616263646566",
+    "utf8": "abcdef"
+  },
+  {
+    "input": "YWJjZGVm====",
+    "hex": "616263646566",
+    "utf8": "abcdef"
+  },
+  {
+    "input": "YW=Jj",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "YW子Jj",
+    "hex": "6163c9",
+    "utf8": "ac�"
+  },
+  {
+    "input": "YR==",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "YWJjZA=",
+    "hex": "61626364",
+    "utf8": "abcd"
+  },
+  {
+    "input": "YWJjZA==extra",
+    "hex": "61626364",
+    "utf8": "abcd"
+  },
+  {
+    "input": "﻿YWJj",
+    "hex": "616263",
+    "utf8": "abc"
+  },
+  {
+    "input": "YW丽Jj",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "YW🚀Jj",
+    "hex": "61",
+    "utf8": "a"
+  },
+  {
+    "input": "🚀YWJj",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "YWJj🚀",
+    "hex": "616263",
+    "utf8": "abc"
+  },
+  {
+    "input": " é\u0000=9Y\u0000j!é0=丠$-",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " 9﻿$子B/z",
+    "hex": "f4f07f",
+    "utf8": "��"
+  },
+  {
+    "input": "+ÿÿ/é !B+\u0000Y丽\u0000子乁!﻿丽乁0",
+    "hex": "fbf07e",
+    "utf8": "��~"
+  },
+  {
+    "input": "/丠J9\t 9﻿",
+    "hex": "fc9f7d",
+    "utf8": "��}"
+  },
+  {
+    "input": " A丠B\n/子\t乁\u0000$9A",
+    "hex": "001fcf03d0",
+    "utf8": "\u0000\u001f�\u0003�"
+  },
+  {
+    "input": "ÿéQ+é﻿丽ÿÿA_\nz+AQ\t",
+    "hex": "43",
+    "utf8": "C"
+  },
+  {
+    "input": "!子0+/_ $j\u0000\nz\n-",
+    "hex": "3f4fbffe3cfe",
+    "utf8": "?O��<�"
+  },
+  {
+    "input": "z+é\tA Jÿ\t子 子Q子-9zBY丠9\t",
+    "hex": "cfe0093cf40ffbdcc163",
+    "utf8": "��\t<�\u000f���c"
+  },
+  {
+    "input": "WY丽﻿ÿ\n🚀_é🚀",
+    "hex": "59",
+    "utf8": "Y"
+  },
+  {
+    "input": "\t -ÿJj-QY\t! -\n子",
+    "hex": "f898fe418f8f",
+    "utf8": "���A��"
+  },
+  {
+    "input": "丠 QjBÿB\u0000A\n🚀-丽0/AW$\n é🚀",
+    "hex": "423041",
+    "utf8": "B0A"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "!乁\tAA=\n+ W-\nA子= ﻿\u0000W",
+    "hex": "0000",
+    "utf8": "\u0000\u0000"
+  },
+  {
+    "input": "\n0 é乁 \u0000-+\u0000=$子0乁 Q_\t",
+    "hex": "d00fbe",
+    "utf8": "�\u000f�"
+  },
+  {
+    "input": "\tj!é乁$9\nYj丽=_+丠z\u0000乁\u0000/$",
+    "hex": "8c0f58",
+    "utf8": "�\u000fX"
+  },
+  {
+    "input": " /-\n 子子_z!乁9 =丠﻿jé9",
+    "hex": "ffe3cfff303d",
+    "utf8": "����0="
+  },
+  {
+    "input": "丽+",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " WQ ﻿0乁$/ÿB+丽Y🚀é",
+    "hex": "590d00fc1f",
+    "utf8": "Y\r\u0000�\u001f"
+  },
+  {
+    "input": "!ÿ\n\u0000-B_ 子 ",
+    "hex": "f81fcf",
+    "utf8": "�\u001f�"
+  },
+  {
+    "input": "ÿ 丽+乁BB /zz\u0000",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "z9j0🚀9",
+    "hex": "cfd8f4",
+    "utf8": "���"
+  },
+  {
+    "input": " + +丽🚀ÿ🚀+WB",
+    "hex": "fb",
+    "utf8": "�"
+  },
+  {
+    "input": " Jj丽﻿_!-0Y﻿",
+    "hex": "26",
+    "utf8": "&"
+  },
+  {
+    "input": "乁Q!0\u0000AY/ ==\n-é子\n$",
+    "hex": "010d0063",
+    "utf8": "\u0001\r\u0000c"
+  },
+  {
+    "input": "/+Y+Qÿ丽W-丠z\u0000Y乁BA",
+    "hex": "ffe63e",
+    "utf8": "��>"
+  },
+  {
+    "input": "\n🚀$🚀\n-$_Y丠z/0丠🚀-乁Q0 ﻿丽",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "éYB﻿J乁AYJ/ÿ=丽",
+    "hex": "60124001827f",
+    "utf8": "`\u0012@\u0001�"
+  },
+  {
+    "input": "9z9_乁W! Bz=B\tBé+=\néJBJ",
+    "hex": "f73f7f016073",
+    "utf8": "�?\u0001`s"
+  },
+  {
+    "input": "-Q=W9zj",
+    "hex": "f9",
+    "utf8": "�"
+  },
+  {
+    "input": " \n丠$//ÿ-9_ 🚀QQ$z丽+=子",
+    "hex": "ffffbd",
+    "utf8": "���"
+  },
+  {
+    "input": "丠0ÿjAjj0W +A",
+    "hex": "d230238f45be",
+    "utf8": "�0#�E�"
+  },
+  {
+    "input": "-\u0000/j_  ",
+    "hex": "fbf8ff",
+    "utf8": "���"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子AQ",
+    "hex": "3c04",
+    "utf8": "<\u0004"
+  },
+  {
+    "input": "\u0000\t /W🚀Y﻿ A!J",
+    "hex": "fd",
+    "utf8": "�"
+  },
+  {
+    "input": "Q -B!",
+    "hex": "43e0",
+    "utf8": "C�"
+  },
+  {
+    "input": "_乁ÿB$﻿ÿ_YY",
+    "hex": "fc007f61",
+    "utf8": "�\u0000a"
+  },
+  {
+    "input": "09\n+é乁丽Y丽W=/ =",
+    "hex": "d3df80",
+    "utf8": "�߀"
+  },
+  {
+    "input": "🚀0\tzQ\n99",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "=",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "A=丠0YWz_!- A\u0000\tÿ0$/BQz",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "zQ !_ÿ$Y$\u0000丠子丠﻿ ÿJA-丽\t\t",
+    "hex": "cd0fd83c903e",
+    "utf8": "�\u000f�<�>"
+  },
+  {
+    "input": "é🚀é=/\t+=\t!\n🚀é\u0000 jz9=\u0000ÿ丽\nÿ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\u0000\t\u0000\t乁!jQJ0\n乁/9\u0000  é \njW ",
+    "hex": "023409d00ffd8d",
+    "utf8": "\u00024\t�\u000f��"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "丽\t$J",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "é0_Q!Qé子乁+AA",
+    "hex": "d3f4103c0f80",
+    "utf8": "��\u0010<\u000f�"
+  },
+  {
+    "input": "J\u0000ÿB乁\t",
+    "hex": "2410",
+    "utf8": "$\u0010"
+  },
+  {
+    "input": "🚀zjWBQ9丠WjBY Bj/🚀/🚀W Y",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子Y子QQ_+W09丽子\n子丠_",
+    "hex": "3d83d043ff96d3",
+    "utf8": "=��C���"
+  },
+  {
+    "input": "$\t$丠$!",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "BQjÿQ0",
+    "hex": "0508d0",
+    "utf8": "\u0005\b�"
+  },
+  {
+    "input": "jQ",
+    "hex": "8d",
+    "utf8": "�"
+  },
+  {
+    "input": "乁🚀﻿ $",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "9子é",
+    "hex": "f4",
+    "utf8": "�"
+  },
+  {
+    "input": "\nJ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "J",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " ÿé ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "-éé9子\tYJjQ!ÿ",
+    "hex": "fbd3d82634",
+    "utf8": "���&4"
+  },
+  {
+    "input": "é_\t丠ÿQJ== +éQJ丽 ",
+    "hex": "fd02",
+    "utf8": "�\u0002"
+  },
+  {
+    "input": "子j=子B9🚀Q 丠\t==/Aé",
+    "hex": "3e",
+    "utf8": ">"
+  },
+  {
+    "input": "0B\u0000z!9\t 9子\t_!丽JB$ 0\u0000!\t-",
+    "hex": "d01cfdf4ff",
+    "utf8": "�\u001c���"
+  },
+  {
+    "input": "W\u0000=+丠$ÿ🚀B丠\t_Y!QQzAÿ﻿!$é",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "!W子+YJ0丽=_丠ÿ=$丠z$ JQ丽",
+    "hex": "58ff9827",
+    "utf8": "X��'"
+  },
+  {
+    "input": "$ÿ/Wé$丽B",
+    "hex": "fd",
+    "utf8": "�"
+  },
+  {
+    "input": "B ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "_\n丽+z_B=/0 WQB-ÿJ=jÿ乁\t",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "🚀Y",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "=\tJY/z",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "éA Q j++_W 乁乁+子$﻿éQ Q\u0000子",
+    "hex": "0108fefbf58003e3d040",
+    "utf8": "\u0001\b����\u0003��@"
+  },
+  {
+    "input": "+丠\t子zY!j子\u0000Y=/_子乁=",
+    "hex": "f8fcd88cf6",
+    "utf8": "��،�"
+  },
+  {
+    "input": "= j9 z 子j乁0 ÿ=0",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "丠",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "ÿ= 🚀J 乁子+",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "/9 \tY_丠JÿJ/-子= \u0000",
+    "hex": "ffd63f249ffe",
+    "utf8": "��?$��"
+  },
+  {
+    "input": "丠AY子ÿ丠! -丽 ",
+    "hex": "0183fe",
+    "utf8": "\u0001��"
+  },
+  {
+    "input": "j/ j🚀\n=🚀$/ÿ 丽$乁!ÿJ",
+    "hex": "8ff8",
+    "utf8": "��"
+  },
+  {
+    "input": "ÿ_W$丽! !Q﻿\u0000\u0000乁AJY ",
+    "hex": "fd",
+    "utf8": "�"
+  },
+  {
+    "input": "//丠=YY",
+    "hex": "ff",
+    "utf8": "�"
+  },
+  {
+    "input": "﻿0丽🚀子z J/🚀Y",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "_90j🚀ÿ\nY",
+    "hex": "ffdd23",
+    "utf8": "��#"
+  },
+  {
+    "input": "j!丠z9_\u0000丽",
+    "hex": "8f3f7f",
+    "utf8": "�?"
+  },
+  {
+    "input": "zA\t乁z🚀=\u0000🚀JWÿj﻿Y丠乁=\t0QA",
+    "hex": "cc0033",
+    "utf8": "�\u00003"
+  },
+  {
+    "input": "$/\t丠﻿﻿Y9 \u0000﻿+JéBA丽\n0é﻿j丽A",
+    "hex": "fd8f7e2410",
+    "utf8": "��~$\u0010"
+  },
+  {
+    "input": "!_=丽Y\t é乁丽Bé-é0 j\n=\u0000=0B",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\t丽B9﻿9 zj子\n",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "🚀\t\tYAQ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "J丽Yzÿ\u0000_﻿$z乁$z_99!\t",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "+j!Y",
+    "hex": "fa36",
+    "utf8": "�6"
+  },
+  {
+    "input": "子子éé﻿jYB/B丽zJQ/-",
+    "hex": "3cf8d807f0",
+    "utf8": "<��\u0007�"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "-子9éÿ+﻿",
+    "hex": "f8ff7e",
+    "utf8": "��~"
+  },
+  {
+    "input": "\u0000_!0ÿW+0 =jzW\t\tQ",
+    "hex": "ff45be",
+    "utf8": "�E�"
+  },
+  {
+    "input": "乁_!\u0000+é丠Q🚀丠J",
+    "hex": "03ff90",
+    "utf8": "\u0003��"
+  },
+  {
+    "input": "ÿ丽z 子JJ\u0000! WQ_$J丠",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " 9丽zJ \n﻿﻿",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "J+W",
+    "hex": "27e5",
+    "utf8": "'�"
+  },
+  {
+    "input": "乁   $= 🚀0!Y_",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "9🚀 -$\tWBJ\u0000=-丽éÿ!乁﻿09! ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "z=$B-0ÿz=子",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "=\né0子\t_\u0000AJY0\t!Q子0=Y/﻿",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "é🚀 🚀子Wÿ\u0000+乁0\t =子",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "Az+Q\u0000AWQ++",
+    "hex": "033f9001643e",
+    "utf8": "\u0003?�\u0001d>"
+  },
+  {
+    "input": "z\nj=乁ÿ乁z乁+!\n子乁子!/ 9/",
+    "hex": "ce",
+    "utf8": "�"
+  },
+  {
+    "input": "é=A﻿\u0000",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "j/\tW-丠-Qj🚀9j乁B9乁",
+    "hex": "8ff5bef908",
+    "utf8": "����\b"
+  },
+  {
+    "input": "=",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "﻿ ÿÿ!ÿ/",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "乁 ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "-9乁\u0000ÿW﻿éAQ ÿ\u0000",
+    "hex": "fbd01601",
+    "utf8": "��\u0016\u0001"
+  },
+  {
+    "input": "+﻿ÿYW丽0-jJ-A",
+    "hex": "f985",
+    "utf8": "��"
+  },
+  {
+    "input": "__$!",
+    "hex": "ff",
+    "utf8": "�"
+  },
+  {
+    "input": "9/ \té 丽z J $W\u0000",
+    "hex": "f7",
+    "utf8": "�"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "QY /+Q丠B!=_BY\tBÿ+0 YW",
+    "hex": "418ffe40",
+    "utf8": "A��@"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " 0乁J\u0000=﻿0z",
+    "hex": "d002",
+    "utf8": "�\u0002"
+  },
+  {
+    "input": "Y子W=_W0丠 丠Y _﻿",
+    "hex": "60f5",
+    "utf8": "`�"
+  },
+  {
+    "input": "B/é !\u0000\n乁 j子Jé+ +AA\u0000/Y",
+    "hex": "07f0233c9fbe000fd8",
+    "utf8": "\u0007�#<��\u0000\u000f�"
+  },
+  {
+    "input": " \nYAYzW9\n\n丽Y🚀W= QW",
+    "hex": "6006335b",
+    "utf8": "`\u00063["
+  },
+  {
+    "input": "\n\nÿA$z0 !éz🚀!\n/\n=🚀j/",
+    "hex": "033d33",
+    "utf8": "\u0003=3"
+  },
+  {
+    "input": "+乁/",
+    "hex": "f80f",
+    "utf8": "�\u000f"
+  },
+  {
+    "input": "_+W/丽Wé0丽ÿ🚀\t0\u0000A$🚀\u0000",
+    "hex": "ffe5bf",
+    "utf8": "��"
+  },
+  {
+    "input": "ÿ\t丽\n\nA=0j J丽0\n0éÿ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "é子0 Jÿ-﻿丽子B丠子éJ\t9 A09子 丽",
+    "hex": "3f427e",
+    "utf8": "?B~"
+  },
+  {
+    "input": "=乁09🚀",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子Qj-﻿$9J子_Q\tÿ﻿\n ",
+    "hex": "3d08fef493ff",
+    "utf8": "=\b����"
+  },
+  {
+    "input": "9é﻿子Wé -WJ_ \t",
+    "hex": "f4f5be589f",
+    "utf8": "���X�"
+  },
+  {
+    "input": "🚀\t$\n_\n",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "+ÿ9丽0🚀 \nQ",
+    "hex": "fb",
+    "utf8": "�"
+  },
+  {
+    "input": "\tÿ丠0= =Q丽子B丠BQA 0丽$jÿ﻿",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "!0/🚀jYQ+J🚀",
+    "hex": "d3",
+    "utf8": "�"
+  },
+  {
+    "input": "-B Q0乁\u00009丽$子 +_/_",
+    "hex": "f8143403",
+    "utf8": "�\u00144\u0003"
+  },
+  {
+    "input": "\tJ子",
+    "hex": "24",
+    "utf8": "$"
+  },
+  {
+    "input": "J乁\t🚀Q=9乁9\u0000 B +Y丠+B丠9  ",
+    "hex": "24",
+    "utf8": "$"
+  },
+  {
+    "input": "-BY Q子j乁Q\n丽子丽乁J-\n$",
+    "hex": "f816103e3010",
+    "utf8": "�\u0016\u0010>0\u0010"
+  },
+  {
+    "input": "J+子🚀﻿+ _ $YQé9﻿",
+    "hex": "27e3",
+    "utf8": "'�"
+  },
+  {
+    "input": "丽z🚀j丽éz//丠 ﻿Y+\n_é丽YJQ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "乁\u0000W﻿A=0$9A9=Q",
+    "hex": "0160",
+    "utf8": "\u0001`"
+  },
+  {
+    "input": "zY+0 \n$$Yÿ+é!\tA﻿=",
+    "hex": "cd8fb463e0",
+    "utf8": "͏�c�"
+  },
+  {
+    "input": "A-丽\tB",
+    "hex": "03",
+    "utf8": "\u0003"
+  },
+  {
+    "input": " \u0000éÿz乁子🚀\t",
+    "hex": "cc03",
+    "utf8": "�\u0003"
+  },
+  {
+    "input": "$=",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子9!\t=A9Jÿ乁丽Yééé-Qj\n\u0000\u0000 ",
+    "hex": "3f",
+    "utf8": "?"
+  },
+  {
+    "input": "Q ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "ééBQ_\u0000丠A子 ÿ﻿/ÿ0乁ÿ$\u0000W",
+    "hex": "050fc03ffd00",
+    "utf8": "\u0005\u000f�?�\u0000"
+  },
+  {
+    "input": "j9/+/丠éé乁/$JQ子YzJB/ ",
+    "hex": "8fdffefc0fc940f633241f",
+    "utf8": "����\u000f�@�3$\u001f"
+  },
+  {
+    "input": "﻿!j🚀J=j+!A丠W_\t-/ AA-/",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\t🚀 +\t乁﻿J丠🚀9Q\u0000/9\n ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "_éQ9_🚀子子\u0000WA子\t\u0000﻿丽",
+    "hex": "fd0f7f",
+    "utf8": "�\u000f"
+  },
+  {
+    "input": "!",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "W!\n子丽 \t/!丠WY",
+    "hex": "58",
+    "utf8": "X"
+  },
+  {
+    "input": "A\u0000丠J丽B9AQ0-é🚀\n 乁=",
+    "hex": "00",
+    "utf8": "\u0000"
+  },
+  {
+    "input": "丽\nÿ🚀﻿丽\n﻿!JB",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "-!é﻿9丽z﻿ÿ",
+    "hex": "fb",
+    "utf8": "�"
+  },
+  {
+    "input": "\t\u0000﻿\u0000Y",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\t丠z\t丠BÿQ丽W9丠丠/﻿A!-丽j",
+    "hex": "cc14",
+    "utf8": "�\u0014"
+  },
+  {
+    "input": "丽🚀子/W﻿/+-\u00000/\u0000 j-j丽\n",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "  ﻿ÿ\u0000A_éQBQBBQ\tA",
+    "hex": "03f401401050",
+    "utf8": "\u0003�\u0001@\u0010P"
+  },
+  {
+    "input": "é é+ J子\tj乁j/乁ÿQ",
+    "hex": "f893e3023fc0",
+    "utf8": "���\u0002?�"
+  },
+  {
+    "input": "子\t丽0zQ!AJ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "丠j",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\tQ!Q丠 \u0000🚀",
+    "hex": "41",
+    "utf8": "A"
+  },
+  {
+    "input": "YJ+9$ÿ",
+    "hex": "609fbd",
+    "utf8": "`��"
+  },
+  {
+    "input": "丽//Q ﻿0!=",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "B",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "B丠🚀🚀",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "-0\t__",
+    "hex": "fb4fff",
+    "utf8": "�O�"
+  },
+  {
+    "input": "$丠$/\n﻿QJ-B \t=丽/子/W",
+    "hex": "fd027e",
+    "utf8": "�\u0002~"
+  },
+  {
+    "input": "+",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子jQJ Jé",
+    "hex": "3e3409",
+    "utf8": ">4\t"
+  },
+  {
+    "input": "J0ÿ\nY子Y",
+    "hex": "27460f",
+    "utf8": "'F\u000f"
+  },
+  {
+    "input": "  \u0000z",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\n=\u0000!B\nz-\t丠_",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "丠!\nÿ!ÿ0B!9/\u0000j丽Az丠/j-z",
+    "hex": "d01f7f",
+    "utf8": "�\u001f"
+  },
+  {
+    "input": "j丽子!+\nB!Y9﻿ \tBB丽子0$",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " ÿ🚀ÿ!é丠 =",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "Y🚀子!\n00WJz\n\t_\nz0丠﻿é\té ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "-j09-=",
+    "hex": "fa3d3d",
+    "utf8": "�=="
+  },
+  {
+    "input": "B\n\nQ+=!_0",
+    "hex": "050f",
+    "utf8": "\u0005\u000f"
+  },
+  {
+    "input": "丽丠/B9zY9Q9Az=_é=/Q+🚀",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\nBÿ Q\u0000=0乁YB ",
+    "hex": "05",
+    "utf8": "\u0005"
+  },
+  {
+    "input": " _\u0000子j9 +丠丠YYj丽",
+    "hex": "fcf8fdf98623",
+    "utf8": "�����#"
+  },
+  {
+    "input": "$Q丽Q🚀!ÿ B🚀\t=\t",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "丠é丠=﻿乁子\n-\nW🚀 W子!A",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "!🚀YWzjJY丠丠J",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "z+-子YJ-",
+    "hex": "cfef8f609f",
+    "utf8": "��`�"
+  },
+  {
+    "input": "\tzJ$jjYB Q/Y9子丽!🚀9ÿ﻿",
+    "hex": "cc98e360143f63d3",
+    "utf8": "̘�`\u0014?c�"
+  },
+  {
+    "input": "-QW丽éY丽-🚀",
+    "hex": "f905",
+    "utf8": "�\u0005"
+  },
+  {
+    "input": "\n",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "=ÿ丽🚀子=A \t+丠 =zéj丠Aj+z0+A",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "﻿Wz﻿ Jz/jjJ0+-",
+    "hex": "5b3273fe38c9d3ef",
+    "utf8": "[2s�8���"
+  },
+  {
+    "input": "\nz-QJ=子j -\n 乁j=丽B=-_",
+    "hex": "cfe409",
+    "utf8": "��\t"
+  },
+  {
+    "input": "丽🚀ÿ﻿ \t _Q0+\u0000",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\t﻿W/_乁z\nA$=BW!🚀! $B",
+    "hex": "5bffc0cc",
+    "utf8": "[���"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "zQÿ+🚀\u0000Y9-$-﻿",
+    "hex": "cd0f",
+    "utf8": "�\u000f"
+  },
+  {
+    "input": "!-$Y﻿$\n9丽 $0Y=🚀$_ \tWj乁B\t",
+    "hex": "f98f",
+    "utf8": "��"
+  },
+  {
+    "input": "丽子B",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "BW-",
+    "hex": "056f",
+    "utf8": "\u0005o"
+  },
+  {
+    "input": "-丽",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "$ 子🚀",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "乁Q0﻿! AWY乁﻿j乁\tJA",
+    "hex": "010d005980230090",
+    "utf8": "\u0001\r\u0000Y�#\u0000�"
+  },
+  {
+    "input": "0=J 丠/A__=﻿子A",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子zÿ9J﻿\t--A0Q子丽",
+    "hex": "3f3f49fbe03440",
+    "utf8": "??I��4@"
+  },
+  {
+    "input": "é🚀﻿W\t丽=QW乁W/",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "W/Azÿ$W\u0000= j🚀\t//丠丠Jé/\nY",
+    "hex": "5bf033",
+    "utf8": "[�3"
+  },
+  {
+    "input": "QÿB\t0\tB",
+    "hex": "401d01",
+    "utf8": "@\u001d\u0001"
+  },
+  {
+    "input": "/B﻿丠éz$",
+    "hex": "fc1c",
+    "utf8": "�\u001c"
+  },
+  {
+    "input": "乁0﻿9z=🚀 A$WÿÿW/Qé\t\t﻿A!",
+    "hex": "034f73",
+    "utf8": "\u0003Os"
+  },
+  {
+    "input": "-",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "éAÿ子J丽W$YJ$",
+    "hex": "00f2",
+    "utf8": "\u0000�"
+  },
+  {
+    "input": "j+ +!B丠Y﻿9WYÿ-\t",
+    "hex": "8fef8163d598",
+    "utf8": "��c՘"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "W🚀ÿé子Bj丠",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\u0000Y=Y!/J﻿$ÿ子_Y﻿//J0ÿB",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子\u0000",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "-\u0000Y0z/\u0000/Q=\t ﻿YW$zJWWJ",
+    "hex": "f98d33fff4",
+    "utf8": "��3��"
+  },
+  {
+    "input": "\tÿ子丠\u0000\u0000﻿Aé  +﻿_ W _B丽﻿zQB",
+    "hex": "3c0fbf5bf0",
+    "utf8": "<\u000f�[�"
+  },
+  {
+    "input": "ÿ$ÿ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "乁Q0Q乁=丽+9",
+    "hex": "010d10",
+    "utf8": "\u0001\r\u0010"
+  },
+  {
+    "input": "!-0﻿0j_🚀 A\u0000",
+    "hex": "fb4d23",
+    "utf8": "�M#"
+  },
+  {
+    "input": "\tBz=﻿_!_乁ÿYY\nB9\u0000ÿ",
+    "hex": "07",
+    "utf8": "\u0007"
+  },
+  {
+    "input": "J丽\u0000子$丽é丽 =Y !🚀  ﻿-子\u0000 ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\u00009-B🚀\u0000",
+    "hex": "f7e0",
+    "utf8": "��"
+  },
+  {
+    "input": "B9z子B",
+    "hex": "07dccf",
+    "utf8": "\u0007��"
+  },
+  {
+    "input": "ÿ子9j\u0000乁Q! ÿ﻿丠-Y子",
+    "hex": "3fd8c043e60f",
+    "utf8": "?��C�\u000f"
+  },
+  {
+    "input": "子é0丠\t A子0Q!Q0$-/🚀YW\u0000",
+    "hex": "3f400fd10434fb",
+    "utf8": "?@\u000f�\u00044�"
+  },
+  {
+    "input": "\t /子子JBé=\n🚀+🚀 !W\n",
+    "hex": "fcf3c9",
+    "utf8": "���"
+  },
+  {
+    "input": "丽\n\t_é🚀丠 - 丽W🚀 B\tY",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "éB$\n子!丠_W+Y",
+    "hex": "04ffd6f9",
+    "utf8": "\u0004���"
+  },
+  {
+    "input": "B!/j\t🚀",
+    "hex": "07f8",
+    "utf8": "\u0007�"
+  },
+  {
+    "input": "=﻿乁Wé9﻿\n_09Q子A",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "🚀乁+子子_B!Yÿ /子é丠_",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "Q\tW 0 é丠zéÿé=Wj_0$丠!A ",
+    "hex": "416d33",
+    "utf8": "Am3"
+  },
+  {
+    "input": "$9!🚀-乁B丠",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "$丠Y\n!\nWj A",
+    "hex": "6168c0",
+    "utf8": "ah�"
+  },
+  {
+    "input": "j\tj z",
+    "hex": "8e3c",
+    "utf8": "�<"
+  },
+  {
+    "input": " é==丽JYJ_+🚀丽 Q丽0丽ÿBA0子",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "z🚀9子$\t/0",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "W🚀\n=/j",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "9AéY丠ÿ/W$zWWWB丠!丠YQ",
+    "hex": "f4063f5b3596581610",
+    "utf8": "�\u0006?[5�X\u0016\u0010"
+  },
+  {
+    "input": "\n9 🚀éj$=丠$AJé",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": " Q",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\u0000",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\n",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "0丽\t\u0000\u0000Q丠9AAWY0",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "🚀9子-ÿ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\u0000/J子Q9$🚀0Wé!é+",
+    "hex": "fc93d0",
+    "utf8": "���"
+  },
+  {
+    "input": "+丠=ÿé/🚀子丽ÿ子乁z Y$!=!\té乁",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "! /",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "_éé子ÿ乁﻿=\n🚀ÿ子é🚀\u0000乁W子ÿ\n=",
+    "hex": "fcf0",
+    "utf8": "��"
+  },
+  {
+    "input": "丠Q乁",
+    "hex": "40",
+    "utf8": "@"
+  },
+  {
+    "input": "$",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "JJ! AQB\n子0-﻿é",
+    "hex": "24901004fd3e",
+    "utf8": "$�\u0010\u0004�>"
+  },
+  {
+    "input": "\t -zAjW丠\n z0🚀AY",
+    "hex": "fb30235b3d",
+    "utf8": "�0#[="
+  },
+  {
+    "input": "﻿丠BA0z\t9\t\n__J丠é =ÿYY",
+    "hex": "040d33f7ffc9",
+    "utf8": "\u0004\r3���"
+  },
+  {
+    "input": "j﻿+丽9乁子J+",
+    "hex": "8f",
+    "utf8": "�"
+  },
+  {
+    "input": "z丠 丽W 丠 丠",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "/$丽\t\t9!\u00000\u0000z﻿é!=Bÿ!🚀🚀",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "🚀_/é /\tÿ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子\t0!Wz",
+    "hex": "3f45b3",
+    "utf8": "?E�"
+  },
+  {
+    "input": "=A子_",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\n!J子z\n9_子=子\u0000_!Y\u0000Q",
+    "hex": "24fcfdfc",
+    "utf8": "$���"
+  },
+  {
+    "input": "A!\t_!🚀$",
+    "hex": "03",
+    "utf8": "\u0003"
+  },
+  {
+    "input": "\n  W丠\n\u0000乁🚀Y﻿Y\u0000 J",
+    "hex": "58",
+    "utf8": "X"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\u0000子!=\u0000丠🚀_🚀YYj$",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "乁乁W_YB$/ÿ丽+Q$Y🚀\n乁YB丠﻿子+",
+    "hex": "0005bf601f",
+    "utf8": "\u0000\u0005�`\u001f"
+  },
+  {
+    "input": "ÿ丠 J子9!=/-!zJ\téé=j$\t ",
+    "hex": "24ff",
+    "utf8": "$�"
+  },
+  {
+    "input": "!",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\t!\n子\t \u00009=/ $0\u0000",
+    "hex": "3f",
+    "utf8": "?"
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "乁\u0000丽jA/WAB0/ÿ🚀子",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\nA子j0\n90z-",
+    "hex": "00f8f4f74cfe",
+    "utf8": "\u0000���L�"
+  },
+  {
+    "input": "丽AA",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "$W!9乁丽B0-﻿B$=Q丽z99﻿$==",
+    "hex": "5bd0",
+    "utf8": "[�"
+  },
+  {
+    "input": "!z\u0000-9Yÿé丽9é+-Y!W丠 ",
+    "hex": "cfef58",
+    "utf8": "��X"
+  },
+  {
+    "input": "W\n丠zYY _-乁",
+    "hex": "5b3618ffe0",
+    "utf8": "[6\u0018��"
+  },
+  {
+    "input": "\n丽_J_子!﻿$\n﻿90",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "子B-乁=ÿé丽",
+    "hex": "3c1f80",
+    "utf8": "<\u001f�"
+  },
+  {
+    "input": "\nQ/00_ =!丠$ÿ$ 子B-\t",
+    "hex": "43fd34",
+    "utf8": "C�4"
+  },
+  {
+    "input": "\nAj\n\u0000é$A\t Y_乁=乁",
+    "hex": "023018fc",
+    "utf8": "\u00020\u0018�"
+  },
+  {
+    "input": "Q\u0000🚀0z jB丠子!子BYJ-",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "+!0é/Jé9-JY+Q0🚀B",
+    "hex": "fb4fc9f7e258f90d",
+    "utf8": "�O���X�\r"
+  },
+  {
+    "input": "!子_子zJ0\t子!$A 9JB_🚀J$Y=乁",
+    "hex": "3ff3f32743c0f4907f",
+    "utf8": "?��'C���"
+  },
+  {
+    "input": "_WWQ子",
+    "hex": "fd6590",
+    "utf8": "�e�"
+  },
+  {
+    "input": "ÿÿJ\t ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "\u0000/J0zQ子_=0éé 🚀 W子$A﻿Wz",
+    "hex": "fc9d3340ff",
+    "utf8": "��3@�"
+  },
+  {
+    "input": "B$子JABB /Y= 丠﻿",
+    "hex": "04f240041fd8",
+    "utf8": "\u0004�@\u0004\u001f�"
+  },
+  {
+    "input": "乁/==jj!/﻿+ÿ",
+    "hex": "03",
+    "utf8": "\u0003"
+  },
+  {
+    "input": "$🚀!ÿ0 ",
+    "hex": "",
+    "utf8": ""
+  },
+  {
+    "input": "",
+    "hex": "",
+    "utf8": ""
+  }
+]

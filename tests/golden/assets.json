@@ -1,0 +1,836 @@
+{
+  "imageBytes": 15728640,
+  "detectImage": [
+    {
+      "name": "png",
+      "bytes": {
+        "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082"
+      },
+      "result": {
+        "ext": "png",
+        "mime": "image/png"
+      }
+    },
+    {
+      "name": "jpeg",
+      "bytes": {
+        "hex": "ffd8ffe00010"
+      },
+      "result": {
+        "ext": "jpg",
+        "mime": "image/jpeg"
+      }
+    },
+    {
+      "name": "gif89a",
+      "bytes": {
+        "hex": "47494638396101000100"
+      },
+      "result": {
+        "ext": "gif",
+        "mime": "image/gif"
+      }
+    },
+    {
+      "name": "gif87a",
+      "bytes": {
+        "hex": "4749463837610100"
+      },
+      "result": {
+        "ext": "gif",
+        "mime": "image/gif"
+      }
+    },
+    {
+      "name": "gif88a",
+      "bytes": {
+        "hex": "4749463838610100"
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "webp",
+      "bytes": {
+        "hex": "52494646000000005745425056503820"
+      },
+      "result": {
+        "ext": "webp",
+        "mime": "image/webp"
+      }
+    },
+    {
+      "name": "riff without webp",
+      "bytes": {
+        "hex": "524946460000000057415645666d7420"
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "png signature only",
+      "bytes": {
+        "hex": "89504e470d0a1a0a"
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "png signature and a byte",
+      "bytes": {
+        "hex": "89504e470d0a1a0a00"
+      },
+      "result": {
+        "ext": "png",
+        "mime": "image/png"
+      }
+    },
+    {
+      "name": "jpeg three bytes",
+      "bytes": {
+        "hex": "ffd8ff"
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "jpeg four bytes",
+      "bytes": {
+        "hex": "ffd8ff00"
+      },
+      "result": {
+        "ext": "jpg",
+        "mime": "image/jpeg"
+      }
+    },
+    {
+      "name": "gif six bytes",
+      "bytes": {
+        "hex": "474946383961"
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "webp twelve bytes",
+      "bytes": {
+        "hex": "524946460000000057454250"
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "empty",
+      "bytes": {
+        "hex": ""
+      },
+      "error": "Images must be between 1 byte and 15 MB."
+    },
+    {
+      "name": "svg",
+      "bytes": {
+        "hex": "3c73766720786d6c6e733d22687474703a2f2f7777772e77332e6f72672f323030302f737667223e3c7363726970743e616c6572742831293c2f7363726970743e3c2f7376673e"
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "15 MB",
+      "bytes": {
+        "repeat": "ff",
+        "count": 15728640
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported."
+    },
+    {
+      "name": "15 MB and a byte",
+      "bytes": {
+        "repeat": "ff",
+        "count": 15728641
+      },
+      "error": "Images must be between 1 byte and 15 MB."
+    }
+  ],
+  "assetNames": [
+    {
+      "name": "../workspace.terminalcanvas",
+      "error": "Invalid image asset."
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.svg",
+      "error": "Invalid image asset."
+    },
+    {
+      "name": "C:\\Windows\\win.ini",
+      "error": "Invalid image asset."
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+      "result": true
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.PNG",
+      "error": "Invalid image asset."
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png.tmp",
+      "error": "Invalid image asset."
+    },
+    {
+      "name": "",
+      "error": "Invalid image asset."
+    },
+    {
+      "name": 5,
+      "error": "Invalid image asset."
+    }
+  ],
+  "storeImage": [
+    {
+      "bytes": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082",
+      "name": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+    },
+    {
+      "bytes": "ffd8ffe00010",
+      "name": "fc16d7dcee9cae83ef3923222a81ccd8fe96c9d25fdb7f504d66f1011e0cd870.jpg"
+    },
+    {
+      "bytes": "47494638396101000100",
+      "name": "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif"
+    },
+    {
+      "bytes": "52494646000000005745425056503820",
+      "name": "4d4595a822e3cae9085d85fd882367dec5b17e4f4a550da52276b229b3077054.webp"
+    },
+    {
+      "bytes": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082",
+      "name": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+    }
+  ],
+  "stored": [
+    "4d4595a822e3cae9085d85fd882367dec5b17e4f4a550da52276b229b3077054.webp",
+    "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png",
+    "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif",
+    "fc16d7dcee9cae83ef3923222a81ccd8fe96c9d25fdb7f504d66f1011e0cd870.jpg"
+  ],
+  "keepList": [
+    {
+      "input": null,
+      "error": "Invalid image list."
+    },
+    {
+      "input": "a.png",
+      "error": "Invalid image list."
+    },
+    {
+      "input": [],
+      "result": []
+    },
+    {
+      "input": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+      ],
+      "result": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+      ]
+    },
+    {
+      "input": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+      ],
+      "result": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+      ]
+    },
+    {
+      "input": [
+        "../workspace.terminalcanvas"
+      ],
+      "error": "Invalid image list."
+    },
+    {
+      "input": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.svg"
+      ],
+      "error": "Invalid image list."
+    },
+    {
+      "input": [
+        42
+      ],
+      "error": "Invalid image list."
+    },
+    {
+      "input": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+        42
+      ],
+      "error": "Invalid image list."
+    },
+    {
+      "input": {},
+      "error": "Invalid image list."
+    },
+    {
+      "input": {
+        "$array": {
+          "template": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+          "count": 200000
+        }
+      },
+      "result": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+      ]
+    },
+    {
+      "input": {
+        "$array": {
+          "template": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+          "count": 200001
+        }
+      },
+      "error": "Invalid image list."
+    }
+  ],
+  "imageNames": [
+    {
+      "board": {
+        "items": [
+          {
+            "type": "image",
+            "asset": "b"
+          },
+          {
+            "type": "note"
+          },
+          {
+            "type": "image",
+            "asset": "a"
+          },
+          {
+            "type": "image",
+            "asset": "b"
+          }
+        ]
+      },
+      "names": [
+        "b",
+        "a"
+      ]
+    },
+    {
+      "board": {},
+      "names": []
+    },
+    {
+      "board": {
+        "items": []
+      },
+      "names": []
+    }
+  ],
+  "extractAssets": [
+    {
+      "name": "renames forged names",
+      "input": {
+        "version": 2,
+        "items": [
+          {
+            "id": "a",
+            "type": "image",
+            "asset": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+          },
+          {
+            "id": "b",
+            "type": "image",
+            "asset": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png"
+          },
+          {
+            "id": "n",
+            "type": "note"
+          }
+        ],
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC",
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png": "data:image/gif;base64,R0lGODlhAQABAA=="
+        }
+      },
+      "result": {
+        "version": 2,
+        "items": [
+          {
+            "id": "a",
+            "type": "image",
+            "asset": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+          },
+          {
+            "id": "b",
+            "type": "image",
+            "asset": "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif"
+          },
+          {
+            "id": "n",
+            "type": "note"
+          }
+        ]
+      },
+      "stored": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png",
+        "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif"
+      ]
+    },
+    {
+      "name": "no assets",
+      "input": {
+        "version": 3,
+        "items": []
+      },
+      "result": {
+        "version": 3,
+        "items": []
+      },
+      "stored": []
+    },
+    {
+      "name": "undefined assets stay",
+      "input": {
+        "version": 3,
+        "items": "not checked"
+      },
+      "result": {
+        "version": 3,
+        "items": "not checked"
+      },
+      "stored": []
+    },
+    {
+      "name": "items not an array",
+      "input": {
+        "version": 3,
+        "items": "nope",
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC"
+        }
+      },
+      "result": {
+        "version": 3,
+        "items": "nope"
+      },
+      "stored": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+      ]
+    },
+    {
+      "name": "null items entries",
+      "input": {
+        "version": 3,
+        "items": [
+          null,
+          5,
+          {
+            "type": "image",
+            "asset": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+          }
+        ],
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC"
+        }
+      },
+      "result": {
+        "version": 3,
+        "items": [
+          null,
+          5,
+          {
+            "type": "image",
+            "asset": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+          }
+        ]
+      },
+      "stored": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+      ]
+    },
+    {
+      "name": "empty assets",
+      "input": {
+        "version": 3,
+        "items": [],
+        "assets": {}
+      },
+      "result": {
+        "version": 3,
+        "items": []
+      },
+      "stored": []
+    },
+    {
+      "name": "assets array",
+      "input": {
+        "version": 2,
+        "items": [],
+        "assets": []
+      },
+      "error": "Invalid embedded images.",
+      "stored": []
+    },
+    {
+      "name": "assets null",
+      "input": {
+        "version": 2,
+        "items": [],
+        "assets": null
+      },
+      "error": "Invalid embedded images.",
+      "stored": []
+    },
+    {
+      "name": "assets string",
+      "input": {
+        "assets": "x"
+      },
+      "error": "Invalid embedded images.",
+      "stored": []
+    },
+    {
+      "name": "remote url",
+      "input": {
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "https://example.com/a.png"
+        }
+      },
+      "error": "Invalid embedded image.",
+      "stored": []
+    },
+    {
+      "name": "html data url",
+      "input": {
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:text/html;base64,PGgxPg=="
+        }
+      },
+      "error": "Invalid embedded image.",
+      "stored": []
+    },
+    {
+      "name": "bad name",
+      "input": {
+        "assets": {
+          "evil.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC"
+        }
+      },
+      "error": "Invalid embedded image.",
+      "stored": []
+    },
+    {
+      "name": "svg bytes",
+      "input": {
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,PHN2Zy8+"
+        }
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported.",
+      "stored": []
+    },
+    {
+      "name": "uppercase mime",
+      "input": {
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/PNG;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC"
+        }
+      },
+      "error": "Invalid embedded image.",
+      "stored": []
+    },
+    {
+      "name": "mime with plus",
+      "input": {
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/svg+xml;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC"
+        }
+      },
+      "error": "Invalid embedded image.",
+      "stored": []
+    },
+    {
+      "name": "url-safe base64",
+      "input": {
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,ab-_"
+        }
+      },
+      "error": "Invalid embedded image.",
+      "stored": []
+    },
+    {
+      "name": "padding in the middle",
+      "input": {
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC==AAAA"
+        }
+      },
+      "result": {},
+      "stored": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+      ]
+    },
+    {
+      "name": "second asset fails",
+      "input": {
+        "items": [],
+        "assets": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC",
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png": "data:image/png;base64,PHN2Zy8+"
+        }
+      },
+      "error": "Only PNG, JPEG, GIF, and WebP images are supported.",
+      "stored": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+      ]
+    },
+    {
+      "name": "integer-like key first",
+      "input": {
+        "items": [],
+        "assets": {
+          "7": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png": "data:image/png;base64,PHN2Zy8+"
+        }
+      },
+      "error": "Invalid embedded image.",
+      "stored": []
+    },
+    {
+      "name": "numeric input",
+      "input": 5,
+      "result": 5,
+      "stored": []
+    },
+    {
+      "name": "null input",
+      "input": null,
+      "result": null,
+      "stored": []
+    },
+    {
+      "name": "string input",
+      "input": "board",
+      "result": "board",
+      "stored": []
+    },
+    {
+      "name": "array input",
+      "input": [
+        1,
+        2
+      ],
+      "result": [
+        1,
+        2
+      ],
+      "stored": []
+    }
+  ],
+  "embedAssets": [
+    {
+      "name": "embeds referenced images and reports missing ones",
+      "files": [
+        {
+          "name": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png",
+          "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082"
+        }
+      ],
+      "board": {
+        "items": [
+          {
+            "type": "image",
+            "asset": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+          },
+          {
+            "type": "image",
+            "asset": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+          },
+          {
+            "type": "image",
+            "asset": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png"
+          },
+          {
+            "type": "note",
+            "text": ""
+          }
+        ]
+      },
+      "result": {
+        "assets": {
+          "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP4//8/AAX+Av6n1qTFAAAAAElFTkSuQmCC"
+        },
+        "missing": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png"
+        ]
+      }
+    },
+    {
+      "name": "a stored file that is not an image is missing",
+      "files": [
+        {
+          "name": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.gif",
+          "hex": "00ff"
+        }
+      ],
+      "board": {
+        "items": [
+          {
+            "type": "image",
+            "asset": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.gif"
+          }
+        ]
+      },
+      "result": {
+        "assets": {},
+        "missing": [
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.gif"
+        ]
+      }
+    },
+    {
+      "name": "the stored bytes decide the MIME type",
+      "files": [
+        {
+          "name": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png",
+          "hex": "47494638396101000100"
+        }
+      ],
+      "board": {
+        "items": [
+          {
+            "type": "image",
+            "asset": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png"
+          }
+        ]
+      },
+      "result": {
+        "assets": {
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.png": "data:image/gif;base64,R0lGODlhAQABAA=="
+        },
+        "missing": []
+      }
+    },
+    {
+      "name": "no items",
+      "files": [],
+      "board": {},
+      "result": {
+        "assets": {},
+        "missing": []
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "name": "unreferenced images only",
+      "files": [
+        {
+          "name": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png",
+          "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082"
+        },
+        {
+          "name": "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif",
+          "hex": "47494638396101000100"
+        },
+        {
+          "name": "notes.txt",
+          "hex": "6b656570"
+        },
+        {
+          "name": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png.1234.tmp",
+          "hex": "6b656570"
+        },
+        {
+          "name": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.svg",
+          "hex": "6b656570"
+        },
+        {
+          "name": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.png",
+          "directory": true
+        }
+      ],
+      "keep": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+      ],
+      "unused": [
+        {
+          "name": "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif",
+          "bytes": 10
+        }
+      ],
+      "deleted": {
+        "deleted": 1,
+        "bytes": 10,
+        "failed": 0
+      },
+      "remaining": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png",
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png.1234.tmp",
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.svg",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.png",
+        "notes.txt"
+      ]
+    },
+    {
+      "name": "everything kept",
+      "files": [
+        {
+          "name": "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png",
+          "hex": "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c50000000049454e44ae426082"
+        }
+      ],
+      "keep": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+      ],
+      "unused": [],
+      "deleted": {
+        "deleted": 0,
+        "bytes": 0,
+        "failed": 0
+      },
+      "remaining": [
+        "6e7bda5fb81d763cf2456c63768b3249db67018d05b98d7abe74deea863d3035.png"
+      ]
+    },
+    {
+      "name": "a folder that cannot be deleted",
+      "files": [
+        {
+          "name": "0000000000000000000000000000000000000000000000000000000000000000.png",
+          "directory": true,
+          "child": "inside"
+        },
+        {
+          "name": "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif",
+          "hex": "47494638396101000100"
+        }
+      ],
+      "keep": [],
+      "unused": [
+        {
+          "name": "fb6567d497606314a968515ebf9063dcee9fcff777897c384ed8e6a26dbd7190.gif",
+          "bytes": 10
+        }
+      ],
+      "deleted": {
+        "deleted": 1,
+        "bytes": 10,
+        "failed": 0
+      },
+      "remaining": [
+        "0000000000000000000000000000000000000000000000000000000000000000.png"
+      ]
+    },
+    {
+      "name": "no assets folder",
+      "files": null,
+      "keep": [],
+      "unused": [],
+      "deleted": {
+        "deleted": 0,
+        "bytes": 0,
+        "failed": 0
+      },
+      "remaining": []
+    }
+  ]
+}

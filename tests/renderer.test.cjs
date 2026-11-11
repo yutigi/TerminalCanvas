@@ -4,7 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { randomUUID } = require('node:crypto');
-const { PROFILES, createWorkspace, createCard } = require('../src/workspace.cjs');
+const fixture = require('./golden/renderer.json');
+const PROFILES = fixture.profiles;
+// Clone host-captured JSON for UI state tests; validation and factory parity live in Rust.
+const createWorkspace = () => structuredClone(fixture.workspace);
+const createCard = (options = {}) => ({ ...structuredClone(fixture.cards[options.profile || 'shell']), ...options, id: randomUUID() });
 
 // A small DOM boundary substitute checks renderer boot/state without claiming visual coverage.
 class Element {
@@ -300,9 +304,32 @@ test('board items restore beside terminals, connectors render as arrows, and the
     assert.equal(elements.get('#minimap-cards').childElementCount, 3, 'lines are omitted from the minimap');
     const stroke = vm.runInContext('itemViews.get("wire").stroke', context);
     assert.match(stroke.attributes.get('d'), /^M200 /, 'the connector leaves the note at its right edge');
-    assert.equal(stroke.attributes.get('marker-end'), 'url(#arrowhead)');
+    const head = vm.runInContext('itemViews.get("wire").head', context);
+    assert.match(head.attributes.get('d'), /Z$/, 'the arrowhead is a filled path beside the shaft');
+    const end = json(context, 'linePoints(workspace.items[3]).end');
+    assert.ok(head.attributes.get('transform').startsWith(`translate(${end.x} ${end.y}) rotate(`), 'the head follows the attached endpoint');
     assert.equal(vm.runInContext('itemViews.get("note-1").text.textContent', context), 'Hello\nboard');
     assert.ok(Number(vm.runInContext('itemViews.get("frame").element.style.zIndex', context)) < 0, 'frames stay behind other items');
+});
+test('arrowheads follow endpoint direction, remain finite at zero length, and disappear for plain lines', async () => {
+    const workspace = createWorkspace();
+    workspace.items.push({ id: 'arrow', type: 'line', start: { x: 100, y: 100 }, end: { x: 200, y: 100 }, arrow: true });
+    const { context } = await boot(workspace);
+    const head = vm.runInContext('itemViews.get("arrow").head', context);
+    for (const [x, y, angle] of [[200, 100, 0], [100, 200, 90], [0, 100, 180], [100, 0, -90], [200, 200, 45], [100, 100, 0]]) {
+        vm.runInContext(`workspace.items[0].end = { x: ${x}, y: ${y} }; renderLines()`, context);
+        assert.equal(head.attributes.get('transform'), `translate(${x} ${y}) rotate(${angle})`);
+        assert.match(head.attributes.get('d'), /Z$/);
+    }
+    vm.runInContext('workspace.items[0].arrow = false; renderLines()', context);
+    assert.equal(head.attributes.get('d'), '', 'plain lines have no arrowhead');
+    assert.equal(head.style.display, 'none', 'the no-arrow state is explicitly hidden');
+    const lastTransform = head.attributes.get('transform');
+    vm.runInContext('workspace.items[0].end = { x: 300, y: 400 }; renderLines()', context);
+    assert.equal(head.attributes.get('transform'), lastTransform, 'plain lines skip arrow rotation work');
+    vm.runInContext('workspace.items[0].arrow = true; renderLines()', context);
+    assert.match(head.attributes.get('d'), /Z$/, 'restoring the arrow redraws its head');
+    assert.equal(head.style.display, '');
 });
 test('creation tools draw a sticky note, edit it in place, and return to the select tool', async () => {
     const { elements, context } = await boot(createWorkspace());
@@ -1062,6 +1089,29 @@ test('restarting clears the previous live directory and still sends the configur
     assert.equal(elements.get('#world').children[0].querySelector('.card-directory span').textContent, 'Current directory unavailable');
     bridge.event({ type: 'cwd', id: board.cards[0].id, cwd: board.cards[0].cwd });
     assert.equal(elements.get('#world').children[0].querySelector('.card-directory span').textContent, board.cards[0].cwd);
+});
+
+test('startup cursor replies reach the PTY before the start response without accepting early typing', async () => {
+    const board = createWorkspace(), card = createCard(); board.cards.push(card);
+    let finishStart;
+    const pendingStart = new Promise(resolve => { finishStart = resolve; });
+    const { context, bridge } = await boot(board, { terminals: true,
+        respond: action => action === 'start' ? pendingStart : undefined });
+    const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+    terminal.cols = 80; terminal.rows = 24; terminal.write = (_data, done) => done();
+    const sent = []; bridge.input = (id, data) => sent.push({ id, data });
+    const starting = vm.runInContext('start(workspace.cards[0])', context); await flush();
+    terminal.dataHandler('early typing\r');
+    terminal.dataHandler('\x1b[1;1R'); // No query has arrived yet.
+    bridge.event({ type: 'data', id: card.id, data: '\x1b[6' });
+    bridge.event({ type: 'data', id: card.id, data: 'n' });
+    terminal.dataHandler('still early\r');
+    terminal.dataHandler('\x1b[1;1R');
+    terminal.dataHandler('\x1b[1;1R'); // The one query must not authorize another reply.
+    assert.deepEqual(sent, [{ id: card.id, data: '\x1b[1;1R' }]);
+    finishStart({ cwd: card.cwd }); await starting;
+    terminal.dataHandler('ready typing\r');
+    assert.deepEqual(sent.at(-1), { id: card.id, data: 'ready typing\r' });
 });
 
 test('terminal hyperlinks open only on a trusted primary click, without confirmation', async () => {

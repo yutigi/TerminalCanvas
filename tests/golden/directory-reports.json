@@ -1,0 +1,6262 @@
+{
+  "hostname": "TC-Host",
+  "home": {
+    "win32": "C:\\Users\\tc",
+    "linux": "/home/tc",
+    "darwin": "/Users/tc"
+  },
+  "cases": [
+    {
+      "name": "quoted Windows path, BEL",
+      "platform": "win32",
+      "chunks": [
+        "hello\u001b]9;9;\"C:\\some folder\\子\"\u0007world"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\some folder\\子"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "quoted Windows path, ST",
+      "platform": "win32",
+      "chunks": [
+        "hello\u001b]9;9;\"C:\\some folder\\子\"\u001b\\world"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\some folder\\子"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "unrelated, oversized, and invalid reports",
+      "platform": "win32",
+      "chunks": [
+        "C:\\fake prompt> cd fake\r\n\u001b]0;title\u0007",
+        {
+          "$text": [
+            "\u001b]9;9;",
+            [
+              "a",
+              50000
+            ]
+          ]
+        },
+        "\u0007",
+        "\u001b]9;9;relative\u0007\u001b]9;9;\u0007\u001b]9;9;C:\\bad\npath\u0007",
+        "\u001b]9;9;C:\\valid\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": null
+        },
+        {
+          "type": "cwd",
+          "cwd": null
+        },
+        {
+          "type": "cwd",
+          "cwd": null
+        },
+        {
+          "type": "cwd",
+          "cwd": "C:\\valid"
+        }
+      ],
+      "splitInvariant": false
+    },
+    {
+      "name": "OSC 7 decodes once",
+      "platform": "linux",
+      "chunks": [
+        "\u001b]7;file://localhost/a%20folder/%25literal/%E5%AD%90\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "/a folder/%literal/子"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Windows drive and UNC paths",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]7;file:///C:/a%20folder/%25literal/%23name/%E5%AD%90\u0007",
+        "\u001b]7;file://server/share/a%20folder\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\a folder\\%literal\\#name\\子"
+        },
+        {
+          "type": "cwd",
+          "cwd": "\\\\server\\share\\a folder"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Unix ignores remote hosts",
+      "platform": "linux",
+      "chunks": [
+        "\u001b]7;file://remote.example/home/user\u0007plain text",
+        "\u001b]7;file:///local\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "/local"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Windows UNC share on tc-host",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]7;file://tc-host/share/a%20folder/%25literal/%23name/%E5%AD%90\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "\\\\tc-host\\share\\a folder\\%literal\\#name\\子"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Windows UNC share on TC-HOST",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]7;file://TC-HOST/share/a%20folder/%25literal/%23name/%E5%AD%90\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "\\\\tc-host\\share\\a folder\\%literal\\#name\\子"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Windows UNC share on localhost",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]7;file://localhost/share/a%20folder/%25literal/%23name/%E5%AD%90\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "\\\\localhost\\share\\a folder\\%literal\\#name\\子"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Windows UNC share on LOCALHOST",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]7;file://LOCALHOST/share/a%20folder/%25literal/%23name/%E5%AD%90\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "\\\\localhost\\share\\a folder\\%literal\\#name\\子"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Windows localhost drive and encoded separator",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]7;file://localhost/C:/a%20folder\u0007",
+        "\u001b]7;file://localhost/share/encoded%5cseparator\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\a folder"
+        },
+        {
+          "type": "cwd",
+          "cwd": null
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "Unix accepts this machine",
+      "platform": "linux",
+      "chunks": [
+        "\u001b]7;file://tc-host/a%20folder\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "/a folder"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "macOS accepts this machine",
+      "platform": "darwin",
+      "chunks": [
+        "\u001b]7;file://TC-Host/Users/tc\u0007\u001b]7;file://elsewhere/Users/tc\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "/Users/tc"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "readiness reports",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]777;tc-ready;0\u0007\u001b]7;file:///C:/project\u0007\u001b]777;tc-ready;1\u001b\\",
+        "\u001b]777;tc-ready;2\u0007"
+      ],
+      "events": [
+        {
+          "type": "ready",
+          "ready": false
+        },
+        {
+          "type": "cwd",
+          "cwd": "C:\\project"
+        },
+        {
+          "type": "ready",
+          "ready": true
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "readiness rejects extra text",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]777;tc-ready;1;\u0007\u001b]777;tc-ready;\u0007\u001b]777;TC-READY;1\u0007\u001b]777;tc-ready;11\u0007"
+      ],
+      "events": [],
+      "splitInvariant": true
+    },
+    {
+      "name": "readiness on Unix",
+      "platform": "linux",
+      "chunks": [
+        "\u001b]777;tc-ready;1\u0007"
+      ],
+      "events": [
+        {
+          "type": "ready",
+          "ready": true
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "OSC restarts inside OSC",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]9;9;C:\\a\u001b]9;9;C:\\b\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\b"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "escape inside OSC cancels it",
+      "platform": "win32",
+      "chunks": [
+        "\u001b]9;9;C:\\a\u001bX\u0007\u001b]9;9;C:\\c\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\c"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "double escape before OSC",
+      "platform": "win32",
+      "chunks": [
+        "\u001b\u001b]9;9;C:\\d\u0007"
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\d"
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "escape then text",
+      "platform": "win32",
+      "chunks": [
+        "\u001bx]9;9;C:\\no\u0007"
+      ],
+      "events": [],
+      "splitInvariant": true
+    },
+    {
+      "name": "payload of exactly 16384 units",
+      "platform": "win32",
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]9;9;C:\\",
+            [
+              "a",
+              16377
+            ],
+            "\u0007"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": null
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "payload of 16385 units overflows",
+      "platform": "win32",
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]9;9;C:\\",
+            [
+              "a",
+              16378
+            ],
+            "\u0007"
+          ]
+        }
+      ],
+      "events": [],
+      "splitInvariant": true
+    },
+    {
+      "name": "surrogate pair at 16383 units",
+      "platform": "win32",
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]9;9;C:\\",
+            [
+              "a",
+              16376
+            ],
+            "🚀\u0007"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": null
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "surrogate pair at 16384 units",
+      "platform": "win32",
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]9;9;C:\\",
+            [
+              "a",
+              16377
+            ],
+            "🚀\u0007"
+          ]
+        }
+      ],
+      "events": [],
+      "splitInvariant": true
+    },
+    {
+      "name": "overflow resets for the next report",
+      "platform": "win32",
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]9;9;",
+            [
+              "a",
+              20000
+            ],
+            "\u0007\u001b]9;9;C:\\next\u0007"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": "C:\\next"
+        }
+      ],
+      "splitInvariant": false
+    },
+    {
+      "name": "9;9 path of 4096 units",
+      "platform": "win32",
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]9;9;C:\\",
+            [
+              "p",
+              4093
+            ],
+            "\u0007"
+          ]
+        },
+        {
+          "$text": [
+            "\u001b]9;9;C:\\",
+            [
+              "p",
+              4094
+            ],
+            "\u0007"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": {
+            "$text": [
+              "C:\\",
+              [
+                "p",
+                4093
+              ]
+            ]
+          }
+        },
+        {
+          "type": "cwd",
+          "cwd": null
+        }
+      ],
+      "splitInvariant": true
+    },
+    {
+      "name": "9;9 path of 4096 emoji units",
+      "platform": "linux",
+      "chunks": [
+        {
+          "$text": [
+            "\u001b]9;9;/",
+            [
+              "🚀",
+              2047
+            ],
+            "x\u0007"
+          ]
+        },
+        {
+          "$text": [
+            "\u001b]9;9;/",
+            [
+              "🚀",
+              2048
+            ],
+            "\u0007"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "type": "cwd",
+          "cwd": {
+            "$text": [
+              "/",
+              [
+                "🚀",
+                2047
+              ],
+              "x"
+            ]
+          }
+        },
+        {
+          "type": "cwd",
+          "cwd": null
+        }
+      ],
+      "splitInvariant": true
+    }
+  ],
+  "ninenine": [
+    {
+      "value": "\"C:\\x\"",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:\\x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:/x",
+      "win32": [
+        "C:/x"
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "\"",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "\"\"",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "\"C:\\x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:\\x\"",
+      "win32": [
+        "C:\\x\""
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "/x",
+      "win32": [
+        "/x"
+      ],
+      "linux": [
+        "/x"
+      ]
+    },
+    {
+      "value": "\"/x\"",
+      "win32": [
+        "/x"
+      ],
+      "linux": [
+        "/x"
+      ]
+    },
+    {
+      "value": "relative",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:\\",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "c:x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "\\\\server\\share",
+      "win32": [
+        "\\\\server\\share"
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "\\x",
+      "win32": [
+        "\\x"
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:\\ab",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:\\a\tb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "/ab",
+      "win32": [
+        "/ab"
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "value": "/子子子",
+      "win32": [
+        "/子子子"
+      ],
+      "linux": [
+        "/子子子"
+      ]
+    },
+    {
+      "value": " C:\\x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "value": "C:\\x ",
+      "win32": [
+        "C:\\x "
+      ],
+      "linux": [
+        null
+      ]
+    }
+  ],
+  "osc7": [
+    {
+      "uri": "file://",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file:///",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file:///C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file:///C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file:///c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file:///C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file:///C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file:///C",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file:///share/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file:///share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file:///share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file:///a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///%E5%AD%90",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file:///%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///a/../b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file:///a/./b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file:////double",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file:///a?query",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file:///a#frag",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file:///a%23b%3Fc",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file:///a b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file:///a\tb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file:///a\\b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file:///tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:///C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file:///C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file:///D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file:///%43:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file:///~user",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file:///a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file:///子/🚀",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://localhost",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://localhost/",
+      "win32": [
+        "\\\\localhost\\"
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://localhost/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://localhost/C",
+      "win32": [
+        "\\\\localhost\\C"
+      ],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://localhost/share/a%20folder",
+      "win32": [
+        "\\\\localhost\\share\\a folder"
+      ],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://localhost/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://localhost/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://localhost/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/%E5%AD%90",
+      "win32": [
+        "\\\\localhost\\子"
+      ],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://localhost/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/a/../b",
+      "win32": [
+        "\\\\localhost\\b"
+      ],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://localhost/a/./b",
+      "win32": [
+        "\\\\localhost\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://localhost//double",
+      "win32": [
+        "\\\\localhost\\\\double"
+      ],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://localhost/a?query",
+      "win32": [
+        "\\\\localhost\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://localhost/a#frag",
+      "win32": [
+        "\\\\localhost\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://localhost/a%23b%3Fc",
+      "win32": [
+        "\\\\localhost\\a#b?c"
+      ],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://localhost/a b",
+      "win32": [
+        "\\\\localhost\\a b"
+      ],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://localhost/a\tb",
+      "win32": [
+        "\\\\localhost\\ab"
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://localhost/a\\b",
+      "win32": [
+        "\\\\localhost\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://localhost/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://localhost/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/%43:/x",
+      "win32": [
+        "\\\\localhost\\C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://localhost/~user",
+      "win32": [
+        "\\\\localhost\\~user"
+      ],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://localhost/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://localhost/子/🚀",
+      "win32": [
+        "\\\\localhost\\子\\🚀"
+      ],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/",
+      "win32": [
+        "\\\\localhost\\"
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C",
+      "win32": [
+        "\\\\localhost\\C"
+      ],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/share/a%20folder",
+      "win32": [
+        "\\\\localhost\\share\\a folder"
+      ],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/%E5%AD%90",
+      "win32": [
+        "\\\\localhost\\子"
+      ],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a/../b",
+      "win32": [
+        "\\\\localhost\\b"
+      ],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a/./b",
+      "win32": [
+        "\\\\localhost\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST//double",
+      "win32": [
+        "\\\\localhost\\\\double"
+      ],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a?query",
+      "win32": [
+        "\\\\localhost\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a#frag",
+      "win32": [
+        "\\\\localhost\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a%23b%3Fc",
+      "win32": [
+        "\\\\localhost\\a#b?c"
+      ],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a b",
+      "win32": [
+        "\\\\localhost\\a b"
+      ],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a\tb",
+      "win32": [
+        "\\\\localhost\\ab"
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a\\b",
+      "win32": [
+        "\\\\localhost\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/%43:/x",
+      "win32": [
+        "\\\\localhost\\C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/~user",
+      "win32": [
+        "\\\\localhost\\~user"
+      ],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://LOCALHOST/子/🚀",
+      "win32": [
+        "\\\\localhost\\子\\🚀"
+      ],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://LocalHost",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/",
+      "win32": [
+        "\\\\localhost\\"
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C",
+      "win32": [
+        "\\\\localhost\\C"
+      ],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/share/a%20folder",
+      "win32": [
+        "\\\\localhost\\share\\a folder"
+      ],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/%E5%AD%90",
+      "win32": [
+        "\\\\localhost\\子"
+      ],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a/../b",
+      "win32": [
+        "\\\\localhost\\b"
+      ],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a/./b",
+      "win32": [
+        "\\\\localhost\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost//double",
+      "win32": [
+        "\\\\localhost\\\\double"
+      ],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a?query",
+      "win32": [
+        "\\\\localhost\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a#frag",
+      "win32": [
+        "\\\\localhost\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a%23b%3Fc",
+      "win32": [
+        "\\\\localhost\\a#b?c"
+      ],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a b",
+      "win32": [
+        "\\\\localhost\\a b"
+      ],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a\tb",
+      "win32": [
+        "\\\\localhost\\ab"
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a\\b",
+      "win32": [
+        "\\\\localhost\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/%43:/x",
+      "win32": [
+        "\\\\localhost\\C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/~user",
+      "win32": [
+        "\\\\localhost\\~user"
+      ],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://LocalHost/子/🚀",
+      "win32": [
+        "\\\\localhost\\子\\🚀"
+      ],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://tc-host",
+      "win32": [
+        "\\\\tc-host\\"
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://tc-host/",
+      "win32": [
+        "\\\\tc-host\\"
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://tc-host/C:/",
+      "win32": [
+        "\\\\tc-host\\C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://tc-host/C:/a%20folder",
+      "win32": [
+        "\\\\tc-host\\C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://tc-host/c|/x",
+      "win32": [
+        "\\\\tc-host\\c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://tc-host/C|",
+      "win32": [
+        "\\\\tc-host\\C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://tc-host/C:",
+      "win32": [
+        "\\\\tc-host\\C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://tc-host/C",
+      "win32": [
+        "\\\\tc-host\\C"
+      ],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://tc-host/share/a%20folder",
+      "win32": [
+        "\\\\tc-host\\share\\a folder"
+      ],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://tc-host/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://tc-host/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/%E5%AD%90",
+      "win32": [
+        "\\\\tc-host\\子"
+      ],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://tc-host/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/a/../b",
+      "win32": [
+        "\\\\tc-host\\b"
+      ],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a/./b",
+      "win32": [
+        "\\\\tc-host\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://tc-host//double",
+      "win32": [
+        "\\\\tc-host\\\\double"
+      ],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a?query",
+      "win32": [
+        "\\\\tc-host\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a#frag",
+      "win32": [
+        "\\\\tc-host\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a%23b%3Fc",
+      "win32": [
+        "\\\\tc-host\\a#b?c"
+      ],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a b",
+      "win32": [
+        "\\\\tc-host\\a b"
+      ],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a\tb",
+      "win32": [
+        "\\\\tc-host\\ab"
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a\\b",
+      "win32": [
+        "\\\\tc-host\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://tc-host/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://tc-host/C:/%2e%2e/x",
+      "win32": [
+        "\\\\tc-host\\C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://tc-host/C:/a%20b/",
+      "win32": [
+        "\\\\tc-host\\C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://tc-host/D:\\x",
+      "win32": [
+        "\\\\tc-host\\D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://tc-host/%43:/x",
+      "win32": [
+        "\\\\tc-host\\C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://tc-host/~user",
+      "win32": [
+        "\\\\tc-host\\~user"
+      ],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://tc-host/a:b",
+      "win32": [
+        "\\\\tc-host\\a:b"
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://tc-host/子/🚀",
+      "win32": [
+        "\\\\tc-host\\子\\🚀"
+      ],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST",
+      "win32": [
+        "\\\\tc-host\\"
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/",
+      "win32": [
+        "\\\\tc-host\\"
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/C:/",
+      "win32": [
+        "\\\\tc-host\\C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/C:/a%20folder",
+      "win32": [
+        "\\\\tc-host\\C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/c|/x",
+      "win32": [
+        "\\\\tc-host\\c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/C|",
+      "win32": [
+        "\\\\tc-host\\C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/C:",
+      "win32": [
+        "\\\\tc-host\\C:"
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/C",
+      "win32": [
+        "\\\\tc-host\\C"
+      ],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/share/a%20folder",
+      "win32": [
+        "\\\\tc-host\\share\\a folder"
+      ],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/%E5%AD%90",
+      "win32": [
+        "\\\\tc-host\\子"
+      ],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a/../b",
+      "win32": [
+        "\\\\tc-host\\b"
+      ],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a/./b",
+      "win32": [
+        "\\\\tc-host\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST//double",
+      "win32": [
+        "\\\\tc-host\\\\double"
+      ],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a?query",
+      "win32": [
+        "\\\\tc-host\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a#frag",
+      "win32": [
+        "\\\\tc-host\\a"
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a%23b%3Fc",
+      "win32": [
+        "\\\\tc-host\\a#b?c"
+      ],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a b",
+      "win32": [
+        "\\\\tc-host\\a b"
+      ],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a\tb",
+      "win32": [
+        "\\\\tc-host\\ab"
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a\\b",
+      "win32": [
+        "\\\\tc-host\\a\\b"
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/C:/%2e%2e/x",
+      "win32": [
+        "\\\\tc-host\\C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/C:/a%20b/",
+      "win32": [
+        "\\\\tc-host\\C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/D:\\x",
+      "win32": [
+        "\\\\tc-host\\D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/%43:/x",
+      "win32": [
+        "\\\\tc-host\\C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/~user",
+      "win32": [
+        "\\\\tc-host\\~user"
+      ],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/a:b",
+      "win32": [
+        "\\\\tc-host\\a:b"
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://TC-HOST/子/🚀",
+      "win32": [
+        "\\\\tc-host\\子\\🚀"
+      ],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file://server",
+      "win32": [
+        "\\\\server\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/",
+      "win32": [
+        "\\\\server\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/",
+      "win32": [
+        "\\\\server\\C:\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/a%20folder",
+      "win32": [
+        "\\\\server\\C:\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/c|/x",
+      "win32": [
+        "\\\\server\\c:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C|",
+      "win32": [
+        "\\\\server\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:",
+      "win32": [
+        "\\\\server\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C",
+      "win32": [
+        "\\\\server\\C"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/share/a%20folder",
+      "win32": [
+        "\\\\server\\share\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%E5%AD%90",
+      "win32": [
+        "\\\\server\\子"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%FF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a/../b",
+      "win32": [
+        "\\\\server\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a/./b",
+      "win32": [
+        "\\\\server\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server//double",
+      "win32": [
+        "\\\\server\\\\double"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a?query",
+      "win32": [
+        "\\\\server\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a#frag",
+      "win32": [
+        "\\\\server\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a%23b%3Fc",
+      "win32": [
+        "\\\\server\\a#b?c"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a b",
+      "win32": [
+        "\\\\server\\a b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a\tb",
+      "win32": [
+        "\\\\server\\ab"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a\\b",
+      "win32": [
+        "\\\\server\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/%2e%2e/x",
+      "win32": [
+        "\\\\server\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/C:/a%20b/",
+      "win32": [
+        "\\\\server\\C:\\a b\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/D:\\x",
+      "win32": [
+        "\\\\server\\D:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/%43:/x",
+      "win32": [
+        "\\\\server\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/~user",
+      "win32": [
+        "\\\\server\\~user"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/a:b",
+      "win32": [
+        "\\\\server\\a:b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://server/子/🚀",
+      "win32": [
+        "\\\\server\\子\\🚀"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example",
+      "win32": [
+        "\\\\remote.example\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/",
+      "win32": [
+        "\\\\remote.example\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/",
+      "win32": [
+        "\\\\remote.example\\C:\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/a%20folder",
+      "win32": [
+        "\\\\remote.example\\C:\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/c|/x",
+      "win32": [
+        "\\\\remote.example\\c:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C|",
+      "win32": [
+        "\\\\remote.example\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:",
+      "win32": [
+        "\\\\remote.example\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C",
+      "win32": [
+        "\\\\remote.example\\C"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/share/a%20folder",
+      "win32": [
+        "\\\\remote.example\\share\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%E5%AD%90",
+      "win32": [
+        "\\\\remote.example\\子"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%FF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a/../b",
+      "win32": [
+        "\\\\remote.example\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a/./b",
+      "win32": [
+        "\\\\remote.example\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example//double",
+      "win32": [
+        "\\\\remote.example\\\\double"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a?query",
+      "win32": [
+        "\\\\remote.example\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a#frag",
+      "win32": [
+        "\\\\remote.example\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a%23b%3Fc",
+      "win32": [
+        "\\\\remote.example\\a#b?c"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a b",
+      "win32": [
+        "\\\\remote.example\\a b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a\tb",
+      "win32": [
+        "\\\\remote.example\\ab"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a\\b",
+      "win32": [
+        "\\\\remote.example\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/%2e%2e/x",
+      "win32": [
+        "\\\\remote.example\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/C:/a%20b/",
+      "win32": [
+        "\\\\remote.example\\C:\\a b\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/D:\\x",
+      "win32": [
+        "\\\\remote.example\\D:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/%43:/x",
+      "win32": [
+        "\\\\remote.example\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/~user",
+      "win32": [
+        "\\\\remote.example\\~user"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/a:b",
+      "win32": [
+        "\\\\remote.example\\a:b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://remote.example/子/🚀",
+      "win32": [
+        "\\\\remote.example\\子\\🚀"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com",
+      "win32": [
+        "\\\\☃.com\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/",
+      "win32": [
+        "\\\\☃.com\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/",
+      "win32": [
+        "\\\\☃.com\\C:\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/a%20folder",
+      "win32": [
+        "\\\\☃.com\\C:\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/c|/x",
+      "win32": [
+        "\\\\☃.com\\c:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C|",
+      "win32": [
+        "\\\\☃.com\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:",
+      "win32": [
+        "\\\\☃.com\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C",
+      "win32": [
+        "\\\\☃.com\\C"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/share/a%20folder",
+      "win32": [
+        "\\\\☃.com\\share\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%E5%AD%90",
+      "win32": [
+        "\\\\☃.com\\子"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%FF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a/../b",
+      "win32": [
+        "\\\\☃.com\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a/./b",
+      "win32": [
+        "\\\\☃.com\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com//double",
+      "win32": [
+        "\\\\☃.com\\\\double"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a?query",
+      "win32": [
+        "\\\\☃.com\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a#frag",
+      "win32": [
+        "\\\\☃.com\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a%23b%3Fc",
+      "win32": [
+        "\\\\☃.com\\a#b?c"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a b",
+      "win32": [
+        "\\\\☃.com\\a b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a\tb",
+      "win32": [
+        "\\\\☃.com\\ab"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a\\b",
+      "win32": [
+        "\\\\☃.com\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/%2e%2e/x",
+      "win32": [
+        "\\\\☃.com\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/C:/a%20b/",
+      "win32": [
+        "\\\\☃.com\\C:\\a b\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/D:\\x",
+      "win32": [
+        "\\\\☃.com\\D:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/%43:/x",
+      "win32": [
+        "\\\\☃.com\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/~user",
+      "win32": [
+        "\\\\☃.com\\~user"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/a:b",
+      "win32": [
+        "\\\\☃.com\\a:b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://xn--n3h.com/子/🚀",
+      "win32": [
+        "\\\\☃.com\\子\\🚀"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example",
+      "win32": [
+        "\\\\bücher.example\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/",
+      "win32": [
+        "\\\\bücher.example\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/",
+      "win32": [
+        "\\\\bücher.example\\C:\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/a%20folder",
+      "win32": [
+        "\\\\bücher.example\\C:\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/c|/x",
+      "win32": [
+        "\\\\bücher.example\\c:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C|",
+      "win32": [
+        "\\\\bücher.example\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:",
+      "win32": [
+        "\\\\bücher.example\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C",
+      "win32": [
+        "\\\\bücher.example\\C"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/share/a%20folder",
+      "win32": [
+        "\\\\bücher.example\\share\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%E5%AD%90",
+      "win32": [
+        "\\\\bücher.example\\子"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%FF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a/../b",
+      "win32": [
+        "\\\\bücher.example\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a/./b",
+      "win32": [
+        "\\\\bücher.example\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example//double",
+      "win32": [
+        "\\\\bücher.example\\\\double"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a?query",
+      "win32": [
+        "\\\\bücher.example\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a#frag",
+      "win32": [
+        "\\\\bücher.example\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a%23b%3Fc",
+      "win32": [
+        "\\\\bücher.example\\a#b?c"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a b",
+      "win32": [
+        "\\\\bücher.example\\a b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a\tb",
+      "win32": [
+        "\\\\bücher.example\\ab"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a\\b",
+      "win32": [
+        "\\\\bücher.example\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/%2e%2e/x",
+      "win32": [
+        "\\\\bücher.example\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/C:/a%20b/",
+      "win32": [
+        "\\\\bücher.example\\C:\\a b\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/D:\\x",
+      "win32": [
+        "\\\\bücher.example\\D:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/%43:/x",
+      "win32": [
+        "\\\\bücher.example\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/~user",
+      "win32": [
+        "\\\\bücher.example\\~user"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/a:b",
+      "win32": [
+        "\\\\bücher.example\\a:b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://bücher.example/子/🚀",
+      "win32": [
+        "\\\\bücher.example\\子\\🚀"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1",
+      "win32": [
+        "\\\\127.0.0.1\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/",
+      "win32": [
+        "\\\\127.0.0.1\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/",
+      "win32": [
+        "\\\\127.0.0.1\\C:\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/a%20folder",
+      "win32": [
+        "\\\\127.0.0.1\\C:\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/c|/x",
+      "win32": [
+        "\\\\127.0.0.1\\c:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C|",
+      "win32": [
+        "\\\\127.0.0.1\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:",
+      "win32": [
+        "\\\\127.0.0.1\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C",
+      "win32": [
+        "\\\\127.0.0.1\\C"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/share/a%20folder",
+      "win32": [
+        "\\\\127.0.0.1\\share\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%E5%AD%90",
+      "win32": [
+        "\\\\127.0.0.1\\子"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%FF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a/../b",
+      "win32": [
+        "\\\\127.0.0.1\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a/./b",
+      "win32": [
+        "\\\\127.0.0.1\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1//double",
+      "win32": [
+        "\\\\127.0.0.1\\\\double"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a?query",
+      "win32": [
+        "\\\\127.0.0.1\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a#frag",
+      "win32": [
+        "\\\\127.0.0.1\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a%23b%3Fc",
+      "win32": [
+        "\\\\127.0.0.1\\a#b?c"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a b",
+      "win32": [
+        "\\\\127.0.0.1\\a b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a\tb",
+      "win32": [
+        "\\\\127.0.0.1\\ab"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a\\b",
+      "win32": [
+        "\\\\127.0.0.1\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/%2e%2e/x",
+      "win32": [
+        "\\\\127.0.0.1\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/C:/a%20b/",
+      "win32": [
+        "\\\\127.0.0.1\\C:\\a b\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/D:\\x",
+      "win32": [
+        "\\\\127.0.0.1\\D:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/%43:/x",
+      "win32": [
+        "\\\\127.0.0.1\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/~user",
+      "win32": [
+        "\\\\127.0.0.1\\~user"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/a:b",
+      "win32": [
+        "\\\\127.0.0.1\\a:b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://127.0.0.1/子/🚀",
+      "win32": [
+        "\\\\127.0.0.1\\子\\🚀"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]",
+      "win32": [
+        "\\\\[::1]\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/",
+      "win32": [
+        "\\\\[::1]\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/",
+      "win32": [
+        "\\\\[::1]\\C:\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/a%20folder",
+      "win32": [
+        "\\\\[::1]\\C:\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/c|/x",
+      "win32": [
+        "\\\\[::1]\\c:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C|",
+      "win32": [
+        "\\\\[::1]\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:",
+      "win32": [
+        "\\\\[::1]\\C:"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C",
+      "win32": [
+        "\\\\[::1]\\C"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/share/a%20folder",
+      "win32": [
+        "\\\\[::1]\\share\\a folder"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%E5%AD%90",
+      "win32": [
+        "\\\\[::1]\\子"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%FF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a/../b",
+      "win32": [
+        "\\\\[::1]\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a/./b",
+      "win32": [
+        "\\\\[::1]\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]//double",
+      "win32": [
+        "\\\\[::1]\\\\double"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a?query",
+      "win32": [
+        "\\\\[::1]\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a#frag",
+      "win32": [
+        "\\\\[::1]\\a"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a%23b%3Fc",
+      "win32": [
+        "\\\\[::1]\\a#b?c"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a b",
+      "win32": [
+        "\\\\[::1]\\a b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a\tb",
+      "win32": [
+        "\\\\[::1]\\ab"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a\\b",
+      "win32": [
+        "\\\\[::1]\\a\\b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/%2e%2e/x",
+      "win32": [
+        "\\\\[::1]\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/C:/a%20b/",
+      "win32": [
+        "\\\\[::1]\\C:\\a b\\"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/D:\\x",
+      "win32": [
+        "\\\\[::1]\\D:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/%43:/x",
+      "win32": [
+        "\\\\[::1]\\C:\\x"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/~user",
+      "win32": [
+        "\\\\[::1]\\~user"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/a:b",
+      "win32": [
+        "\\\\[::1]\\a:b"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://[::1]/子/🚀",
+      "win32": [
+        "\\\\[::1]\\子\\🚀"
+      ],
+      "linux": []
+    },
+    {
+      "uri": "file://localhost:80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/C:/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/C:/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/c|/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/C",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/share/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/%E5%AD%90",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a/../b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a/./b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80//double",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a?query",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a#frag",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a%23b%3Fc",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a\tb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a\\b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/C:/%2e%2e/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/C:/a%20b/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/D:\\x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/%43:/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/~user",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://localhost:80/子/🚀",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/C:/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/C:/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/c|/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/C",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/share/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/%E5%AD%90",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a/../b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a/./b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost//double",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a?query",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a#frag",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a%23b%3Fc",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a\tb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a\\b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/C:/%2e%2e/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/C:/a%20b/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/D:\\x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/%43:/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/~user",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://user@localhost/子/🚀",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/C:/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/C:/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/c|/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/C",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/share/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/%E5%AD%90",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a/../b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a/./b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b//double",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a?query",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a#frag",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a%23b%3Fc",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a\tb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a\\b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/C:/%2e%2e/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/C:/a%20b/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/D:\\x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/%43:/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/~user",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a%20b/子/🚀",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/C:/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/C:/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/c|/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/C",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/share/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/%E5%AD%90",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a/../b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a/./b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b//double",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a?query",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a#frag",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a%23b%3Fc",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a\tb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a\\b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/C:/%2e%2e/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/C:/a%20b/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/D:\\x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/%43:/x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/~user",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://a b/子/🚀",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/",
+      "win32": [
+        "C:\\"
+      ],
+      "linux": [
+        "/C:/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/a%20folder",
+      "win32": [
+        "C:\\a folder"
+      ],
+      "linux": [
+        "/C:/a folder"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/c|/x",
+      "win32": [
+        "c:\\x"
+      ],
+      "linux": [
+        "/c:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C|",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C:"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/C"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/share/a%20folder",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/a folder"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/share/encoded%5cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/share/encoded%5Cseparator",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/share/encoded\\separator"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a%2fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a%2Fb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/%E5%AD%90",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/子"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/%FF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/%C0%AF",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/%ED%A0%80",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a%",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a%zz",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a/../b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a/./b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost//double",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "//double"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a?query",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a#frag",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a%23b%3Fc",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a#b?c"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a\tb",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/ab"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a\\b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a/b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/tab%09x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/nul%00x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/del%7Fx",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/%2e%2e/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/C:/a%20b/",
+      "win32": [
+        "C:\\a b\\"
+      ],
+      "linux": [
+        "/C:/a b/"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/D:\\x",
+      "win32": [
+        "D:\\x"
+      ],
+      "linux": [
+        "/D:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/%43:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/~user",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/~user"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/a:b",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a:b"
+      ]
+    },
+    {
+      "uri": "file://%6Cocalhost/子/🚀",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/子/🚀"
+      ]
+    },
+    {
+      "uri": "file:/a",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file:a",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/a"
+      ]
+    },
+    {
+      "uri": "file:C:/x",
+      "win32": [
+        "C:\\x"
+      ],
+      "linux": [
+        "/C:/x"
+      ]
+    },
+    {
+      "uri": "file:///",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "FILE:///x",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/x"
+      ]
+    },
+    {
+      "uri": "File://LocalHost/x",
+      "win32": [
+        "\\\\localhost\\x"
+      ],
+      "linux": [
+        "/x"
+      ]
+    },
+    {
+      "uri": "file://",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "file:",
+      "win32": [
+        null
+      ],
+      "linux": [
+        "/"
+      ]
+    },
+    {
+      "uri": "http://localhost/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "https://tc-host/x",
+      "win32": [],
+      "linux": []
+    },
+    {
+      "uri": "not a url",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "",
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": "file:\\\\server\\share",
+      "win32": [
+        "\\\\server\\share"
+      ],
+      "linux": []
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///",
+          [
+            "a",
+            4095
+          ]
+        ]
+      },
+      "win32": [
+        null
+      ],
+      "linux": [
+        {
+          "$text": [
+            "/",
+            [
+              "a",
+              4095
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///",
+          [
+            "a",
+            4096
+          ]
+        ]
+      },
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///C:/",
+          [
+            "a",
+            4093
+          ]
+        ]
+      },
+      "win32": [
+        {
+          "$text": [
+            "C:\\",
+            [
+              "a",
+              4093
+            ]
+          ]
+        }
+      ],
+      "linux": [
+        null
+      ]
+    },
+    {
+      "uri": {
+        "$text": [
+          "file:///C:/",
+          [
+            "a",
+            4094
+          ]
+        ]
+      },
+      "win32": [
+        null
+      ],
+      "linux": [
+        null
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Check out text with LF on every OS. The golden fixtures and the shell scripts the host embeds
+# must be byte-identical everywhere (docs/rust-migration-plan.md).
+* text=auto eol=lf
+*.png binary
+*.ico binary

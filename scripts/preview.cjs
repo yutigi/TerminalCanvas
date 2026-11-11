@@ -34,7 +34,7 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === '/preview-bridge.js') { res.writeHead(200, { 'Content-Type': 'text/javascript' }); return res.end(previewBridge); }
         const pathname = decodeURIComponent(url.pathname === '/' ? '/src/index.html' : url.pathname);
         const file = path.resolve(root, '.' + pathname);
-        const allowed = file.startsWith(path.join(root, 'src') + path.sep) || file.startsWith(path.join(root, 'node_modules/@xterm') + path.sep);
+        const allowed = file.startsWith(path.join(root, 'src') + path.sep);
         if (!allowed || !mime[path.extname(file)] || /\.(?:cjs)$/.test(file)) { res.writeHead(404); return res.end('Not found'); }
         let content = await fs.readFile(file);
         if (file === path.join(root, 'src/index.html')) {

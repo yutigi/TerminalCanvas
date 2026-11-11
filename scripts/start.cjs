@@ -3,6 +3,8 @@ const path = require('node:path');
 let electron;
 try { electron = require('electron'); }
 catch { console.error('Dependencies are missing. Run npm install, then npm run rebuild.'); process.exit(1); }
+// The page loads xterm.js from src/vendor/, which npm install fills; refresh it in case it was removed.
+require('./vendor.cjs').vendor();
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 const child = spawn(electron, [path.resolve(__dirname, '..'), ...process.argv.slice(2)], { stdio: 'inherit', env });

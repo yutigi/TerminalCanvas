@@ -4,6 +4,10 @@
 
 Terminal Canvas is a single-user, local desktop workspace, initially targeting Windows. Each card owns an independent shell process and working directory. The first version prioritizes interactive AI CLIs, spatial organization, and predictable process cleanup. It does not coordinate agents, share credentials, synchronize workspaces, or infer whether an AI is thinking or waiting for input.
 
+The Electron architecture below remains the default while the [Rust migration](rust-migration-plan.md) is validated. The Tauri implementation lives in `src-tauri/`; `src/bridge.js` presents the same renderer API, and `crates/tc-core`, `tc-pty`, and `tc-hook` replace the Node host modules. One tokio actor owns terminal and recovery state, processing command continuations, generation-tagged PTY events, and hook poll ticks in order. Atomic workspace writes and image operations each use a serial worker queue. Slow dialogs and directory lookups run outside the actor.
+
+The Tauri boundary uses a single ordered event channel, raw image IPC bodies, and per-terminal input sequence numbers. Its image handler accepts both direct custom-scheme URLs and Wry's rewritten Windows URLs. Capabilities grant only application commands to the local main webview; navigation, permissions, new windows, zoom, and Windows browser accelerators are restricted explicitly. Test builds can enable isolated profiles, diagnostics, focus control, and link interception with `e2e`; release builds reject that feature. Windows Playwright tests attach to the child WebView2 over CDP. The migration plan records remaining native parity checks and packaging gates; these are not yet complete.
+
 ## Components and data flow
 
 ```mermaid

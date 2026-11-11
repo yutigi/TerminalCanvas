@@ -1,0 +1,116 @@
+name: Windows JavaScript baseline
+on:
+  workflow_dispatch:
+    inputs:
+      compare_rust:
+        description: Build the Rust test host and measure both development hosts on this runner
+        type: boolean
+        default: false
+      kit_only:
+        description: Validate the relocated Windows 11 test kit without repeating the baseline
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-baseline-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    if: ${{ !inputs.kit_only }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Prepare the paired Rust measurement
+        if: inputs.compare_rust
+        run: |
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p tc-hook
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p terminal-canvas --features e2e
+      - name: Verify the Windows 11 file checker with positive and negative fixtures
+        run: node --test tests/windows-manual-verifier.test.cjs
+      - name: Capture the immutable pre-migration host
+        id: reference
+        run: |
+          if ('${{ inputs.compare_rust }}' -eq 'true') { node scripts/capture-windows-baseline.cjs --compare-rust }
+          else { node scripts/capture-windows-baseline.cjs }
+      - name: Measure the matched Rust development host
+        if: inputs.compare_rust
+        run: node scripts/measure-windows-rust.cjs
+      - name: Upload baseline measurements and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-electron-baseline
+          path: |
+            .cache/windows-baseline/report.json
+            .cache/windows-baseline/comparison.json
+            .cache/windows-baseline/*.log
+            .cache/windows-baseline/*.png
+          if-no-files-found: error
+      - name: Upload the original portable app for Windows 11 interoperability checks
+        if: always() && steps.reference.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-electron-reference
+          path: .cache/windows-baseline/reference/release/*.exe
+          compression-level: 0
+          if-no-files-found: error
+
+  windows11-test-kit:
+    if: ${{ inputs.kit_only }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install pinned test dependencies
+        run: npm ci
+      - name: Build and validate the relocated kit
+        shell: pwsh
+        run: |
+          node scripts/package-windows-test.cjs --pwsh-home "$PSHOME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $relocated = Join-Path $env:RUNNER_TEMP 'TC kit ไทย'
+          Move-Item -LiteralPath .cache/windows11-e2e-kit -Destination $relocated
+          powershell.exe -NoProfile -File (Join-Path $relocated 'Run-Checks.ps1')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload only the validated runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows11-e2e-kit
+          path: ${{ runner.temp }}/TC kit ไทย/
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows11-kit-diagnostics
+          path: |
+            ${{ runner.temp }}/TC kit ไทย/.cache/windows11-e2e.log
+            ${{ runner.temp }}/TC kit ไทย/.cache/tauri-*.png
+          include-hidden-files: true
+          if-no-files-found: ignore
