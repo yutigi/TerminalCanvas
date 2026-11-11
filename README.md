@@ -49,7 +49,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Drag to select terminal text at any canvas zoom; dragging a terminal scrollbar thumb while zoomed away from 100% still moves at the wrong speed, so use the mouse wheel there.
 - In a terminal, **Ctrl + C copies selected text**; with no text selected, it sends the shell interrupt. Click inside the terminal to clear a text selection before interrupting. **Ctrl + V pastes** clipboard text. Ctrl + Shift + C/V also copy/paste; explicit copy with no selection leaves the clipboard intact. These shortcuts work in both canvas and fullscreen **Focus** views and leave text fields and canvas shortcuts alone.
 
-On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text is selected. Windows desktop behavior is tested with real native key events, clipboard IPC, and PowerShell. macOS aliases have automated handler coverage, but macOS and Linux desktop behavior has not been validated. Clipboard shortcuts require the desktop app; the browser layout preview does not provide clipboard IPC.
+On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text is selected. Windows behavior is tested with real native key events, clipboard IPC, and PowerShell. On macOS, these shortcuts were checked by hand in the native app. Linux desktop behavior has not been validated.
 
 Paste accepts plain text up to 64,000 characters and uses xterm to normalize line endings and respect bracketed-paste mode. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
 
@@ -73,7 +73,7 @@ The left canvas toolbar adds items around your terminals. Click to place an item
 
 Line styles and fonts other than the size choices are not configurable.
 
-On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by default. PowerShell cards start with a `RemoteSigned` execution policy for that shell only, so script shims such as `npm.ps1` run even when the system policy is `Restricted`. Policies set through Group Policy still take precedence, and no system setting is changed. Optional launch commands run inside PowerShell, except the plain shell launchers described below. Use `pwsh` as the launch command for PowerShell 7 if installed, or `cmd.exe` for Command Prompt. Other systems use the login shell selected by `SHELL`, falling back to Bash; those platforms have not been validated.
+On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by default. PowerShell cards start with a `RemoteSigned` execution policy for that shell only, so script shims such as `npm.ps1` run even when the system policy is `Restricted`. Policies set through Group Policy still take precedence, and no system setting is changed. Optional launch commands run inside PowerShell, except the plain shell launchers described below. Use `pwsh` as the launch command for PowerShell 7 if installed, or `cmd.exe` for Command Prompt. Other systems use the login shell selected by `SHELL`, falling back to Bash. macOS has been checked natively; Linux desktop behavior has not been validated.
 
 ### Live terminal folders
 
@@ -81,7 +81,7 @@ A running card shows its shell's last reported current folder, including changes
 
 - **Windows PowerShell 5.1** (default) and **PowerShell 7**: a session-local prompt wrapper emits an encoded file URI after commands finish. Profiles and the existing prompt load normally; no profile file is edited. For PowerShell 7, set the launch command to exactly `pwsh` or `pwsh.exe`. Plain `powershell` / `powershell.exe` launchers also receive integration.
 - **Command Prompt**: set the launch command to exactly `cmd` or `cmd.exe`. Its process-local `PROMPT` includes a directory report while preserving the existing visible prompt. These plain Windows shell launchers now start directly, so exiting them ends the terminal session.
-- **Linux / macOS**: the managed login shell's process directory is queried about once per second, using `/proc/<pid>/cwd` on Linux and `/usr/sbin/lsof` on macOS. This works with native shells such as Bash and Zsh without modifying their startup files. Permission failures or a missing `lsof` report an unavailable directory. These platform adapters have automated coverage but have not been tested on a Linux or macOS desktop.
+- **Linux / macOS**: the managed login shell's process directory is queried about once per second, using `/proc/<pid>/cwd` on Linux and `/usr/sbin/lsof` on macOS. This works with native shells such as Bash and Zsh without modifying their startup files. Permission failures or a missing `lsof` report an unavailable directory. Polling has been checked natively on macOS with zsh and Bash; on Linux it has run only in the CI Bash drive, not on a desktop.
 
 Before the first report, after a failed lookup, or in a PowerShell non-filesystem location (such as `HKCU:`), the running card shows **Current directory unavailable**. Stopped/restored cards initially show their last saved folder. Windows updates occur when the prompt returns; a long-running command can leave the last reported folder visible until then. Replacing the PowerShell prompt or cmd `PROMPT` after startup can disable reporting. Nested/remote shells, WSL launched inside Windows, shell launch commands with extra arguments, and applications that maintain their own logical directory are not automatically integrated; Unix polling continues to describe the managed top-level shell. Reports are display metadata, never input or instructions to change a process directory.
 
@@ -116,7 +116,7 @@ On Linux and macOS, Duplicate queries the managed shell's process directory afre
 
 ## Persistence and process lifecycle
 
-Layouts autosave to Electron's user-data directory, normally `%APPDATA%/terminal-canvas/workspace.terminalcanvas` on Windows. **Save workspace** exports a portable `.terminalcanvas` JSON file. A workspace contains names, geometry, profile IDs, project paths, launch commands, optional AI session metadata (provider, UUID, and session folder), and board items with their text, colors, text sizes, groups, and connectors. It does not save terminal output, credentials, or process IDs. Keep secrets out of launch commands because those commands are saved in plain text. Session IDs identify local conversation history; they do not transfer that history or authentication to another computer.
+Layouts autosave to `workspace.terminalcanvas` in the app's data folder: `%APPDATA%/terminal-canvas/` on Windows, `~/Library/Application Support/terminal-canvas/` on macOS, and `~/.config/terminal-canvas/` on Linux. It is the same folder the Electron build used. **Save workspace** exports a portable `.terminalcanvas` JSON file. A workspace contains names, geometry, profile IDs, project paths, launch commands, optional AI session metadata (provider, UUID, and session folder), and board items with their text, colors, text sizes, groups, and connectors. It does not save terminal output, credentials, or process IDs. Keep secrets out of launch commands because those commands are saved in plain text. Session IDs identify local conversation history; they do not transfer that history or authentication to another computer.
 
 Images are copied into `%APPDATA%/terminal-canvas/assets/` under a SHA-256 content name; workspace files store only that name, so a regular saved workspace opened on another computer shows *Image unavailable*. Choose **Export portable copy** in the sidebar to write a separate file with every referenced image embedded. Opening that file copies the images back into the local assets folder, re-hashing each one; the file must be smaller than 64 MB. Image bytes are validated by signature, never by file name, and SVG is not accepted.
 
@@ -152,6 +152,7 @@ The supported resume commands and Claude hook input are described in the [Codex 
 | `cargo xtask icons [--check]` | Generate/verify native icons with pinned resvg, without Electron or a display |
 | `npm run test:e2e` | Windows WebView2 desktop/restoration suite after building the E2E app and hook |
 | `cargo xtask package-windows` / `npm run build` | Windows NSIS installer and portable zip preparation |
+| `npm run test:layout` | macOS rendered-layout comparison with the pre-migration UI; run `npm ci --prefix tests/visual` first (see [tests/visual](tests/visual/README.md)) |
 
 For Windows E2E, install PowerShell 7 as well as the built-in Windows shells, build with
 `cargo build -p tc-hook` and `cargo build -p terminal-canvas --features e2e`, then run
@@ -173,48 +174,60 @@ per-terminal sequence order, and the host actor owns all mutable terminal/recove
 
 ## Windows distribution
 
-Install the pinned CLI with `cargo install tauri-cli --version 2.12.4 --locked`, then run
-`cargo xtask package-windows` on Windows. It builds the release hook and uses `cargo tauri build`
-with `src-tauri/bundle.windows.json`. Artifacts in `release/` are an NSIS installer and a portable zip
-containing `Terminal Canvas.exe` and `tc-hook.exe` next to each other. The installer can download the
-WebView2 Runtime; the portable zip requires it already installed. The manual release-artifact
-workflow validates source and ten consecutive Windows E2E runs before uploading; it does not
-publish a release.
+Rust builds have not been published as a GitHub release yet. CI builds an NSIS installer and a
+portable ZIP for each validated change and keeps them as workflow artifacts.
 
-## Cutover validation status
+- **Installer:** installs the WebView2 Runtime if it is missing.
+- **Portable ZIP:** keep `Terminal Canvas.exe` and `tc-hook.exe` in the same folder. It needs the
+  WebView2 Runtime, which Windows 11 already includes.
 
-The Rust-only code was validated as candidate `27e8774`. [CI at 27e8774](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863)
-passed Windows, macOS, and Ubuntu, ten consecutive 22-case Windows desktop suites
-(220 passes, zero skips), an additional relocated PowerShell 5.1 kit run (22 passes,
-zero skips), and Windows packaging. The release hook uses the static MSVC runtime;
-the actual shipping app/hook PE import tables passed CI and independent inspection.
-[Corrected installer and portable ZIP](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863/artifacts/13803789174)
-and the [isolated test kit](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863/artifacts/13803178978)
-are validation artifacts, not a published release.
+Neither package is code-signed, so Windows SmartScreen may warn on first launch.
 
-The local task passed 126 normal Rust tests, 25 test-host checks and 18 goldens;
-after the startup cursor-reply correction, JavaScript passes 94 tests with one
-Windows-only skip. The regression deliberately delays the native start reply while
-ConPTY's cursor query arrives; early typing stays blocked. The actual query reply
-now reaches the already-spawned PTY before the start response settles.
+To build the packages yourself, install the pinned CLI with
+`cargo install tauri-cli --version 2.12.4 --locked`, then run `cargo xtask package-windows` on
+Windows. It builds the release hook and runs `cargo tauri build` with `src-tauri/bundle.windows.json`,
+writing both packages to `release/`. The manual release-artifact workflow validates the source and
+ten consecutive Windows E2E runs before uploading; it does not publish a release.
 
-The cutover merges only after the remaining [migration gates](docs/rust-migration-plan.md#progress)
-pass: clean Windows 11 installer/portable operation, automatic Electron workspace
-and image recovery/round-trip, one full Windows 11 suite, and the remaining native
-macOS folder-picker selection/cancellation observation. The user verified macOS
-Finder-to-canvas image drop and saved asset bytes match the fixture. Follow the
-[Windows 11 checklist](tests/manual/windows11-checklist.md) after the normal app
-checks; its test bundle includes Node/PowerShell 7 and needs no compiler installation.
+## Upgrading from the Electron build
 
-Source lives in `src/`, `crates/`, and `src-tauri/`; development tasks live in `xtask/`. See
-[the architecture](docs/architecture.md) and `AGENTS.md` for layout and constraints.
+Version 0.2.0 replaces the Electron host (0.1.0) with Rust and Tauri. The interface and features
+are unchanged.
 
-Rendered layout has a separate [visual parity check](tests/visual/README.md). It extracts the actual JavaScript UI at commit `f489d3b`, renders it in Electron, and compares the current UI in Electron and macOS WKWebView at three content sizes. Fifteen scenes pass: current controls stay within 1.5 CSS pixels of the historical layout, and current Chromium/WebKit control and icon bounds agree within 0.5 pixels with matching colors. The negative control detects the original WebKit shifts. A macOS-only compatibility stylesheet makes control line boxes, icon wrappers, and input heights explicit so browser rounding cannot accumulate into shifted rows and dialog buttons; Windows/Linux retain their existing typography. The Tauri window measures native decorations and clamps initial bounds to the monitor work area, preserving Electron's 1500×960/1000×680 default/minimum behavior. The rebuilt native macOS app was visually checked and closed with status 0. Windows/Linux visual results remain unverified.
+- **Your data carries over.** Both versions use the same data folder, so the autosave, images, and
+  saved AI session IDs are picked up with no migration step. Workspace files open in either version.
+- **Run one version at a time.** They share recovery data, so running both at once can overwrite
+  each other's autosave.
+- **Smaller download.** The installer is about 3 MB and the portable ZIP about 4.5 MB, compared with
+  114 MB for the Electron portable app. The Rust app uses the system WebView2 instead of bundling
+  Chromium; that runtime is not counted in these sizes.
+- **Rolling back.** The last Electron app is attached to the
+  [`electron-final` release](https://github.com/yutigi/TerminalCanvas/releases/tag/electron-final).
+  Its tag marks the last source where Electron was the default.
 
-The transitional Rust build completed native macOS Save, repeated Save, portable Export, and Open into an empty test profile with the image rendered and saved terminals stopped. The [manual file verifier](tests/manual/README.md) checks those outputs with the frozen legacy oracle here. A pre-migration Electron process rewrote the Rust autosave unchanged and Rust reopened it, but Electron visual inspection was refused by Computer Use and remains unverified. The clean Windows 11 and remaining native folder-picker gates are listed above.
+## Validation status
 
-The transitional Rust build also passed native macOS controlled-Bash capture, stopped restoration, exact-ID Resume, and Start fresh shell across two launches. The [manual restoration fixture](tests/manual/README.md#bash-session-restoration) checks executable paths before every shell starts; logs show four provider calls, six shells, preserved metadata, and all six PIDs gone after exit. This does not replace candidate-specific full manual or Windows validation. Generated command permission descriptors are ignored; removing them before the candidate build regenerated all 27 descriptors and its 25 test-host checks passed.
+The Rust-only code passed [CI run 42901548863](https://github.com/yutigi/TerminalCanvas/actions/runs/42901548863)
+as candidate `27e8774`:
 
-The [macOS clipboard guard](tests/manual/README.md#preserve-the-macos-clipboard-during-native-checks) keeps native clipboard formats in memory for manual tests. Its private self-test and general restoration checks passed locally; the macOS CI job is configured for the private test only. The transitional build subsequently passed native board copy/cut/paste, undo/redo and PNG paste, exact xterm copy and single paste in canvas/Focus, and real Ctrl+C interruption. Original clipboard formats and prior test profiles were restored; the app exited 0. Native drawing/group/minimap checks also passed; the user verified native macOS file drop with matching saved image bytes. Native folder-picker selection/cancellation remains unverified after Computer Use could not locate the candidate window.
+- Windows, macOS, and Ubuntu builds and tests, including 18 golden files that compare Rust output
+  with the original JavaScript host
+- ten consecutive 22-case Windows desktop suites (220 passes, zero skips) and the same suite from a
+  relocated PowerShell 5.1 test kit
+- Windows packaging, with import checks on both shipping executables
 
-The renderer regression suite now checks fifteen scenes, actual arrowhead PNG pixels, deliberate missing-fill failures in Chromium/WebKit, and Chromium forced-colors colors. Install the locked test-only runtime with `npm ci --prefix tests/visual`; it remains outside application dependencies. WebView2 repeated the paint checks in all ten passing native Windows suites. The Unicode hook and direct Unicode input/cwd tests passed. The candidate automation and packaging gates passed. The separate Windows 11 and native macOS folder-picker results remain open; see PR #16 and the migration plan.
+On macOS, the native app was checked by hand: shells, live folders, Duplicate, Stop and close, Save,
+Export, and Open with images, Claude and Codex session capture and resume (using local stand-ins),
+clipboard shortcuts, board tools, and file drop. Rendered layout is compared with the pre-migration
+UI in the [visual parity check](tests/visual/README.md).
+
+Still open before the cutover merges:
+
+- the [Windows 11 checklist](tests/manual/windows11-checklist.md): installer and portable app on a
+  clean machine, opening an Electron autosave with images, and the 22-case suite
+- selecting and cancelling the native folder picker on macOS
+
+Linux desktop behavior has not been validated. Details, measurements, and limits are in the
+[migration plan](docs/rust-migration-plan.md#progress) and the
+[Windows baseline](docs/windows-migration-baseline.md). Source lives in `src/`, `crates/`, and
+`src-tauri/`; see [the architecture](docs/architecture.md) and `AGENTS.md` for layout and constraints.
