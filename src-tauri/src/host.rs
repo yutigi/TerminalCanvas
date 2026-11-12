@@ -243,6 +243,7 @@ impl Host {
                     Some(Message::Poll) => {
                         state.manager.poll_hooks();
                         state.manager.stopping();
+                        state.launches.idle();
                         host.poll_launch_requests(&mut state);
                     }
                     None => break,
@@ -528,7 +529,13 @@ impl Host {
                         let raw = serde_json::to_value(&card).expect("cards serialize");
                         // A terminal a program asked for logs its output from the first byte.
                         if let Some(request) = field(payload, "launch").and_then(Value::as_str) {
-                            state.launches.begin_output(request, &card.id);
+                            let cols = tc_pty::manager::dimensions(
+                                field(payload, "cols").unwrap_or(&Value::Null),
+                                field(payload, "rows").unwrap_or(&Value::Null),
+                            );
+                            state
+                                .launches
+                                .begin_output(request, &card.id, cols.ok().map(|(cols, _)| cols));
                         }
                         let started = state.manager.start(
                             &raw,
@@ -759,6 +766,8 @@ impl Host {
         self.post(move |host, state| {
             if let Err(error) = state.manager.resize(&id, &cols, &rows) {
                 host.emit_error(Some(&id), error.to_string());
+            } else if let Ok((cols, _)) = tc_pty::manager::dimensions(&cols, &rows) {
+                state.launches.resize(&id, cols);
             }
         });
     }

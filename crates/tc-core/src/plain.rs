@@ -4,9 +4,18 @@
 //! with cursor positioning instead of line feeds. Within a row, the decoder follows the cursor:
 //! backspaces, bare carriage returns, horizontal moves, and erases rewrite the row the way a terminal
 //! would, so shell line editors that redraw what they echo (zsh prints `e`, a backspace, then the
-//! whole highlighted line) leave the redrawn text, not both. The log is written as output arrives,
-//! so a rewrite of text already written starts a new line instead. The decoder keeps its state
-//! between chunks, so a sequence split across two reads is still removed.
+//! whole highlighted line) leave the redrawn text, not both.
+//!
+//! Given the terminal's width ([`PlainText::set_width`]), the decoder also follows automatic
+//! wrapping: text that runs past the last column continues the same line, and a carriage return
+//! goes back to the start of the screen row the cursor is on, so a line editor redrawing a command
+//! wider than the terminal leaves the command on one line.
+//!
+//! The row the cursor is on is held back until it ends, until the caller reports a pause in the
+//! output ([`PlainText::idle`]), or until the process exits, because progress meters and line editors
+//! keep rewriting it. Text already written cannot be taken back, so a rewrite of it starts a new
+//! line instead. The decoder keeps its state between chunks, so a sequence split across two reads
+//! is still removed.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -32,10 +41,16 @@ pub struct PlainText {
     state: State,
     /// The CSI parameter bytes seen so far.
     params: String,
-    /// The current row, as a terminal would show it.
+    /// The current line, as a terminal would show it: one screen row, or several joined by
+    /// automatic wrapping.
     line: Vec<char>,
-    /// The cursor's column in `line`.
+    /// The cursor's position in `line`. It is one past the screen row's last column while a wrap
+    /// is pending, as on a terminal after printing in the last column.
     col: usize,
+    /// Where the cursor's screen row starts in `line`.
+    row_start: usize,
+    /// The terminal's width in columns, or 0 when unknown (rows never wrap).
+    width: usize,
     /// How much of `line` is already written out.
     written: usize,
     /// A carriage return waiting to see whether a line feed follows.
@@ -55,9 +70,29 @@ impl PlainText {
             params: String::new(),
             line: Vec::new(),
             col: 0,
+            row_start: 0,
+            width: 0,
             written: 0,
             pending_return: false,
         }
+    }
+
+    /// Follows a terminal `cols` wide; 0 stops following wrapping.
+    pub fn set_width(&mut self, cols: usize) {
+        self.width = cols.min(COLUMNS);
+    }
+
+    /// Writes out the row held back, as far as it goes: call when output has paused, and when the
+    /// process exits.
+    pub fn idle(&mut self) -> String {
+        let mut out = String::new();
+        self.flush(&mut out);
+        out
+    }
+
+    /// Where the cursor's screen row ends in `line`.
+    fn row_end(&self) -> usize {
+        self.row_start + if self.width > 0 { self.width } else { COLUMNS }
     }
 
     /// The row's length without trailing spaces: those are written only once text follows them.
@@ -82,6 +117,7 @@ impl PlainText {
         }
         self.line.clear();
         self.col = 0;
+        self.row_start = 0;
         self.written = 0;
     }
 
@@ -95,6 +131,11 @@ impl PlainText {
     }
 
     fn put(&mut self, c: char, out: &mut String) {
+        // A pending wrap continues the line on the next screen row.
+        if self.width > 0 && self.col >= self.row_end() {
+            self.row_start = self.row_end();
+            self.col = self.row_start;
+        }
         // Output with no line breaks at all still reaches the log in bounded rows.
         if self.col >= ROW_LIMIT && self.col >= self.line.len() {
             self.newline(out);
@@ -132,22 +173,25 @@ impl PlainText {
         let first = self.params.split(';').next().unwrap_or("");
         let n = first.parse::<usize>().unwrap_or(0).min(COLUMNS);
         let count = n.max(1);
+        // Horizontal moves stay within the screen row, and end any pending wrap.
+        let (start, end_col) = (self.row_start, self.row_end());
+        let last = end_col - 1;
         match end {
             // Cursor position and vertical moves start a new row.
             'H' | 'f' | 'A' | 'B' | 'E' | 'F' | 'd' => self.newline(out),
-            'C' => self.col = (self.col + count).min(COLUMNS),
-            'D' => self.col = self.col.saturating_sub(count),
-            'G' | '`' => self.col = count - 1,
+            'C' => self.col = (self.col.min(last) + count).min(last),
+            'D' => self.col = self.col.min(last).saturating_sub(count).max(start),
+            'G' | '`' => self.col = (start + count - 1).min(last),
             // Erase in line, and erase in display (which also erases the rest of this row).
             'K' | 'J' => match n {
-                0 => self.erase(self.col, usize::MAX, out),
-                1 => self.erase(0, self.col + 1, out),
-                _ => self.erase(0, usize::MAX, out),
+                0 => self.erase(self.col, end_col, out),
+                1 => self.erase(start, self.col + 1, out),
+                _ => self.erase(start, end_col, out),
             },
-            'X' => self.erase(self.col, self.col + count, out),
+            'X' => self.erase(self.col, (self.col + count).min(end_col), out),
             'P' => {
                 let from = self.col.min(self.line.len());
-                let to = (self.col + count).min(self.line.len());
+                let to = (self.col + count).min(end_col).min(self.line.len());
                 if from < to {
                     self.touch(from, out);
                     self.line.drain(from..to);
@@ -164,9 +208,9 @@ impl PlainText {
             match self.state {
                 State::Text => {
                     if self.pending_return && c != '\n' {
-                        // A bare carriage return goes back to the start of the row.
+                        // A bare carriage return goes back to the start of the screen row.
                         self.pending_return = false;
-                        self.col = 0;
+                        self.col = self.row_start;
                     }
                     match c {
                         '\x1b' => self.state = State::Escape,
@@ -175,7 +219,10 @@ impl PlainText {
                             self.pending_return = false;
                             self.newline(&mut out);
                         }
-                        '\x08' => self.col = self.col.saturating_sub(1),
+                        '\x08' => {
+                            let last = self.row_end() - 1;
+                            self.col = self.col.min(last).saturating_sub(1).max(self.row_start);
+                        }
                         '\t' => self.put(c, &mut out),
                         '\u{9b}' => {
                             self.params.clear();
@@ -228,7 +275,6 @@ impl PlainText {
                 }
             }
         }
-        self.flush(&mut out);
         out
     }
 }
@@ -237,9 +283,17 @@ impl PlainText {
 mod tests {
     use super::*;
 
+    /// The log of `chunks`, with the row held back written at the end, as on exit.
     fn plain(chunks: &[&str]) -> String {
+        wide(0, chunks)
+    }
+
+    fn wide(cols: usize, chunks: &[&str]) -> String {
         let mut decoder = PlainText::new();
-        chunks.iter().map(|chunk| decoder.feed(chunk)).collect()
+        decoder.set_width(cols);
+        let mut text: String = chunks.iter().map(|chunk| decoder.feed(chunk)).collect();
+        text += &decoder.idle();
+        text
     }
 
     #[test]
@@ -272,13 +326,8 @@ mod tests {
         );
         assert_eq!(
             plain(&["50%\r", "100%\r\n"]),
-            "50%\n100%\n",
-            "rewriting text already written starts a new line"
-        );
-        assert_eq!(
-            plain(&["50%\r100%\r\n"]),
             "100%\n",
-            "within one read, the row is rewritten"
+            "the row is held back across reads, so it is rewritten"
         );
         assert_eq!(plain(&["line\r", "\n"]), "line\n", "CR LF split across chunks");
     }
@@ -310,8 +359,58 @@ mod tests {
             "ab\n",
             "private sequences are ignored"
         );
-        // Across reads, a redraw of text already written continues on a new line.
-        assert_eq!(plain(&["me % e", "\x08echo hi\r\n"]), "me % e\nme % echo hi\n");
+        assert_eq!(plain(&["me % e", "\x08echo hi\r\n"]), "me % echo hi\n");
+    }
+
+    #[test]
+    fn rows_are_held_back_until_they_end_or_output_pauses() {
+        let mut decoder = PlainText::new();
+        assert_eq!(decoder.feed("done\nCounting 2%\r"), "done\n");
+        assert_eq!(
+            decoder.feed("Counting 4%\r"),
+            "",
+            "a progress row is not written while it changes"
+        );
+        assert_eq!(decoder.idle(), "Counting 4%", "a pause writes the row");
+        assert_eq!(decoder.idle(), "", "only once");
+        // A rewrite of text already written continues on a new line.
+        assert_eq!(decoder.feed("Counting 100%, done.\r\n"), "\nCounting 100%, done.\n");
+        assert_eq!(decoder.feed("Password: "), "");
+        assert_eq!(decoder.idle(), "Password:");
+        assert_eq!(decoder.feed("\r\n"), "\n");
+    }
+
+    #[test]
+    fn wrapped_rows_continue_the_line() {
+        // zsh at the right margin of a 10-column terminal: the last column's character, then a
+        // space to force the wrap, a return to the new row's start, and a redraw of that row.
+        assert_eq!(
+            wide(
+                10,
+                &["% echo abc", "d \r\x1b[Kd", "\rdef\x1b[?2004l\r\r\n", "abcdef\r\n"]
+            ),
+            "% echo abcdef\nabcdef\n"
+        );
+        // Output exactly as wide as the terminal does not add a blank line.
+        assert_eq!(wide(4, &["abcd\r\nefgh\n"]), "abcd\nefgh\n");
+        // Long output wraps onto one line; a return goes to the start of the last screen row.
+        assert_eq!(wide(4, &["abcdefgh\rXY\n"]), "abcdXYgh\n");
+        assert_eq!(
+            wide(4, &["abcdef\x1b[1G\x1b[K!\n"]),
+            "abcd!\n",
+            "moves and erases stay in the row"
+        );
+        assert_eq!(
+            wide(4, &["abcdef\x08\x08\x08z\n"]),
+            "abcdzf\n",
+            "backspace stops at the row start"
+        );
+        assert_eq!(wide(4, &["abcd\x08z\n"]), "abzd\n", "backspace ends a pending wrap");
+        assert_eq!(
+            plain(&["abcdefgh\rXY\n"]),
+            "XYcdefgh\n",
+            "without a width, rows never wrap"
+        );
     }
 
     #[test]

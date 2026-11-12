@@ -18,6 +18,10 @@ use tc_core::plain::PlainText;
 const PENDING_LIMIT: usize = 256;
 /// The most output one log keeps, in bytes of plain text.
 pub const LOG_BYTES: usize = 16 * 1024 * 1024;
+/// Polls without output after which a log writes the row its decoder holds back (the host polls
+/// every 500 ms), so a prompt waiting for input reaches the log while progress meters that rewrite
+/// their row every second or so do not leave every step behind.
+const IDLE_POLLS: u8 = 3;
 
 /// A request the UI has been asked to open.
 #[derive(Debug, Clone)]
@@ -33,6 +37,8 @@ struct OutputLog {
     file: PathBuf,
     plain: PlainText,
     bytes: usize,
+    /// Polls since the last output.
+    quiet: u8,
 }
 
 enum Job {
@@ -91,27 +97,58 @@ impl Launches {
     }
 
     /// Starts logging `card`'s output when request `request` asked for it. Call before the card's
-    /// terminal starts, so the log has all of its output.
-    pub fn begin_output(&mut self, request: &str, card: &str) {
+    /// terminal starts, so the log has all of its output. `cols` is the terminal's width, if known.
+    pub fn begin_output(&mut self, request: &str, card: &str, cols: Option<u16>) {
         let Some(pending) = self.pending.get(request).filter(|pending| pending.log) else {
             return;
         };
         let file = log_path(&pending.inbox, request);
         let _ = self.jobs.send(Job::Create(file.clone()));
+        let mut plain = PlainText::new();
+        plain.set_width(cols.map_or(0, usize::from));
         self.logs.insert(
             card.to_owned(),
             OutputLog {
                 file,
-                plain: PlainText::new(),
+                plain,
                 bytes: 0,
+                quiet: 0,
             },
         );
+    }
+
+    /// Follows `card`'s new terminal width, so its log joins wrapped rows.
+    pub fn resize(&mut self, card: &str, cols: u16) {
+        if let Some(log) = self.logs.get_mut(card) {
+            log.plain.set_width(cols.into());
+        }
     }
 
     /// Appends terminal output to `card`'s log, if it has one.
     pub fn output(&mut self, card: &str, data: &str) {
         let Some(log) = self.logs.get_mut(card) else { return };
-        let mut text = log.plain.feed(data);
+        log.quiet = 0;
+        let text = log.plain.feed(data);
+        self.append(card, text);
+    }
+
+    /// Writes the rows held back by logs whose output has paused. Call on every host poll.
+    pub fn idle(&mut self) {
+        let mut paused = Vec::new();
+        for (card, log) in &mut self.logs {
+            log.quiet = log.quiet.saturating_add(1);
+            if log.quiet == IDLE_POLLS {
+                paused.push((card.clone(), log.plain.idle()));
+            }
+        }
+        for (card, text) in paused {
+            self.append(&card, text);
+        }
+    }
+
+    /// Appends `text` to `card`'s log, up to the size limit.
+    fn append(&mut self, card: &str, mut text: String) {
+        let Some(log) = self.logs.get_mut(card) else { return };
         if log.bytes + text.len() > LOG_BYTES {
             let mut end = LOG_BYTES.saturating_sub(log.bytes).min(text.len());
             while !text.is_char_boundary(end) {
@@ -137,6 +174,10 @@ impl Launches {
 
     /// Ends `card`'s log with its exit code, so a reader knows the terminal finished.
     pub fn exited(&mut self, card: &str, code: i64) {
+        if let Some(log) = self.logs.get_mut(card) {
+            let text = log.plain.idle();
+            self.append(card, text);
+        }
         if let Some(log) = self.logs.remove(card) {
             let _ = self.jobs.send(Job::Append(
                 log.file,
@@ -271,7 +312,7 @@ mod tests {
             log,
         };
         launches.expect("req-1".into(), pending(true, true));
-        launches.begin_output("req-1", "card-1");
+        launches.begin_output("req-1", "card-1", None);
         launches.output("card-1", "\x1b[32mhello\x1b[0m\r\n");
         launches.output("other-card", "not logged");
         assert!(launches.answer("req-1", Some("card-1"), Some("parent-1"), None));
@@ -292,7 +333,7 @@ mod tests {
         assert_eq!(text, "hello\n\n[Terminal Canvas: the process exited with code 7]\n");
 
         launches.expect("req-2".into(), pending(true, false));
-        launches.begin_output("req-2", "card-2");
+        launches.begin_output("req-2", "card-2", None);
         assert!(launches.answer("req-2", None, None, Some("A workspace can contain up to 24 terminals.")));
         let failed: Value =
             serde_json::from_str(&std::fs::read_to_string(inbox.join("req-2.result")).unwrap()).unwrap();
@@ -311,6 +352,47 @@ mod tests {
         );
         assert!(!inbox.join("req-3.result").exists(), "--no-wait senders get no answer");
         assert!(!launches.answer("unknown", Some("card"), None, None));
+        std::fs::remove_dir_all(inbox).unwrap();
+    }
+
+    #[test]
+    fn logs_write_held_rows_after_a_pause_and_follow_the_width() {
+        let inbox = inbox();
+        let mut launches = Launches::new();
+        launches.expect(
+            "req-1".into(),
+            Pending {
+                inbox: inbox.clone(),
+                reply: false,
+                log: true,
+            },
+        );
+        launches.begin_output("req-1", "card-1", Some(80));
+        launches.resize("card-1", 4);
+        launches.output("card-1", "abcdefgh\rXY\r\n");
+        launches.resize("card-1", 80);
+        launches.output("card-1", "Counting 1%\r");
+        launches.output("card-1", "Counting 9%\r");
+        for _ in 1..IDLE_POLLS {
+            launches.idle();
+        }
+        launches.output("card-1", "Counting 50%\r");
+        for _ in 0..IDLE_POLLS {
+            launches.idle();
+        }
+        let log = inbox.join("req-1.log");
+        assert_eq!(
+            read_when(&log, |text| text.contains("50%")),
+            "abcdXYgh\nCounting 50%",
+            "only a row left unchanged for the whole pause is written"
+        );
+        launches.output("card-1", "Counting 100%\r\n> ");
+        launches.exited("card-1", 0);
+        let text = read_when(&log, |text| text.contains("exited"));
+        assert_eq!(
+            text,
+            "abcdXYgh\nCounting 50%\nCounting 100%\n>\n[Terminal Canvas: the process exited with code 0]\n"
+        );
         std::fs::remove_dir_all(inbox).unwrap();
     }
 
@@ -334,10 +416,10 @@ mod tests {
             "the oldest are forgotten"
         );
         let last = format!("req-{}", PENDING_LIMIT + 4);
-        launches.begin_output(&last, "big");
+        launches.begin_output(&last, "big", None);
         let rows = format!("{}\n", "x".repeat(1023)).repeat(LOG_BYTES / 1024);
         launches.output("big", &rows[..LOG_BYTES - 2]);
-        launches.output("big", "yyyy");
+        launches.output("big", "yyyy\n");
         launches.output("big", "ignored");
         let log = inbox.join(format!("{last}.log"));
         let text = read_when(&log, |text| text.contains("stopped"));

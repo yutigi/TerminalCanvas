@@ -96,9 +96,12 @@ terminals from outside the canvas.
 
 With `--log`, the app writes everything the new terminal prints to the file named by `log`, as plain
 text: colors and other escape sequences are removed, a line rewritten in place (by a backspace, a
-carriage return, or a shell's line editor) keeps its final text, and moves to another row become line
-breaks. Text the log already holds is never changed, so a rewrite of it continues on a new line. The log
-starts with the terminal's first output and grows as it runs. When the process ends, the app adds a
+carriage return, a progress meter, or a shell's line editor) keeps its final text, a line wider than
+the terminal stays one line, and moves to another row become line breaks. The line being written is
+added once it ends, once the output pauses for about a second and a half (so a prompt waiting for
+input appears), or when the process exits. Text the log already holds is never changed, so a later
+rewrite of it continues on a new line. The log starts with the terminal's first output and grows as
+it runs. When the process ends, the app adds a
 last line:
 
 ```text
