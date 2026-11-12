@@ -263,7 +263,8 @@ impl Host {
         self.events.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    fn emit(&self, event: Value) {
+    /// Sends an event to the UI, if it is connected.
+    pub fn emit(&self, event: Value) {
         if let Some(events) = self.emitter() {
             events(event);
         }

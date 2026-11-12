@@ -34,6 +34,7 @@ const COMMANDS: &[&str] = &[
     "input",
     "resize",
     "ack",
+    "update_install",
     "e2e_state",
     "e2e_focus",
     "e2e_dialog",

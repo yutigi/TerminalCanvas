@@ -29,6 +29,7 @@
     "allow-clipboard-write",
     "allow-input",
     "allow-resize",
-    "allow-ack"
+    "allow-ack",
+    "allow-update-install"
   ]
 }
