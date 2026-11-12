@@ -1284,3 +1284,69 @@ for (const focus of [false, true]) {
         }
     });
 }
+
+const settle = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)); };
+const offer = (update = {}) => ({ type: 'update', current: '0.1.0', update: { version: '0.2.0', notes: 'Fixes', url: 'https://github.com/yutigi/TerminalCanvas/releases/tag/v0.2.0', installable: true, ...update } });
+
+test('the host version replaces the static label, and no update keeps the button hidden', async () => {
+    const { elements, event, calls } = await boot(createWorkspace());
+    event(offer());
+    event({ type: 'update', current: '0.3.1', update: null });
+    assert.equal(elements.get('#app-version').textContent, 'v0.3.1');
+    assert.equal(elements.get('#update').hidden, true);
+    assert.deepEqual(calls.map(c => c.action), ['initialize']);
+});
+
+test('a downloaded update restarts through the normal save-and-close handshake', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard());
+    const { elements, event, calls } = await boot(workspace);
+    event(offer());
+    const button = elements.get('#update');
+    assert.equal(button.hidden, false);
+    assert.match(button.innerHTML, /Restart to update/);
+    assert.match(button.title, /0\.2\.0 is ready[\s\S]*Fixes/);
+    button.onclick();
+    await settle();
+    assert.deepEqual(calls.map(c => c.action), ['initialize', 'update-install', 'close']);
+    assert.equal(calls.at(-1).payload.cards[0].id, workspace.cards[0].id, 'the current layout is saved on close');
+    assert.equal(button.disabled, true);
+});
+
+test('restarting for an update asks first when terminals are running', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard());
+    const { elements, event, calls, context } = await boot(workspace);
+    vm.runInContext('sessions.get(workspace.cards[0].id).status = "running"', context);
+    event(offer());
+    elements.get('#update').onclick();
+    await settle();
+    assert.equal(elements.get('#confirm-dialog').open, true);
+    assert.match(elements.get('#confirm-description').textContent, /1 running terminal will stop/);
+    elements.get('#confirm-cancel').onclick();
+    await settle();
+    assert.deepEqual(calls.map(c => c.action), ['initialize'], 'cancelling keeps the app and its terminals running');
+    elements.get('#update').onclick();
+    await settle();
+    elements.get('#confirm-ok').onclick();
+    await settle();
+    assert.deepEqual(calls.map(c => c.action), ['initialize', 'update-install', 'close']);
+});
+
+test('a failed install is reported and the app stays open', async () => {
+    const respond = action => action === 'update-install' ? { error: 'Could not install the update: read-only volume' } : undefined;
+    const { elements, event, calls } = await boot(createWorkspace(), { respond });
+    event(offer());
+    elements.get('#update').onclick();
+    await settle();
+    assert.deepEqual(calls.map(c => c.action), ['initialize', 'update-install']);
+    assert.equal(elements.get('#toast').textContent, 'Could not install the update: read-only volume');
+    assert.equal(elements.get('#update').disabled, false);
+});
+
+test('a copy that cannot update itself links to the release instead of closing', async () => {
+    const { elements, event, calls } = await boot(createWorkspace());
+    event(offer({ installable: false }));
+    assert.match(elements.get('#update').innerHTML, /Update available/);
+    elements.get('#update').onclick();
+    await settle();
+    assert.deepEqual(calls.map(c => [c.action, c.payload]), [['initialize', undefined], ['open-link', 'https://github.com/yutigi/TerminalCanvas/releases/tag/v0.2.0']]);
+});

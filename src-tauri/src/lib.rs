@@ -8,6 +8,7 @@ mod e2e;
 pub mod host;
 pub mod platform;
 pub mod protocol;
+pub mod updates;
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
 compile_error!("The e2e feature must never be enabled in release builds.");
 #[cfg(windows)]
@@ -26,6 +27,7 @@ use tc_pty::PtyBackend;
 use tc_pty::manager::{Backend, Config};
 
 use host::{Host, Paths};
+use updates::Updates;
 
 /// Only the app's own pages: `tauri://localhost` on macOS and Linux, `http://tauri.localhost` on Windows.
 pub fn is_app_url(url: &Url) -> bool {
@@ -90,14 +92,28 @@ actions! {
     clipboard_write => "clipboard-write",
 }
 
-/// Connects the renderer's event channel and returns the restored workspace.
+/// Connects the renderer's event channel and returns the restored workspace. The renderer also
+/// learns the app version and any update found before it connected.
 #[tauri::command]
-async fn initialize(webview: Webview, host: State<'_, Arc<Host>>, events: Channel<Value>) -> Result<Value, String> {
+async fn initialize(
+    webview: Webview,
+    host: State<'_, Arc<Host>>,
+    updates: State<'_, Arc<Updates>>,
+    events: Channel<Value>,
+) -> Result<Value, String> {
     authorized(&webview)?;
     host.connect(Arc::new(move |event| {
         let _ = events.send(event);
     }));
+    host.emit(updates.event());
     host.command("initialize", None).await
+}
+
+/// The user agreed to restart into the downloaded update; the renderer closes the app next.
+#[tauri::command]
+async fn update_install(webview: Webview, updates: State<'_, Arc<Updates>>) -> Result<Value, String> {
+    authorized(&webview)?;
+    updates.install().await
 }
 
 /// The image arrives as the raw IPC body, not as a JSON array of numbers.
@@ -246,6 +262,8 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        // No updater permission reaches JavaScript; `updates` drives it from Rust.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol("tc-asset", |context, request, responder| {
             let assets = context.app_handle().state::<Arc<Host>>().assets_folder();
             let uri = request.uri().to_string();
@@ -280,6 +298,7 @@ pub fn run() {
             input,
             resize,
             ack,
+            update_install,
             #[cfg(feature = "e2e")]
             e2e_state,
             #[cfg(feature = "e2e")]
@@ -319,7 +338,10 @@ pub fn run() {
             let backend: Box<dyn Backend> = Box::new(e2e::TestBackend(PtyBackend));
             let host = Host::new(paths, platform, backend, Config::from_environment());
             app.manage(Arc::clone(&host));
+            let updates = Updates::new(app.handle());
+            app.manage(Arc::clone(&updates));
             create_window(app, &host)?;
+            updates.start(app.handle().clone(), host);
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -341,6 +363,7 @@ pub fn run() {
             if let Some(host) = app.try_state::<Arc<Host>>() {
                 host.stop_all();
             }
+            updates::apply_at_exit(app);
         }
         _ => {}
     });
@@ -404,6 +427,25 @@ mod tests {
             "downloadBootstrapper"
         );
         assert_eq!(overlay["bundle"]["windows"]["nsis"]["installMode"], "currentUser");
+    }
+
+    #[test]
+    fn macos_and_linux_bundle_overlays_ship_the_hook_in_updatable_formats() {
+        for (overlay, targets) in [
+            (include_str!("../bundle.macos.json"), serde_json::json!(["app", "dmg"])),
+            (
+                include_str!("../bundle.linux.json"),
+                serde_json::json!(["appimage", "deb"]),
+            ),
+        ] {
+            let mut base: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+            let overlay: Value = serde_json::from_str(overlay).unwrap();
+            base["bundle"] = overlay["bundle"].clone();
+            let config: tauri::Config = serde_json::from_value(base).unwrap();
+            assert!(config.bundle.active);
+            assert_eq!(config.bundle.external_bin.unwrap(), ["binaries/tc-hook"]);
+            assert_eq!(overlay["bundle"]["targets"], targets);
+        }
     }
 
     #[test]

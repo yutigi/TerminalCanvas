@@ -117,3 +117,50 @@ Computer Use could not locate the candidate window for this last observation;
 that failed attempt is not recorded as a native dialog pass. The user already
 verified Finder-to-canvas image drop. See the separate [Windows 11 checklist](windows11-checklist.md)
 for the clean-machine and eight-step compatibility checks.
+
+## Automatic update from a local release
+
+This check exercises the whole update path without publishing anything: a release build of
+version 0.1.0 finds a signed 0.1.1 package on a local server, installs it, and relaunches. Run it on
+macOS with the screen unlocked. It needs the updater private key, the pinned Tauri CLI, and
+`npm ci`. Set `CI=true` so the disk-image step skips its Finder layout script.
+
+1. Build the "new" package. The overlay changes only the version:
+
+   ```sh
+   export CI=true TAURI_SIGNING_PRIVATE_KEY=~/.tauri/terminal-canvas-updater.key TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
+   cargo build -p tc-hook --release --target aarch64-apple-darwin
+   mkdir -p src-tauri/binaries && cp target/aarch64-apple-darwin/release/tc-hook src-tauri/binaries/tc-hook-aarch64-apple-darwin
+   cargo tauri build --target aarch64-apple-darwin --config src-tauri/bundle.macos.json \
+     --config '{"version":"0.1.1","bundle":{"targets":["app"],"createUpdaterArtifacts":true}}' -- --locked
+   ```
+
+   Copy `target/aarch64-apple-darwin/release/bundle/macos/Terminal Canvas.app.tar.gz` and its
+   `.sig` to an empty folder as `new.app.tar.gz` and `new.app.tar.gz.sig`. In that folder, write a
+   `latest.json` with `"version": "0.1.1"` and one platform, `darwin-aarch64-app`, whose
+   `signature` is the `.sig` file's text and whose `url` is `http://127.0.0.1:8765/new.app.tar.gz`.
+   Serve the folder with `python3 -m http.server 8765 --bind 127.0.0.1`.
+2. Build the "old" app, pointed at that server. This overlay is for this check only:
+
+   ```sh
+   cargo tauri build --target aarch64-apple-darwin --config src-tauri/bundle.macos.json \
+     --config '{"bundle":{"targets":["app"]},"plugins":{"updater":{"endpoints":["http://127.0.0.1:8765/latest.json"],"dangerousInsecureTransportProtocol":true}}}' -- --locked
+   ```
+
+   Copy the resulting `Terminal Canvas.app` to a scratch folder with `ditto`.
+3. Back up `~/Library/Application Support/terminal-canvas`; the relaunched app uses the normal
+   data folder. Then start the old app with a scratch home:
+   `open -n --env HOME=<scratch>/home "<scratch>/Terminal Canvas.app"`. The sidebar shows `v0.1.0`.
+4. About 20 seconds later, the server logs `GET /latest.json` and `GET /new.app.tar.gz`, and
+   **Restart to update** appears in the top bar. Start a shell terminal, then click it. Confirm
+   that the dialog says one running terminal will stop, and choose **Restart and update**.
+5. The app closes, and the copy in the scratch folder relaunches. Its sidebar shows `v0.1.1`, and
+   `Contents/Info.plist` in the scratch bundle reads 0.1.1. Close it, then compare the data folder
+   with the backup.
+
+Verified on 2026-11-12 on macOS (Apple silicon), with the screen locked: steps 1–3, and in step 4
+the release build fetched the manifest and downloaded and verified the signed package. The 0.1.1
+archive has the expected layout and a valid ad-hoc signature, and the user's data folder matched
+its backup afterwards. Clicking the button and the relaunch in step 5 are not yet verified. A
+locked screen keeps the window off screen. On Windows, also check the NSIS install from the
+published draft: the passive installer runs without an administrator prompt and reopens the app.

@@ -28,6 +28,8 @@ Use Node 22.12+ with npm 10 for the existing lockfile. `rust-toolchain.toml` pin
 - `cargo xtask icons [--check]`: generate or verify native PNG/ICO files from the shared SVG using resvg.
 - `cargo build -p terminal-canvas --features e2e`, then `npm run test:e2e`: Windows-only Playwright tests against WebView2. Build `tc-hook` first. PowerShell 7 is required in addition to the built-in Windows shells.
 - `cargo xtask package-windows`: Windows-only NSIS/portable artifact preparation; requires the pinned Tauri CLI documented in the README.
+- `cargo xtask package [--target <triple>] [--updater]`: this platform's packages (Windows installer and portable zip, macOS `.dmg`, Linux `.AppImage`/`.deb`) in `release/`. `--updater` signs the updatable ones and needs `TAURI_SIGNING_PRIVATE_KEY`.
+- `cargo xtask release --tag vX.Y.Z --repo owner/name --input <dir> --output <dir>`: verifies every platform's signed packages against the committed updater key and writes `latest.json`. Tagging `vX.Y.Z` runs both in `.github/workflows/publish.yml` and creates a draft release.
 
 A normal Rust launch uses the existing Electron data directory. Use `cargo run -p terminal-canvas --features e2e -- --smoke-test` for an isolated workspace. Test builds default to an isolated smoke profile even without flags. The `e2e` feature must never be enabled in release builds; compilation rejects that combination.
 
@@ -52,3 +54,5 @@ Use concise, imperative commit subjects and keep each commit focused. Pull reque
 ## Security & Configuration
 
 Keep credentials, local configuration, generated output, and installed dependencies out of version control. Expose only the app's own commands to the local main webview. Keep OS operations behind host validation, preserve CSP/navigation/permission restrictions, and isolate all test profiles from user data. Test CLI substitutes must resolve to controlled local tools before invocation and must not contact real providers.
+
+`src-tauri/src/updates.rs` checks GitHub releases only in release builds; debug, test, and E2E builds must never contact the update endpoint. The updater plugin's JavaScript commands stay ungranted; the renderer reaches updates only through `update_install` and host events. The release version lives in the root `Cargo.toml` alone (`tauri.conf.json` has none). The updater private key is a repository secret, never a file in the tree; `plugins.updater.pubkey` is its public half, and changing it strands every installed copy.

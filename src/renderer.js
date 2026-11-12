@@ -786,6 +786,29 @@ document.addEventListener('keydown', event => {
     const shortcut = { v: 'select', h: 'hand', t: 'text', n: 'note', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow', f: 'frame' }[event.key.toLowerCase()];
     if (shortcut && !event.shiftKey) { event.preventDefault(); setTool(shortcut); }
 });
+// The Rust host reports its version and any update it found in the GitHub releases; Electron sends none.
+let offeredUpdate = null;
+function showUpdate(event) {
+    if (event.current) $('#app-version').textContent = `v${event.current}`;
+    offeredUpdate = event.update || null;
+    const button = $('#update');
+    button.hidden = !offeredUpdate;
+    if (!offeredUpdate) return;
+    const { version, notes, installable } = offeredUpdate;
+    button.disabled = false;
+    button.innerHTML = `${icon(installable ? 'package' : 'arrow-up-right')}${installable ? 'Restart to update' : 'Update available'}`;
+    button.title = (installable ? `Terminal Canvas ${version} is ready. Restart to install it.` : `Terminal Canvas ${version} is available. Open its release page to download it.`) + (notes ? `\n\n${notes.slice(0, 500)}` : '');
+}
+$('#update').onclick = () => run(async () => {
+    const update = offeredUpdate;
+    if (!update || !ready) return;
+    if (!update.installable) { await invoke('open-link', update.url); return; }
+    const running = [...sessions.values()].filter(s => ['running', 'starting'].includes(s.status)).length;
+    if (running && !await confirmAction('Restart and update?', `Terminal Canvas ${update.version} is ready. ${running} running terminal${running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Restart and update')) return;
+    $('#update').disabled = true;
+    try { await invoke('update-install'); } catch (error) { $('#update').disabled = false; throw error; }
+    clearTimeout(autosaveTimer); await invoke('close', workspace);
+});
 window.addEventListener('resize', () => { if (ready) renderCamera(); });
 if (bridge) {
     bridge.onEvent(event => {
@@ -812,6 +835,7 @@ if (bridge) {
         if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
         if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); setStatus(workspace.cards.find(c => c.id === event.id), 'exited'); }
         if (event.type === 'error') toast(event.message);
+        if (event.type === 'update') showUpdate(event);
         if (event.type === 'closing') run(async () => {
             if (event.running && !await confirmAction('Close Terminal Canvas?', `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
             clearTimeout(autosaveTimer); await invoke('close', workspace);

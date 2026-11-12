@@ -39,13 +39,13 @@
         <div class="sidebar-bottom">
             <button id="plugins" class="plugin-card"><span class="plugin-symbol" data-icon="puzzle"></span><span>Room to grow<small>WebCanvas integration planned</small></span><span data-icon="arrow-up-right"></span></button>
             <button class="nav-item" id="help"><span data-icon="help"></span>Guide & shortcuts<span data-icon="arrow-up-right"></span></button>
-            <div class="local-label"><i class="status-dot"></i>No cloud workspace sync<span>v0.1.0</span></div>
+            <div class="local-label"><i class="status-dot"></i>No cloud workspace sync<span id="app-version">v0.1.0</span></div>
         </div>
     </aside>
     <main>
         <header class="topbar">
             <div class="board-heading"><div class="board-icon" data-icon="canvas"></div><div><div class="breadcrumb">Workspace <span>/</span> Canvas</div><input id="workspace-name" maxlength="100" aria-label="Workspace name" value="My AI workspace"></div></div>
-            <div class="top-actions"><span id="save-state" class="save-state"><i class="status-dot"></i>Saved locally</span><button class="button" id="save"><span data-icon="save"></span>Save workspace</button><button class="button primary" id="add-terminal"><span data-icon="plus"></span>New terminal</button></div>
+            <div class="top-actions"><span id="save-state" class="save-state"><i class="status-dot"></i>Saved locally</span><button class="button update" id="update" hidden></button><button class="button" id="save"><span data-icon="save"></span>Save workspace</button><button class="button primary" id="add-terminal"><span data-icon="plus"></span>New terminal</button></div>
         </header>
         <div class="canvas-bar"><div class="canvas-caption"><span class="status-dot"></span><strong id="running-count">0 running</strong><span class="bar-divider"></span><span>Many minds. One workspace.</span></div><div class="bar-actions"><button id="arrange"><span data-icon="grid"></span>Arrange</button><button id="focus-toggle" disabled><span data-icon="maximize"></span>Focus</button><span class="bar-divider"></span><button id="fit"><span data-icon="scan"></span>Fit canvas</button></div></div>
         <section id="viewport" class="viewport" tabindex="0" aria-label="Terminal canvas. Drag empty space to pan; Shift and drag to select an area; Control and scroll to zoom.">

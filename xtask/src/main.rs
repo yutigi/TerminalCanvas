@@ -3,13 +3,19 @@
 //! - `check`: rustfmt, clippy with `-D warnings`, `node --check` on the UI scripts, both test
 //!   suites, and the golden fixtures in `--check` mode.
 //! - `golden [--check]`: captures the JavaScript host's behavior into `tests/golden/`.
+//! - `package [--target <triple>] [--updater]`: this platform's desktop packages, in `release/`.
+//! - `package-windows`: the Windows installer and portable zip, without updater signatures.
+//! - `release --tag … --repo … --input … --output …`: the GitHub release files and `latest.json`.
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 mod icons;
 mod package;
+mod release;
 mod syntax;
+
+const USAGE: &str = "usage: cargo xtask check | syntax | golden [--check] | icons [--check] | package [--target <triple>] [--updater] | package-windows | release --tag <vX.Y.Z> --repo <owner/name> --input <dir> --output <dir> [--date <RFC 3339>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -18,8 +24,12 @@ fn main() -> ExitCode {
         Some("syntax") => syntax::check(&root()),
         Some("golden") => golden(args.get(1).is_some_and(|flag| flag == "--check")),
         Some("icons") => icons::run(&root(), args.get(1).is_some_and(|flag| flag == "--check")),
-        Some("package-windows") => package::windows(&root(), &cargo()),
-        _ => Err("usage: cargo xtask check | syntax | golden [--check] | icons [--check] | package-windows".to_owned()),
+        Some("package") => {
+            package::Options::parse(&args[1..]).and_then(|options| package::package(&root(), &cargo(), &options))
+        }
+        Some("package-windows") => package::package(&root(), &cargo(), &package::Options::windows()),
+        Some("release") => release::run(&root(), &args[1..]),
+        _ => Err(USAGE.to_owned()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -1,0 +1,146 @@
+# Builds signed packages for every platform and creates a draft GitHub release with the updater
+# manifest (latest.json) the app reads. Push a tag vX.Y.Z whose version matches Cargo.toml on a
+# commit that already passed CI. Installed apps see the update only after the draft is published
+# as the latest release. See README.md, "Releases and automatic updates".
+name: Publish release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build, e.g. v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Tag, version, CI, and signing key
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+      - id: source
+        name: The tag names the app version and a commit that passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | cut -d'"' -f2)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG does not match the app version $version in Cargo.toml."
+            exit 1
+          fi
+          sha=$(git rev-parse HEAD)
+          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" --status success --json databaseId --jq length)
+          if [ "$passed" = "0" ]; then
+            echo "::error::CI has not passed for $sha. Tag a commit whose CI run succeeded."
+            exit 1
+          fi
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::Add the updater signing key as the TAURI_SIGNING_PRIVATE_KEY repository secret."
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          # The oldest supported runner, so the AppImage runs on older glibc versions too.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the pinned Rust toolchain and target
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Linux webview and AppImage libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - name: Install development dependencies
+        run: npm ci
+      - name: Install the pinned stable Tauri 2 CLI
+        run: cargo tauri --version 2>/dev/null | grep -qx 'tauri-cli 2.12.4' || cargo install tauri-cli --version 2.12.4 --locked
+      - name: Build and sign the packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: cargo xtask package --target ${{ matrix.target }} --updater
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.target }}
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    name: Draft release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: dist
+      - name: Verify signatures and write latest.json
+        run: cargo xtask release --tag "$TAG" --repo "$GITHUB_REPOSITORY" --input dist --output publish --date "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - name: Create or refresh the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+          case "$draft" in
+            missing) gh release create "$TAG" publish/* --draft --verify-tag --title "Terminal Canvas ${TAG#v}" --generate-notes ;;
+            true) gh release upload "$TAG" publish/* --clobber ;;
+            *) echo "::error::Release $TAG is already published. Publish a new version instead."; exit 1 ;;
+          esac
+          echo "Review the draft, then publish it as the latest release: $(gh release view "$TAG" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"

@@ -169,6 +169,6 @@ impl Platform for TauriPlatform {
     fn close_window(&self) {
         // macOS keeps an app alive after its last window closes. The host has already flushed
         // recovery and waited for terminal exits, so finish the app explicitly on every OS.
-        self.app.exit(0);
+        crate::updates::exit(&self.app);
     }
 }
