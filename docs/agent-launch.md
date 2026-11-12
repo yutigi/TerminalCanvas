@@ -80,11 +80,14 @@ With `--json`:
 
 ```json
 {"status":"opened","id":"<request id>","card":"<new card id>","parent":"<parent card id>","via":"terminal",
- "log":"<path>","request":{"profile":"codex","title":"Reviewer","cwd":"D:\\repo","command":"codex","log":true}}
+ "log":"<path>","request":{"profile":"codex","title":"Reviewer","cwd":"D:\\repo","command":"codex","reply":true,"log":true}}
 ```
 
-`via` is `terminal` for a terminal's own inbox and `app` for the app inbox. `parent` is the card the
-new one opens beside, when there is one. Failures carry `error` instead of `card`.
+`via` is `terminal` for a terminal's own inbox and `app` for the app inbox. `request` echoes what was
+sent; `reply` is `false` with `--no-wait`, and `parent` appears there when `--parent` named one.
+The top-level `parent` is the card the new one actually opened beside, as the app reports it: it is
+absent when the card opened on its own, including when the named parent no longer exists, and with
+`--no-wait` from the app inbox, since nothing is known yet. Failures carry `error` instead of `card`.
 
 The new card's ID can be passed as `--parent` later, so an orchestrating program can build chains of
 terminals from outside the canvas.
@@ -92,7 +95,9 @@ terminals from outside the canvas.
 ## Following a terminal's output
 
 With `--log`, the app writes everything the new terminal prints to the file named by `log`, as plain
-text: colors and other escape sequences are removed, and screen redraws become line breaks. The log
+text: colors and other escape sequences are removed, a line rewritten in place (by a backspace, a
+carriage return, or a shell's line editor) keeps its final text, and moves to another row become line
+breaks. Text the log already holds is never changed, so a rewrite of it continues on a new line. The log
 starts with the terminal's first output and grows as it runs. When the process ends, the app adds a
 last line:
 

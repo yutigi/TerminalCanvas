@@ -671,7 +671,51 @@ fn new_terminal_outside_a_terminal_asks_the_app_and_reports_json() {
     assert_eq!(report["request"]["command"], "gemini");
     let taken = take_requests(&inbox, Platform::current());
     assert_eq!(taken[0].request.as_ref().unwrap().parent.as_deref(), Some("card-1"));
-    assert_eq!(report["parent"], "card-1");
+    assert_eq!(report["request"]["parent"], "card-1");
+    assert!(
+        report.get("parent").is_none(),
+        "until the app answers, the parent it will use is unknown"
+    );
+
+    // Once it answers, the report names the parent the app actually used, if any.
+    let answered = |answer: Value, args: &[&str]| {
+        let inbox = inbox.clone();
+        let host = std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(taken) = take_requests(&inbox, Platform::current()).pop() {
+                    tc_core::launch::write_result(&inbox, &taken.id.unwrap(), &answer);
+                    return;
+                }
+            }
+        });
+        let output = run(args, &[]);
+        host.join().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        json(&output)
+    };
+    let beside = answered(
+        json!({ "status": "opened", "card": "card-2", "parent": "card-1" }),
+        &["--parent", "card-1", "--json"],
+    );
+    assert_eq!(
+        (beside["card"].as_str(), beside["parent"].as_str()),
+        (Some("card-2"), Some("card-1"))
+    );
+    let orphan = answered(
+        json!({ "status": "opened", "card": "card-3" }),
+        &["--parent", "closed-card", "--json"],
+    );
+    assert_eq!(orphan["request"]["parent"], "closed-card");
+    assert!(
+        orphan.get("parent").is_none(),
+        "a parent that no longer exists is not reported as used: {orphan}"
+    );
     assert_eq!(report["id"], taken[0].id.clone().unwrap());
 
     // With --no-wait --log, the log path is known before the app answers.

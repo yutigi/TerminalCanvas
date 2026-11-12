@@ -1333,24 +1333,28 @@ test('programs outside the canvas open terminals in view, beside a named parent 
     const { context, calls, elements, bridge } = await boot(workspace, { respond, terminals: true });
     const flush = () => vm.runInContext('terminalRequests', context);
     const request = extra => ({ type: 'launch', external: true, profile: 'codex', title: 'Worker', cwd: '/repo', command: 'codex', ...extra });
+    const lastResult = () => structuredClone(calls.filter(c => c.action === 'launch-result').at(-1).payload);
 
-    bridge.event(request({}));
+    bridge.event(request({ request: 'req-alone' }));
     await flush();
+    assert.deepEqual(Object.keys(lastResult()), ['request', 'card'], 'no parent is reported without one');
     const standalone = structuredClone(calls.filter(c => c.action === 'create-card').at(-1).payload);
     const center = json(context, 'viewportCenterWorld()');
     assert.deepEqual({ x: standalone.x, y: standalone.y }, json(context, `Geometry.placeNear(${JSON.stringify(center)}, { w: 660, h: 430 }, [${JSON.stringify(parent)}].map(boundsOf))`));
     assert.equal(json(context, 'workspace.items').length, 0, 'no parent, no arrow');
     assert.match(elements.get('#toast').textContent, /A program opened a new terminal: Worker/);
 
-    bridge.event(request({ parent: parent.id, title: 'Child' }));
+    bridge.event(request({ request: 'req-child', parent: parent.id, title: 'Child' }));
     await flush();
     const child = json(context, 'workspace.cards').at(-1);
+    assert.deepEqual(lastResult(), { request: 'req-child', card: child.id, parent: parent.id });
     assert.equal(child.title, 'Child');
     assert.deepEqual(json(context, 'workspace.items').map(({ start, end }) => ({ start, end })), [{ start: { id: parent.id }, end: { id: child.id } }]);
     assert.match(elements.get('#toast').textContent, /Lead opened a new terminal: Child/);
 
-    bridge.event(request({ parent: 'closed-card', title: 'Orphan' }));
+    bridge.event(request({ request: 'req-orphan', parent: 'closed-card', title: 'Orphan' }));
     await flush();
+    assert.equal(lastResult().parent, undefined, 'an unknown parent is not reported as the one used');
     assert.equal(json(context, 'workspace.cards').at(-1).title, 'Orphan', 'an unknown parent still opens the terminal');
     assert.equal(json(context, 'workspace.items').length, 1, 'but without an arrow');
     assert.equal(calls.filter(c => c.action === 'start').length, 3);
@@ -1387,7 +1391,7 @@ test('every terminal request reports its card or why nothing opened, and starts 
     await flush();
     const child = json(context, 'workspace.cards').at(-1);
     assert.equal(structuredClone(calls.find(c => c.action === 'start' && c.payload.card.id === child.id).payload).launch, 'req-opened');
-    assert.deepEqual(results(), [{ request: 'req-opened', card: child.id }]);
+    assert.deepEqual(results(), [{ request: 'req-opened', card: child.id, parent: parent.id }]);
 
     failStart = true;
     bridge.event(launch({ request: 'req-start-failed' }));

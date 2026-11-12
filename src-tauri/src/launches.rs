@@ -145,9 +145,9 @@ impl Launches {
         }
     }
 
-    /// Answers request `id` with the card the UI opened, or why it opened none. Returns whether
-    /// the request was waiting.
-    pub fn answer(&mut self, id: &str, card: Option<&str>, error: Option<&str>) -> bool {
+    /// Answers request `id` with the card the UI opened (and the card it opened beside, if any), or
+    /// why it opened none. Returns whether the request was waiting.
+    pub fn answer(&mut self, id: &str, card: Option<&str>, parent: Option<&str>, error: Option<&str>) -> bool {
         let Some(pending) = self.pending.remove(id) else {
             return false;
         };
@@ -156,6 +156,9 @@ impl Launches {
             let result = match (card, error) {
                 (Some(card), None) => {
                     let mut opened = json!({ "status": "opened", "card": card });
+                    if let Some(parent) = parent {
+                        opened["parent"] = json!(parent);
+                    }
                     if pending.log {
                         opened["log"] = json!(log_path(&pending.inbox, id).to_string_lossy());
                     }
@@ -196,18 +199,42 @@ fn private_options(create: bool) -> OpenOptions {
     options
 }
 
-/// The `launch-result` payload: `{ request, card }` or `{ request, error }`.
-pub fn parse_result(payload: Option<&Value>) -> Result<(String, Option<String>, Option<String>), String> {
-    let field = |key: &str| payload.and_then(|payload| payload.get(key)).and_then(Value::as_str);
-    let request = field("request")
+/// A parsed `launch-result` payload.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LaunchResult {
+    pub request: String,
+    pub card: Option<String>,
+    /// The card the new one actually opened beside; absent when it opened on its own.
+    pub parent: Option<String>,
+    pub error: Option<String>,
+}
+
+/// The `launch-result` payload: `{ request, card, parent? }` or `{ request, error }`.
+pub fn parse_result(payload: Option<&Value>) -> Result<LaunchResult, String> {
+    let invalid = || "Invalid terminal request result.".to_owned();
+    let field = |key: &str| payload.and_then(|payload| payload.get(key));
+    let text = |key: &str| field(key).and_then(Value::as_str);
+    let request = text("request")
         .filter(|id| tc_core::launch::is_request_id(id))
-        .ok_or("Invalid terminal request result.")?;
-    let card = field("card").filter(|card| tc_core::launch::is_request_id(card));
-    let error = field("error").map(|error| error.chars().take(1000).collect::<String>());
+        .ok_or_else(invalid)?;
+    let card = text("card").filter(|card| tc_core::launch::is_request_id(card));
+    let error = text("error").map(|error| error.chars().take(1000).collect::<String>());
     if card.is_none() == error.is_none() {
-        return Err("Invalid terminal request result.".into());
+        return Err(invalid());
     }
-    Ok((request.to_owned(), card.map(str::to_owned), error))
+    let parent = match field("parent") {
+        None | Some(Value::Null) => None,
+        Some(parent) => match parent.as_str() {
+            Some(parent) if card.is_some() && tc_core::launch::is_request_id(parent) => Some(parent.to_owned()),
+            _ => return Err(invalid()),
+        },
+    };
+    Ok(LaunchResult {
+        request: request.to_owned(),
+        card: card.map(str::to_owned),
+        parent,
+        error,
+    })
 }
 
 #[cfg(test)]
@@ -247,9 +274,9 @@ mod tests {
         launches.begin_output("req-1", "card-1");
         launches.output("card-1", "\x1b[32mhello\x1b[0m\r\n");
         launches.output("other-card", "not logged");
-        assert!(launches.answer("req-1", Some("card-1"), None));
+        assert!(launches.answer("req-1", Some("card-1"), Some("parent-1"), None));
         assert!(
-            !launches.answer("req-1", Some("card-1"), None),
+            !launches.answer("req-1", Some("card-1"), None, None),
             "a request is answered once"
         );
         let result: Value =
@@ -257,7 +284,7 @@ mod tests {
         let log = inbox.join("req-1.log");
         assert_eq!(
             result,
-            json!({ "status": "opened", "card": "card-1", "log": log.to_string_lossy() })
+            json!({ "status": "opened", "card": "card-1", "parent": "parent-1", "log": log.to_string_lossy() })
         );
         launches.exited("card-1", 7);
         launches.output("card-1", "after exit");
@@ -266,16 +293,24 @@ mod tests {
 
         launches.expect("req-2".into(), pending(true, false));
         launches.begin_output("req-2", "card-2");
-        assert!(launches.answer("req-2", None, Some("A workspace can contain up to 24 terminals.")));
+        assert!(launches.answer("req-2", None, None, Some("A workspace can contain up to 24 terminals.")));
         let failed: Value =
             serde_json::from_str(&std::fs::read_to_string(inbox.join("req-2.result")).unwrap()).unwrap();
         assert_eq!(failed["status"], "failed");
         assert!(!inbox.join("req-2.log").exists(), "no log unless asked");
 
         launches.expect("req-3".into(), pending(false, false));
-        assert!(launches.answer("req-3", Some("card-3"), None));
+        assert!(launches.answer("req-3", Some("card-3"), None, None));
+        launches.expect("req-4".into(), pending(true, false));
+        assert!(launches.answer("req-4", Some("card-4"), None, None));
+        let alone: Value = serde_json::from_str(&std::fs::read_to_string(inbox.join("req-4.result")).unwrap()).unwrap();
+        assert_eq!(
+            alone,
+            json!({ "status": "opened", "card": "card-4" }),
+            "no parent when none was used"
+        );
         assert!(!inbox.join("req-3.result").exists(), "--no-wait senders get no answer");
-        assert!(!launches.answer("unknown", Some("card"), None));
+        assert!(!launches.answer("unknown", Some("card"), None, None));
         std::fs::remove_dir_all(inbox).unwrap();
     }
 
@@ -295,17 +330,18 @@ mod tests {
         }
         assert_eq!(launches.waiting(), PENDING_LIMIT);
         assert!(
-            !launches.answer("req-0", Some("card"), None),
+            !launches.answer("req-0", Some("card"), None, None),
             "the oldest are forgotten"
         );
         let last = format!("req-{}", PENDING_LIMIT + 4);
         launches.begin_output(&last, "big");
-        launches.output("big", &"x".repeat(LOG_BYTES - 2));
+        let rows = format!("{}\n", "x".repeat(1023)).repeat(LOG_BYTES / 1024);
+        launches.output("big", &rows[..LOG_BYTES - 2]);
         launches.output("big", "yyyy");
         launches.output("big", "ignored");
         let log = inbox.join(format!("{last}.log"));
         let text = read_when(&log, |text| text.contains("stopped"));
-        assert!(text.starts_with(&"x".repeat(LOG_BYTES - 2)));
+        assert!(text.starts_with(&rows[..LOG_BYTES - 2]));
         assert!(text.contains("yy\n[Terminal Canvas: this log stopped at 16 MB"));
         assert!(!text.contains("ignored"));
         std::fs::remove_dir_all(inbox).unwrap();
@@ -315,12 +351,26 @@ mod tests {
     fn results_name_a_known_request_and_one_outcome() {
         assert_eq!(
             parse_result(Some(&json!({ "request": "abc-1", "card": "card-1" }))).unwrap(),
-            ("abc-1".into(), Some("card-1".into()), None)
+            LaunchResult {
+                request: "abc-1".into(),
+                card: Some("card-1".into()),
+                parent: None,
+                error: None
+            }
+        );
+        assert_eq!(
+            parse_result(Some(
+                &json!({ "request": "abc-1", "card": "card-1", "parent": "lead-1" })
+            ))
+            .unwrap()
+            .parent
+            .as_deref(),
+            Some("lead-1")
         );
         assert_eq!(
             parse_result(Some(&json!({ "request": "abc-1", "error": "x".repeat(2000) })))
                 .unwrap()
-                .2
+                .error
                 .unwrap()
                 .len(),
             1000
@@ -331,6 +381,9 @@ mod tests {
             json!({ "request": "a" }),
             json!({ "request": "a", "card": "c", "error": "e" }),
             json!({ "request": "a", "card": "c/d" }),
+            json!({ "request": "a", "card": "c", "parent": "../p" }),
+            json!({ "request": "a", "card": "c", "parent": 7 }),
+            json!({ "request": "a", "error": "e", "parent": "p" }),
         ] {
             assert!(parse_result(Some(&bad)).is_err(), "{bad}");
         }

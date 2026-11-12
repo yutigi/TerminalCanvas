@@ -644,19 +644,22 @@ async function duplicateTerminal(source) {
 // a script. From inside a terminal (`event.id`), it opens beside that terminal, joined to it by an
 // arrow. From outside the canvas (`event.external`), it opens beside the named `event.parent`, or in
 // view when there is none. The host validated the request; requests open one at a time, in order.
-// Every outcome is reported back as `launch-result`, so the program learns the new card's ID or why
-// nothing opened.
+// Every outcome is reported back as `launch-result`, so the program learns the new card's ID (and the
+// parent it actually opened beside, if any) or why nothing opened.
 let terminalRequests = Promise.resolve();
 let markAppReady;
 const appReady = new Promise(resolve => { markAppReady = resolve; });
 function requestTerminal(event) {
     const report = outcome => { if (event.request) invoke('launch-result', { request: event.request, ...outcome }).catch(() => {}); };
     terminalRequests = terminalRequests.then(async () => {
-        try { report({ card: (await openRequestedTerminal(event)).id }); }
+        try {
+            const { card, parent } = await openRequestedTerminal(event);
+            report(parent ? { card: card.id, parent: parent.id } : { card: card.id });
+        }
         catch (error) { report({ error: error.message }); toast(error.message); }
     });
 }
-// Returns the started card, or throws why it could not open.
+// Returns the started card and the card it opened beside (null when none), or throws why it could not open.
 async function openRequestedTerminal(event) {
     await appReady;
     let parent = findCard(event.external ? event.parent : event.id) || null;
@@ -689,7 +692,7 @@ async function openRequestedTerminal(event) {
     else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
     toast(`${requester()} opened a new terminal: ${card.title}.`);
     await start(card, undefined, event.request);
-    return card;
+    return { card, parent };
 }
 function openLaunch(profileId = 'shell') {
     if (!ready || document.querySelector('dialog[open]')) return;

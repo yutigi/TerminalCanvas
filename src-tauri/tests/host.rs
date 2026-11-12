@@ -666,7 +666,10 @@ async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_ap
     let card_id = card["id"].as_str().unwrap();
     assert_eq!(
         h.host
-            .command("launch-result", Some(&json!({ "request": id, "card": card_id })))
+            .command(
+                "launch-result",
+                Some(&json!({ "request": id, "card": card_id, "parent": "parent-card" }))
+            )
             .await
             .unwrap(),
         json!({ "ok": true })
@@ -675,7 +678,7 @@ async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_ap
     let answer: Value = serde_json::from_slice(&std::fs::read(result_path(&inbox, &id)).unwrap()).unwrap();
     assert_eq!(
         answer,
-        json!({ "status": "opened", "card": card_id, "log": log.to_string_lossy() })
+        json!({ "status": "opened", "card": card_id, "parent": "parent-card", "log": log.to_string_lossy() })
     );
     events(key, SessionEvent::Exit(ExitStatus { code: 0, signal: None }));
     h.host.running().await;

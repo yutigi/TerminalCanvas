@@ -552,9 +552,16 @@ impl Host {
                 Ok(json!(started))
             }
             "launch-result" => {
-                let (request, card, error) = crate::launches::parse_result(payload)?;
+                let result = crate::launches::parse_result(payload)?;
                 let answered = self
-                    .with_state(move |_, state| state.launches.answer(&request, card.as_deref(), error.as_deref()))
+                    .with_state(move |_, state| {
+                        state.launches.answer(
+                            &result.request,
+                            result.card.as_deref(),
+                            result.parent.as_deref(),
+                            result.error.as_deref(),
+                        )
+                    })
                     .await;
                 Ok(json!({ "ok": answered }))
             }

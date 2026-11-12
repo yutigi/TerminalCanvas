@@ -64,17 +64,11 @@ impl Output {
         ExitCode::from(code)
     }
 
-    /// Reports success. `extra` holds the card ID and log path when known.
+    /// Reports success. `extra` holds the card ID, the parent it opened beside, and the log path,
+    /// when known.
     fn done(&self, status: &str, sent: &Sent, extra: Map<String, Value>, message: &str) -> ExitCode {
         if self.json {
             let mut report = json!({ "status": status, "id": sent.id, "via": sent.via, "request": sent.request });
-            let parent = match sent.via {
-                "terminal" => env::var(launch::CARD_ENV).ok(),
-                _ => sent.request.parent.clone(),
-            };
-            if let Some(parent) = parent {
-                report["parent"] = json!(parent);
-            }
             for (key, value) in extra {
                 report[key] = value;
             }
@@ -205,7 +199,13 @@ pub fn run(args: &[String]) -> ExitCode {
         extra.insert("log".into(), log.to_string_lossy().into_owned().into());
         lines.push(format!("Output log: {}", log.display()));
     }
+    // A terminal's own inbox always opens beside that terminal, or not at all. The app inbox only
+    // knows which parent it used once it answers: a named card may have closed.
+    let own_parent = || (via == "terminal").then(|| env::var(launch::CARD_ENV).ok()).flatten();
     let Some(wait) = wait else {
+        if let Some(parent) = own_parent() {
+            extra.insert("parent".into(), parent.into());
+        }
         lines.insert(0, format!("Requested a new terminal: {}", sent.request.title));
         return output.done("queued", &sent, extra, &lines.join("\n"));
     };
@@ -245,6 +245,12 @@ pub fn run(args: &[String]) -> ExitCode {
     let text = |key: &str| answer.get(key).and_then(Value::as_str);
     match (text("status"), text("card")) {
         (Some("opened"), Some(card)) => {
+            // Older apps do not report the parent; for a terminal's own inbox it can only be that
+            // terminal.
+            let parent = text("parent").map(str::to_owned).or_else(own_parent);
+            if let Some(parent) = parent {
+                extra.insert("parent".into(), parent.into());
+            }
             extra.insert("card".into(), card.into());
             lines.insert(
                 0,
