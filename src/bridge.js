@@ -1,5 +1,4 @@
-/* The desktop bridge for the Rust host: the same window.terminalCanvas API the Electron preload
-   exposed, on top of Tauri IPC. It does nothing under Electron, where the preload defines the API. */
+/* The desktop bridge: window.terminalCanvas on top of the Tauri host IPC. */
 (function (root) {
     'use strict';
     const core = root.__TAURI__ && root.__TAURI__.core;

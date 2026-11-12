@@ -3985,7 +3985,7 @@ dependencies = [
 
 [[package]]
 name = "tc-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ada-url",
  "base64 0.23.1",
@@ -3999,7 +3999,7 @@ dependencies = [
 
 [[package]]
 name = "tc-hook"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "dunce",
@@ -4010,7 +4010,7 @@ dependencies = [
 
 [[package]]
 name = "tc-pty"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -4049,7 +4049,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-canvas"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "base64 0.23.1",
@@ -5140,7 +5140,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "resvg",
  "serde_json",

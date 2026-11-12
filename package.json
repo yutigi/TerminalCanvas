@@ -1,54 +1,25 @@
 {
     "name": "terminal-canvas",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
     "description": "A spatial desktop workspace for AI terminals.",
-    "main": "src/main.cjs",
     "scripts": {
-        "start": "node scripts/start.cjs",
-        "dev": "node scripts/preview.cjs",
+        "start": "cargo run -p terminal-canvas",
         "check": "cargo xtask syntax",
         "test": "node --test tests/*.test.cjs",
-        "test:smoke": "node scripts/start.cjs --smoke-test",
-        "test:restoration": "node scripts/test-restoration.cjs",
         "test:e2e": "node --test --test-concurrency=1 tests/e2e/*.test.cjs",
-        "test:layout": "node scripts/check-layout.cjs",
-        "rebuild": "node scripts/rebuild.cjs",
-        "postinstall": "node scripts/patch-node-pty.cjs && node scripts/vendor.cjs",
+        "test:smoke": "npm run test:e2e",
+        "test:restoration": "node --test tests/e2e/restoration.test.cjs",
         "icons": "cargo xtask icons",
-        "package:rust": "cargo xtask package-windows",
-        "build": "electron-builder --win portable"
-    },
-    "dependencies": {
-        "@xterm/addon-fit": "0.11.0",
-        "@xterm/xterm": "6.0.0",
-        "node-pty": "1.1.0"
+        "build": "cargo xtask package-windows",
+        "test:layout": "node scripts/check-layout.cjs"
     },
     "devDependencies": {
-        "@electron/rebuild": "4.2.1",
-        "electron": "45.2.3",
-        "electron-builder": "26.18.0",
+        "@xterm/addon-fit": "0.11.0",
+        "@xterm/xterm": "6.0.0",
         "playwright-core": "1.65.0"
     },
     "engines": {
         "node": ">=22.12"
-    },
-    "build": {
-        "appId": "local.terminalcanvas.desktop",
-        "productName": "Terminal Canvas",
-        "directories": {
-            "output": "release"
-        },
-        "files": [
-            "src/**/*",
-            "package.json"
-        ],
-        "asarUnpack": [
-            "node_modules/node-pty/**/*"
-        ],
-        "win": {
-            "target": "portable",
-            "icon": "src/assets/icon.ico"
-        }
     }
 }
