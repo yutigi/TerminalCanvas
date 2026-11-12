@@ -70,6 +70,10 @@ impl Paths {
     pub fn integration(&self) -> PathBuf {
         self.data.join("shell-integration")
     }
+    /// Where programs outside the canvas ask for new terminals (see [`tc_core::launch`]).
+    pub fn launch_requests(&self) -> PathBuf {
+        tc_core::launch::app_inbox(&self.data)
+    }
 }
 
 /// Runs jobs one at a time, in the order they were queued.
@@ -117,6 +121,7 @@ struct State {
     recovery: WorkspaceRecovery,
     filename: Option<PathBuf>,
     inputs: HashMap<String, InputOrder>,
+    launches: crate::launches::Launches,
 }
 
 /// Where events for the UI go.
@@ -197,11 +202,18 @@ impl Host {
                 as Integrations
         });
         let (os, home, process_cwd) = (config.platform, config.home.clone(), config.process_cwd.clone());
+        // Requests left while the app was closed are stale: their senders have given up.
+        let inbox = paths.launch_requests();
+        match tc_core::launch::create_inbox(&inbox, false) {
+            Ok(()) => tc_core::launch::discard_requests(&inbox),
+            Err(error) => eprintln!("Could not create {}: {error}", inbox.display()),
+        }
         let mut state = State {
             manager: TerminalManager::new(config, backend, integrations, sink),
             recovery: WorkspaceRecovery::new(),
             filename: None,
             inputs: HashMap::new(),
+            launches: crate::launches::Launches::new(),
         };
         let host = Arc::new(Host {
             state: sender,
@@ -231,6 +243,7 @@ impl Host {
                     Some(Message::Poll) => {
                         state.manager.poll_hooks();
                         state.manager.stopping();
+                        host.poll_launch_requests(&mut state);
                     }
                     None => break,
                 }
@@ -281,6 +294,25 @@ impl Host {
     /// saved for recovery right away.
     fn dispatch(&self, state: &mut State) {
         for event in state.manager.take_events() {
+            // Requests, and the output logs of the terminals they opened.
+            match &event {
+                TerminalEvent::Launch {
+                    request_id,
+                    inbox,
+                    request,
+                    ..
+                } => state.launches.expect(
+                    request_id.clone(),
+                    crate::launches::Pending {
+                        inbox: inbox.clone(),
+                        reply: request.reply,
+                        log: request.log,
+                    },
+                ),
+                TerminalEvent::Data { id, data } => state.launches.output(id, data),
+                TerminalEvent::Exit { id, status } => state.launches.exited(id, status.code),
+                _ => {}
+            }
             if let TerminalEvent::Metadata { id, metadata, .. } = &event {
                 let update = CardMetadata {
                     cwd: metadata.cwd.clone(),
@@ -303,6 +335,51 @@ impl Host {
                 }
             }
             self.emit(serde_json::to_value(&event).expect("events serialize"));
+        }
+    }
+
+    /// Opens terminals that programs outside the canvas asked for. Requests wait until the UI is
+    /// connected, so none is taken while nothing can open it.
+    fn poll_launch_requests(&self, state: &mut State) {
+        if self.emitter().is_none() {
+            return;
+        }
+        let inbox = self.paths.launch_requests();
+        for taken in tc_core::launch::take_requests(&inbox, self.os) {
+            let request = taken.request.and_then(|request| {
+                if tc_core::dirs::is_directory(&request.cwd) {
+                    Ok(request)
+                } else {
+                    Err(Error::Invalid("Working directory is unavailable.".into()))
+                }
+            });
+            match (request, taken.id) {
+                (Ok(request), Some(id)) => {
+                    let mut event = json!({
+                        "type": "launch", "external": true, "request": id, "profile": request.profile,
+                        "title": request.title, "cwd": request.cwd, "command": request.command,
+                    });
+                    if let Some(parent) = &request.parent {
+                        event["parent"] = json!(parent);
+                    }
+                    state.launches.expect(
+                        id,
+                        crate::launches::Pending {
+                            inbox: inbox.clone(),
+                            reply: request.reply,
+                            log: request.log,
+                        },
+                    );
+                    self.emit(event);
+                }
+                (request, id) => {
+                    let error = request.err().map_or_else(String::new, |error| error.to_string());
+                    if let Some(id) = id {
+                        crate::launches::Launches::refuse(&inbox, &id, &error);
+                    }
+                    self.emit_error(None, format!("Could not open the requested terminal: {error}"));
+                }
+            }
         }
     }
 
@@ -449,6 +526,10 @@ impl Host {
                             .remember_card(field(payload, "card").unwrap_or(&Value::Null))
                             .map_err(message)?;
                         let raw = serde_json::to_value(&card).expect("cards serialize");
+                        // A terminal a program asked for logs its output from the first byte.
+                        if let Some(request) = field(payload, "launch").and_then(Value::as_str) {
+                            state.launches.begin_output(request, &card.id);
+                        }
                         let started = state.manager.start(
                             &raw,
                             field(payload, "cols"),
@@ -456,6 +537,9 @@ impl Host {
                             field(payload, "mode"),
                         );
                         host.dispatch(state);
+                        if started.is_err() {
+                            state.launches.forget_output(&card.id);
+                        }
                         let started = started.map_err(message)?;
                         let board = state.recovery.persist(None).map_err(message)?;
                         Ok::<_, String>((started, card.id, host.queue_save(host.paths.recovery(), &board, None)))
@@ -466,6 +550,13 @@ impl Host {
                     return Err(error);
                 }
                 Ok(json!(started))
+            }
+            "launch-result" => {
+                let (request, card, error) = crate::launches::parse_result(payload)?;
+                let answered = self
+                    .with_state(move |_, state| state.launches.answer(&request, card.as_deref(), error.as_deref()))
+                    .await;
+                Ok(json!({ "ok": answered }))
             }
             "stop" => {
                 if let Some(id) = field(payload, "id").and_then(Value::as_str) {

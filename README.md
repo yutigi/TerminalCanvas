@@ -75,6 +75,30 @@ Line styles and fonts other than the size choices are not configurable.
 
 On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by default. PowerShell cards start with a `RemoteSigned` execution policy for that shell only, so script shims such as `npm.ps1` run even when the system policy is `Restricted`. Policies set through Group Policy still take precedence, and no system setting is changed. Optional launch commands run inside PowerShell, except the plain shell launchers described below. Use `pwsh` as the launch command for PowerShell 7 if installed, or `cmd.exe` for Command Prompt. Other systems use the login shell selected by `SHELL`, falling back to Bash. macOS has been checked natively; Linux desktop behavior has not been validated.
 
+### Terminals opened by agents
+
+Any AI agent, harness, or script can open a terminal on the canvas, so an agent can hand its work
+over to a fresh session or start a helper without you opening the New terminal dialog. Inside a
+Terminal Canvas terminal, the new card opens beside that terminal, joined to it by an arrow, and
+starts immediately. Programs outside the canvas can ask the running app too; their card opens beside
+the card they name with `--parent`, or in view on its own. The caller gets the new card's ID, or why
+nothing opened, and with `--log` can read the new terminal's output as it runs.
+
+```bash
+# Inside a terminal: Bash, zsh, or Git Bash (Claude Code's Bash tool on Windows)
+"$TC_HOOK" new-terminal --profile codex --title "Review" --command 'codex "Review this branch"'
+```
+
+```powershell
+# Inside a terminal: PowerShell
+& $env:TC_HOOK new-terminal --title "API tests" --cwd ..\api --command "npm test" --log --json
+```
+
+Every terminal, including Command Prompt, has `TC_HOOK`, `TC_LAUNCH_DIR`, and `TC_CARD_ID` set. See
+[Opening terminals from agents and scripts](docs/agent-launch.md) for options, results, output logs,
+an instruction snippet for `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`, sandbox notes, and the security
+model. A new terminal does not inherit the requesting agent's sandbox.
+
 ### Live terminal folders
 
 A running card shows its shell's last reported current folder, including changes made with `cd`, `Set-Location`, or directory-stack commands. The full path is available on hover. Each terminal tracks its own folder. The last valid folder is saved for reopening and fresh shell starts; AI resumes use the captured session folder. An unavailable live directory leaves the last valid saved folder intact.

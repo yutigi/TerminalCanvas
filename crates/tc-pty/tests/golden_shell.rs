@@ -1,6 +1,7 @@
 //! The generated shell integration text matches the JavaScript host's output byte for byte
 //! (`tests/golden/shell/`), except for the intended hook changes: Bash runs `"$TC_HOOK"` directly,
-//! and Claude's hook runs `tc-hook record claude` instead of Electron as Node.
+//! Claude's hook runs `tc-hook record claude` instead of Electron as Node, and every terminal,
+//! including cmd, gets a launch request inbox named by `TC_LAUNCH_DIR`.
 
 use std::path::{Path, PathBuf};
 
@@ -133,10 +134,22 @@ fn integration_files_match_prepare_integration() {
         let hook = Path::new("/opt/terminal-canvas/tc-hook");
         let prepared = prepare(&folder, hook, platform, shell).unwrap();
         let expected = &case["result"];
-        let Some(integration) = prepared else {
-            assert!(expected.is_null(), "{shell}");
+        let integration = prepared.expect("every shell gets a launch inbox");
+        if expected.is_null() {
+            // The JavaScript host skipped cmd entirely; it now gets only the launch inbox.
+            assert_eq!((&integration.args, &integration.command), (&None, &None), "{shell}");
+            let env: Vec<&str> = integration.env.iter().map(|(name, _)| name.as_str()).collect();
+            assert_eq!(env, ["TC_HOOK", "TC_LAUNCH_DIR"], "{shell}");
+            let inbox = integration.launch_dir.clone().unwrap();
+            assert!(inbox.is_dir());
+            assert!(
+                !folder.exists() || std::fs::read_dir(&folder).unwrap().count() == 0,
+                "cmd writes no files"
+            );
+            integration.cleanup();
+            assert!(!inbox.exists());
             continue;
-        };
+        }
         let stem = integration
             .session_file
             .file_stem()
@@ -148,6 +161,7 @@ fn integration_files_match_prepare_integration() {
             .map(|entry| entry.unwrap().file_name().to_string_lossy()[stem.len()..].to_owned())
             .collect();
         files.sort();
+        // The launch request inbox is new in the Rust host; the JavaScript host had no such folder.
         assert_eq!(Value::from(files), expected["files"], "{shell}");
         let script = folder.join(format!(
             "{stem}{}",
@@ -176,8 +190,14 @@ fn integration_files_match_prepare_integration() {
             .map(|command| command.replace(&*script.to_string_lossy(), "{{SCRIPT}}"));
         assert_eq!(serde_json::to_value(command).unwrap(), expected["command"], "{shell}");
         let env: Vec<&str> = integration.env.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(env, ["TC_SESSION_FILE", "TC_HOOK"]);
+        assert_eq!(env, ["TC_SESSION_FILE", "TC_HOOK", "TC_LAUNCH_DIR"]);
         assert_eq!(integration.env[1].1, hook.to_string_lossy());
+        let launch_dir = integration
+            .launch_dir
+            .clone()
+            .expect("integrated shells accept launch requests");
+        assert_eq!(integration.env[2].1, launch_dir.to_string_lossy());
+        assert!(launch_dir.is_dir());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -185,6 +205,10 @@ fn integration_files_match_prepare_integration() {
                 assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
             }
             assert_eq!(std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777, 0o700);
+            assert_eq!(
+                std::fs::metadata(&launch_dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
         }
         std::fs::write(&integration.session_file, "{}").unwrap();
         integration.cleanup();
@@ -193,6 +217,7 @@ fn integration_files_match_prepare_integration() {
             0,
             "cleanup removes every file"
         );
+        assert!(!launch_dir.exists(), "cleanup removes the launch inbox");
         std::fs::remove_dir(&folder).unwrap();
     }
 }

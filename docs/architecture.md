@@ -46,6 +46,13 @@ PowerShell/cmd/Bash integration supplies directories/readiness and validated AI 
 Unix directory polling supports other shells. Claude hook files are polled twice per second and
 read again on exit/stop/save/close; Codex output is considered only during a recognized launch.
 The native `tc-hook` sidecar sits beside the executable and atomically records bounded metadata.
+`tc-hook new-terminal` writes validated launch requests into an owner-only inbox: the terminal's
+own `TC_LAUNCH_DIR` (in the temporary folder) or, from outside the canvas, the app's
+`launch-requests` folder, which is emptied at startup. The same poll takes at most four per inbox,
+removes each file, validates it again, and sends a `launch` event; the renderer creates and starts
+the card beside its parent with an arrow, or in view when there is no parent (`docs/agent-launch.md`).
+The renderer reports each outcome with `launch-result`; the host answers the request in its inbox
+and, for requests that ask, logs the new terminal's output there as plain text from its first byte.
 
 ## UI and security boundary
 

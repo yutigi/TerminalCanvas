@@ -31,6 +31,7 @@ const COMMANDS: &[&str] = &[
     "open_link",
     "clipboard_read",
     "clipboard_write",
+    "launch_result",
     "input",
     "resize",
     "ack",

@@ -16,6 +16,7 @@ use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 use serde_json::Value;
 use tc_core::js::{trim, truthy, utf16_len};
+use tc_core::launch::{LaunchRequest, take_requests, write_result};
 use tc_core::osc::{DirectoryReports, Report};
 use tc_core::recovery::CardMetadata;
 use tc_core::session::{Launch, LaunchToken, MetadataEvent, MetadataParser, MetadataPatch, Provider, session_metadata};
@@ -126,6 +127,14 @@ pub enum TerminalEvent {
         id: String,
         message: String,
     },
+    /// A program in terminal `id` asked for a new terminal; the UI creates it next to `id`. The
+    /// host answers request `request_id` in `inbox` once the UI reports the outcome.
+    Launch {
+        id: String,
+        request_id: String,
+        inbox: std::path::PathBuf,
+        request: LaunchRequest,
+    },
 }
 
 impl Serialize for TerminalEvent {
@@ -163,6 +172,20 @@ impl Serialize for TerminalEvent {
                 map.serialize_entry("type", "error")?;
                 map.serialize_entry("id", id)?;
                 map.serialize_entry("message", message)?;
+            }
+            TerminalEvent::Launch {
+                id,
+                request_id,
+                request,
+                ..
+            } => {
+                map.serialize_entry("type", "launch")?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("request", request_id)?;
+                map.serialize_entry("profile", &request.profile)?;
+                map.serialize_entry("title", &request.title)?;
+                map.serialize_entry("cwd", &request.cwd)?;
+                map.serialize_entry("command", &request.command)?;
             }
         }
         map.end()
@@ -466,6 +489,8 @@ impl TerminalManager {
         env.insert("TERM".into(), "xterm-256color".into());
         env.insert("COLORTERM".into(), "truecolor".into());
         env.insert("TERMINAL_CANVAS".into(), "1".into());
+        // Lets a program outside this terminal name it as the parent of a new terminal.
+        env.insert(tc_core::launch::CARD_ENV.into(), card.id.clone());
         env.remove("ELECTRON_RUN_AS_NODE");
         if windows {
             let prompt = env
@@ -656,6 +681,8 @@ impl TerminalManager {
             return;
         }
         self.poll_metadata(&key.id);
+        // A request made just before the shell ended still opens its terminal.
+        self.poll_launches(&key.id);
         if let Some(session) = self.sessions.remove(&key.id) {
             dispose(session);
         }
@@ -709,11 +736,58 @@ impl TerminalManager {
         }
     }
 
-    /// Checks every integrated terminal's session file. Call every [`HOOK_POLL_INTERVAL`].
+    /// Checks every integrated terminal's session file and launch requests. Call every
+    /// [`HOOK_POLL_INTERVAL`].
     pub fn poll_hooks(&mut self) {
         let ids: Vec<String> = self.sessions.keys().cloned().collect();
         for id in ids {
             self.poll_metadata(&id);
+            self.poll_launches(&id);
+        }
+    }
+
+    /// Takes the terminal's pending launch requests. A refused request is reported on the
+    /// requesting terminal; an accepted one becomes a [`TerminalEvent::Launch`].
+    fn poll_launches(&mut self, id: &str) {
+        let Some(inbox) = self
+            .sessions
+            .get(id)
+            .and_then(|session| session.integration.as_ref())
+            .and_then(|integration| integration.launch_dir.clone())
+        else {
+            return;
+        };
+        for taken in take_requests(&inbox, self.config.platform) {
+            let request = taken.request.and_then(|request| {
+                if is_directory(&request.cwd) {
+                    Ok(request)
+                } else {
+                    Err(Error::Invalid("Working directory is unavailable.".into()))
+                }
+            });
+            let event = match (request, taken.id) {
+                (Ok(request), Some(request_id)) => TerminalEvent::Launch {
+                    id: id.to_owned(),
+                    request_id,
+                    inbox: inbox.clone(),
+                    request,
+                },
+                (request, request_id) => {
+                    let error = request.err().map_or_else(String::new, |error| error.to_string());
+                    if let Some(request_id) = request_id {
+                        write_result(
+                            &inbox,
+                            &request_id,
+                            &serde_json::json!({ "status": "refused", "error": error }),
+                        );
+                    }
+                    TerminalEvent::Error {
+                        id: id.to_owned(),
+                        message: format!("Could not open the requested terminal: {error}"),
+                    }
+                }
+            };
+            self.emit(event);
         }
     }
 
