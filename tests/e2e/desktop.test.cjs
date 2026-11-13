@@ -129,10 +129,11 @@ test('native first-click typing reaches xterm and shell directory tracking follo
     await screenshot(h.page, 'native-input');
 });
 
-test('64000-character input keeps order, output flood pauses, and Stop kills the process tree', windows, async t => {
+test('multi-message paste input keeps order, output flood pauses, and Stop kills the process tree', windows, async t => {
     const h = await launch({ clean: true }); t.after(() => h.dispose());
     const { card, pids } = await ioFixture(h);
-    const paste = 'p'.repeat(64000), typed = 'typed-after-paste', unicode = 'native UTF-8 ไทย 工作 🚀';
+    // Longer than one input message, with a surrogate pair across the first piece boundary.
+    const paste = 'p'.repeat(65535) + '🚀' + 'q'.repeat(134463), typed = 'typed-after-paste', unicode = 'native UTF-8 ไทย 工作 🚀';
     await h.page.evaluate(({ id, paste, typed, unicode }) => {
         window.terminalCanvas.input(id, paste + '\r');
         window.terminalCanvas.input(id, typed + '\r');

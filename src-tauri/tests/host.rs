@@ -201,12 +201,16 @@ async fn clipboard_limits_count_utf16_and_os_failures_reach_the_renderer() {
         h.host.command("clipboard-read", None).await.unwrap(),
         json!({"text":"first\nsecond"})
     );
-    *h.platform.clipboard.lock().unwrap() = "😀".repeat(32000);
-    assert!(h.host.command("clipboard-read", None).await.is_ok());
+    // Copy and paste share one limit, so the largest selection the app copies can be pasted back.
+    *h.platform.clipboard.lock().unwrap() = "😀".repeat(524288);
+    assert_eq!(
+        h.host.command("clipboard-read", None).await.unwrap()["text"],
+        "😀".repeat(524288)
+    );
     h.platform.clipboard.lock().unwrap().push('x');
     assert_eq!(
         h.host.command("clipboard-read", None).await.unwrap_err(),
-        "Paste is limited to 64,000 characters."
+        "Paste exceeds 1 MB."
     );
     for text in [Value::Null, json!(123), json!("😀".repeat(524289))] {
         assert_eq!(
@@ -398,6 +402,22 @@ async fn input_reorders_a_large_paste_and_typing_without_repeating_duplicates() 
     assert_eq!(
         h.launches.lock().unwrap()[0].2.lock().unwrap().writes.last().unwrap(),
         "after error"
+    );
+    // The bridge splits a paste longer than one message; the pieces can arrive in any order.
+    let pieces = ["a".repeat(65536), "b".repeat(65536), "c".repeat(100)];
+    h.host.input(id, "typed after".into(), 7);
+    h.host.input(id, pieces[2].clone(), 6);
+    h.host.input(id, pieces[0].clone(), 4);
+    h.host.input(id, pieces[1].clone(), 5);
+    h.host.running().await;
+    assert_eq!(
+        h.launches.lock().unwrap()[0].2.lock().unwrap().writes[3..],
+        [
+            pieces[0].clone(),
+            pieces[1].clone(),
+            pieces[2].clone(),
+            "typed after".into()
+        ]
     );
     h.host.command("close", None).await.unwrap();
 }

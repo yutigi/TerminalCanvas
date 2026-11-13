@@ -32,6 +32,12 @@ use tc_pty::{SessionEvent, SessionKey, TerminalEvent, TerminalManager};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
+/// The most text one copy or paste carries, in UTF-16 units. Copy and paste share it, so any
+/// copied selection can be pasted back. The bridge sends a longer paste in ordered pieces, and
+/// input typed afterward, Ctrl+C included, follows the whole paste. The limit bounds that wait,
+/// and the unread paste held in memory, when a program reads its input slowly.
+const CLIPBOARD_UNITS: usize = 1024 * 1024;
+
 /// The file dialogs the host shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
@@ -461,14 +467,14 @@ impl Host {
             }
             "clipboard-read" => {
                 let text = self.platform.read_clipboard().await?;
-                if utf16_len(&text) > 64_000 {
-                    return Err("Paste is limited to 64,000 characters.".into());
+                if utf16_len(&text) > CLIPBOARD_UNITS {
+                    return Err("Paste exceeds 1 MB.".into());
                 }
                 Ok(json!({ "text": text }))
             }
             "clipboard-write" => {
                 let Some(Value::String(text)) =
-                    payload.filter(|text| text.as_str().is_some_and(|t| utf16_len(t) <= 1024 * 1024))
+                    payload.filter(|text| text.as_str().is_some_and(|t| utf16_len(t) <= CLIPBOARD_UNITS))
                 else {
                     return Err("Selection exceeds 1 MB.".into());
                 };

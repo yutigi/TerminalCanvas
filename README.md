@@ -51,7 +51,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 
 On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text is selected. Windows behavior is tested with real native key events, clipboard IPC, and PowerShell. On macOS, these shortcuts were checked by hand in the native app. Linux desktop behavior has not been validated.
 
-Paste accepts plain text up to 64,000 characters and uses xterm to normalize line endings and respect bracketed-paste mode. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
+Paste accepts plain text up to 1 MB (1,048,576 UTF-16 code units), the same limit as copying, and uses xterm to normalize line endings and respect bracketed-paste mode. Long pastes are sent in ordered pieces, and keys pressed afterward, Ctrl + C included, follow the whole paste. The limit keeps that wait bounded when a program reads its input slowly; the card's stop control ends a program that stops reading. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
 
 ![The in-app shortcut guide explaining selection-aware copy, paste, and interrupt.](docs/images/terminal-clipboard-shortcuts.png)
 
