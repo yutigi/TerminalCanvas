@@ -18,7 +18,7 @@ pub struct Integration {
     pub args: Option<Vec<String>>,
     /// A command to type first, after login profiles have run (Bash).
     pub command: Option<String>,
-    /// Where `tc-hook record claude` writes the session the Claude hook reported.
+    /// Where `tc-hook record <provider>` writes the session its SessionStart hook reported.
     pub session_file: PathBuf,
     /// The private folder `tc-hook new-terminal` writes launch requests to, named by
     /// `TC_LAUNCH_DIR` (see [`tc_core::launch`]).

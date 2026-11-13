@@ -603,29 +603,31 @@ fn manual_launches_keep_ids_and_folders_separate_and_failed_resume_keeps_metadat
 
 #[test]
 fn shutdown_snapshots_read_the_final_hook_update_and_reject_other_launches() {
-    let folder = tempdir("manager");
-    let file = folder.join("metadata.json");
-    let session_file = file.clone();
-    let integrations: Integrations =
-        Box::new(move |_, _| Ok(Some(Integration::new(None, None, session_file.clone(), Vec::new()))));
-    let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
-    let card = card(json!({}));
-    h.start(&card).unwrap();
-    h.data(
-        0,
-        &metadata_event(json!({ "type": "launch", "provider": "claude", "token": SAVED_ID, "cwd": cwd() })),
-    );
-    let mut saved = saved_session("claude");
-    saved["token"] = json!("different-launch");
-    std::fs::write(&file, saved.to_string()).unwrap();
-    assert_eq!(h.snapshot(id(&card))["session"], Value::Null);
-    saved["token"] = json!(SAVED_ID);
-    std::fs::write(&file, saved.to_string()).unwrap();
-    h.manager.stop_all();
-    assert_eq!(h.snapshot(id(&card))["session"]["provider"], "claude");
-    assert!(!file.exists(), "stopping removes the integration files");
-    assert_eq!(h.manager.running(), 0);
-    let _ = std::fs::remove_dir_all(folder);
+    for provider in ["claude", "codex"] {
+        let folder = tempdir("manager");
+        let file = folder.join("metadata.json");
+        let session_file = file.clone();
+        let integrations: Integrations =
+            Box::new(move |_, _| Ok(Some(Integration::new(None, None, session_file.clone(), Vec::new()))));
+        let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
+        let card = card(json!({}));
+        h.start(&card).unwrap();
+        h.data(
+            0,
+            &metadata_event(json!({ "type": "launch", "provider": provider, "token": SAVED_ID, "cwd": cwd() })),
+        );
+        let mut saved = saved_session(provider);
+        saved["token"] = json!("different-launch");
+        std::fs::write(&file, saved.to_string()).unwrap();
+        assert_eq!(h.snapshot(id(&card))["session"], Value::Null);
+        saved["token"] = json!(SAVED_ID);
+        std::fs::write(&file, saved.to_string()).unwrap();
+        h.manager.stop_all();
+        assert_eq!(h.snapshot(id(&card))["session"]["provider"], provider);
+        assert!(!file.exists(), "stopping removes the integration files");
+        assert_eq!(h.manager.running(), 0);
+        let _ = std::fs::remove_dir_all(folder);
+    }
 }
 
 #[test]

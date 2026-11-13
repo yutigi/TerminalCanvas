@@ -1,7 +1,7 @@
 //! `tc-hook`, the sidecar the shell integration runs, from `src/session-hook.cjs`.
 //!
 //! ```text
-//! tc-hook record <provider>                  Claude's SessionStart hook: read the hook input on stdin
+//! tc-hook record <provider>                  Claude/Codex SessionStart hook: read the input on stdin
 //!                                            and record the session for the host
 //! tc-hook emit launch <provider> <session>   report an AI CLI launch to the host (OSC 633)
 //! tc-hook emit end <exit code>               report that it ended

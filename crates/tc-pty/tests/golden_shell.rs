@@ -1,7 +1,8 @@
 //! The generated shell integration text matches the JavaScript host's output byte for byte
 //! (`tests/golden/shell/`), except for the intended hook changes: Bash runs `"$TC_HOOK"` directly,
 //! Claude's hook runs `tc-hook record claude` instead of Electron as Node, and every terminal,
-//! including cmd, gets a launch request inbox named by `TC_LAUNCH_DIR`.
+//! including cmd, gets a launch request inbox named by `TC_LAUNCH_DIR`. Codex also receives a
+//! launch-only SessionStart hook, without changing the frozen Node fixtures.
 
 use std::path::{Path, PathBuf};
 
@@ -9,8 +10,8 @@ use serde_json::Value;
 use tc_core::Platform;
 use tc_pty::integration::prepare;
 use tc_pty::shell::{
-    POWERSHELL_BOOTSTRAP, bash_source, claude_hook_command, claude_settings, encode_command, powershell_args,
-    powershell_source,
+    POWERSHELL_BOOTSTRAP, bash_source, claude_hook_command, claude_settings, codex_hook_config, encode_command,
+    powershell_args, powershell_source,
 };
 
 fn golden(name: &str) -> String {
@@ -30,19 +31,22 @@ const UNIX_SETTINGS: &str =
 const JS_BASH_HOOK: &str = "ELECTRON_RUN_AS_NODE=1 \"$TC_NODE\" \"$TC_HOOK\" emit";
 
 #[test]
-fn powershell_text_is_unchanged() {
+fn powershell_text_adds_only_the_codex_start_hook() {
     assert_eq!(POWERSHELL_BOOTSTRAP, golden("powershell-bootstrap.ps1"));
     let args: Value = powershell_args(POWERSHELL_BOOTSTRAP).into_iter().collect();
     assert_eq!(args, golden_json("powershell-args.json"));
-    assert_eq!(powershell_source(WINDOWS_SETTINGS), golden("powershell-source.ps1"));
+    assert_eq!(
+        powershell_source(WINDOWS_SETTINGS),
+        with_codex_hook(golden("powershell-source.ps1"), true)
+    );
     assert_eq!(
         powershell_source("C:\\Users\\O'Brien\\it's.settings.json"),
-        golden("powershell-source-quoted.ps1")
+        with_codex_hook(golden("powershell-source-quoted.ps1"), true)
     );
 }
 
 #[test]
-fn bash_text_differs_only_in_how_it_runs_the_hook() {
+fn bash_text_adds_the_codex_start_hook_and_runs_native_hooks() {
     for (settings, file) in [
         (UNIX_SETTINGS, "bash-source.bash"),
         ("/home/o'brien/it's.settings.json", "bash-source-quoted.bash"),
@@ -51,8 +55,38 @@ fn bash_text_differs_only_in_how_it_runs_the_hook() {
         assert_eq!(javascript.matches(JS_BASH_HOOK).count(), 2);
         assert_eq!(
             bash_source(settings),
-            javascript.replace(JS_BASH_HOOK, "\"$TC_HOOK\" emit")
+            with_codex_hook(javascript.replace(JS_BASH_HOOK, "\"$TC_HOOK\" emit"), false)
         );
+    }
+}
+
+/// Keep the frozen Node oracle intact and make the new launch-only behavior explicit.
+fn with_codex_hook(source: String, windows: bool) -> String {
+    if windows {
+        source
+            .replace("    $extra = @()", "    $prefix = @()\n    $extra = @()")
+            .replace(
+                "    __tc_emit @{ type = 'launch';",
+                &format!(
+                    "    if ($provider -eq 'codex') {{ $prefix = @('-c', {}) }}\n    __tc_emit @{{ type = 'launch';",
+                    tc_pty::shell::ps_quote(&codex_hook_config(true))
+                ),
+            )
+            .replace(
+                "& $executable @arguments @extra",
+                "& $executable @prefix @arguments @extra",
+            )
+    } else {
+        source
+            .replace("local extra=()", "local prefix=() extra=()")
+            .replace(
+                "    \"$TC_HOOK\" emit launch",
+                &format!(
+                    "    if [ \"$provider\" = codex ]; then prefix=(-c {}); fi\n    \"$TC_HOOK\" emit launch",
+                    tc_pty::shell::sh_quote(&codex_hook_config(false))
+                ),
+            )
+            .replace("\"$executable\" \"$@\"", "\"$executable\" \"${prefix[@]}\" \"$@\"")
     }
 }
 

@@ -225,6 +225,68 @@ fn launches(stdout: &[u8], platform: Platform) -> (Vec<Value>, Vec<Value>) {
 
 const ID: &str = "12345678-1234-4321-9876-123456789abc";
 
+#[test]
+fn codex_start_hook_records_only_recovery_metadata_before_exit() {
+    let folder = temp_folder("codex-start");
+    let file = folder.join("session.json");
+    let config = tc_pty::shell::codex_hook_config(cfg!(windows));
+    let command = config
+        .strip_prefix("hooks.SessionStart=[{hooks=[{type='command',command='")
+        .unwrap()
+        .strip_suffix("',timeout=5}]}]")
+        .unwrap();
+    let mut shell = if cfg!(windows) {
+        let mut shell = Command::new("cmd.exe");
+        shell.args(["/d", "/s", "/c", command]);
+        shell
+    } else {
+        let mut shell = Command::new("/bin/sh");
+        shell.args(["-c", command]);
+        shell
+    };
+    let cwd = folder.join("ไทย 工作 🚀");
+    let payload = json!({ "hook_event_name": "SessionStart", "session_id": ID.to_uppercase(),
+        "cwd": cwd, "source": "startup", "transcript_path": "MUST_NOT_BE_SAVED", "model": "private" });
+    let mut child = shell
+        .env("TC_HOOK", dunce::simplified(Path::new(HOOK)))
+        .env("TC_LAUNCH_TOKEN", ID)
+        .env("TC_SESSION_FILE", &file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stdout.is_empty(), "hooks must not inject model context");
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        json!({ "provider": "codex", "sessionId": ID, "cwd": cwd, "token": ID })
+    );
+    for event in ["SessionEnd", "Stop", "SubagentStart"] {
+        let mut invalid = payload.clone();
+        invalid["hook_event_name"] = event.into();
+        invalid["session_id"] = "87654321-4321-4321-9876-123456789abc".into();
+        assert!(
+            record(&folder, &invalid.to_string(), "codex", Some(ID), Some(&file))
+                .status
+                .success()
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&std::fs::read_to_string(&file).unwrap()).unwrap(),
+            saved
+        );
+    }
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn bash_wrappers_report_manual_launches_through_tc_hook() {
@@ -391,7 +453,7 @@ mod windows {
         let settings = folder.join("settings with ' quote.json");
         let fake = tc_pty::shell::ps_quote(&folder.join("claude.cmd").to_string_lossy());
         let source = format!(
-            "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\nif ((Get-Command claude -CommandType Application -ErrorAction Stop).Source -ine {fake}) {{ throw 'The controlled Claude stand-in did not resolve.' }}\n{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nprompt\n",
+            "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\nif ((Get-Command claude -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source -ine {fake}) {{ throw 'The controlled Claude stand-in did not resolve.' }}\n{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nprompt\n",
             tc_pty::shell::powershell_source(&settings.to_string_lossy())
         );
         let output = powershell("powershell.exe", &source, &[], Some(&folder)).unwrap();
