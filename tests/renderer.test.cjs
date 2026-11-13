@@ -1040,10 +1040,10 @@ test('pending paste cannot write to a stopped or disposed terminal and clipboard
         await flush();
         if (state === 'disposed') vm.runInContext('dispose(workspace.cards[0].id)', context);
         else vm.runInContext(`sessions.get(workspace.cards[0].id).status = '${state}'`, context);
-        complete(state === 'running' ? { error: 'Paste is limited to 64,000 characters.' } : { text: 'too late' });
+        complete(state === 'running' ? { error: 'Paste exceeds 1 MB.' } : { text: 'too late' });
         await flush();
         assert.deepEqual(terminal.pasted, []);
-        if (state === 'running') assert.equal(elements.get('#toast').textContent, 'Paste is limited to 64,000 characters.');
+        if (state === 'running') assert.equal(elements.get('#toast').textContent, 'Paste exceeds 1 MB.');
         else assert.equal(elements.get('#toast').hidden, true);
     }
 });

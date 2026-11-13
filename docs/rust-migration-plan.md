@@ -187,7 +187,7 @@ Done when:
 - **Image import.** `import-image` receives the image as a raw IPC body, not as a JSON number array.
 - **OS services.**
     - Dialogs use tauri-plugin-dialog.
-    - Clipboard uses arboard or tauri-plugin-clipboard-manager, with the 64,000-character paste limit and the 1 MB copy limit kept.
+    - Clipboard uses arboard or tauri-plugin-clipboard-manager, with the 64,000-character paste limit and the 1 MB copy limit kept (paste has since been raised to the 1 MB copy limit and is sent in ordered input pieces).
     - Links open through tauri-plugin-opener after the existing validation.
 - **Image protocol.** Serve `tc-asset` through `register_asynchronous_uri_scheme_protocol`, with the same name check and the `nosniff` and `no-cache` headers.
 - **Lifecycle.**
@@ -286,7 +286,7 @@ There are 182 `test()` call sites today; the README reports 189 tests run.
 
 ## Parity details that are easy to get wrong
 
-- **String lengths.** The JS limits count UTF-16 units: titles 100, text 10,000, paste 64,000, input 65,536. Use `encode_utf16().count()`, not `len()`.
+- **String lengths.** The JS limits count UTF-16 units: titles 100, text 10,000, paste 64,000 (since raised to 1,048,576), input 65,536. Use `encode_utf16().count()`, not `len()`.
 - **Trimming.** JS `trim()` also removes U+FEFF; Rust's `trim()` does not.
 - **Numbers.** serde_json writes `48.0` where JS writes `48`. Both parse to the same value, but golden tests should compare parsed values, or the serializer should write whole numbers without `.0`.
 - **Field order and omitted defaults.** Keep the order `version, name, camera, cards, items`, and keep leaving out `color`, `fontSize`, and empty `groups`.
