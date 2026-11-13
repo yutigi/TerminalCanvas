@@ -610,16 +610,21 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
         "the answer is consumed"
     );
 
-    // Opening can still fail after the app took the request, for example at the terminal limit.
+    // Opening can still fail after the app took the request, for example if its folder disappeared.
     let host = app(Some(
-        json!({ "status": "failed", "error": "A workspace can contain up to 24 terminals." }),
+        json!({ "status": "failed", "error": "Working directory is unavailable." }),
     ));
     let failed = run(&["--json"]);
     host.join().unwrap().unwrap();
     assert_eq!(failed.status.code(), Some(2));
     let report: Value = serde_json::from_slice(&failed.stdout).unwrap();
     assert_eq!(report["status"], "failed");
-    assert!(report["error"].as_str().unwrap().contains("up to 24 terminals"));
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("Working directory is unavailable.")
+    );
 
     // Taken but never answered: the caller learns a terminal may still open.
     let host = app(None);

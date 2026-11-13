@@ -334,7 +334,7 @@ mod tests {
 
         launches.expect("req-2".into(), pending(true, false));
         launches.begin_output("req-2", "card-2", None);
-        assert!(launches.answer("req-2", None, None, Some("A workspace can contain up to 24 terminals.")));
+        assert!(launches.answer("req-2", None, None, Some("Working directory is unavailable.")));
         let failed: Value =
             serde_json::from_str(&std::fs::read_to_string(inbox.join("req-2.result")).unwrap()).unwrap();
         assert_eq!(failed["status"], "failed");

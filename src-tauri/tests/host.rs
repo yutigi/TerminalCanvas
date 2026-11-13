@@ -333,6 +333,32 @@ async fn close_flushes_host_metadata_over_stale_layout_and_reopens_stopped() {
 }
 
 #[tokio::test]
+async fn more_than_24_terminals_start_save_and_restore_stopped() {
+    let h = Harness::new();
+    h.host.command("initialize", None).await.unwrap();
+    let mut board = json!(create_workspace());
+    for _ in 0..32 {
+        let card = h.start().await;
+        board["cards"].as_array_mut().unwrap().push(card);
+    }
+    assert_eq!(h.host.running().await, 32);
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    assert_eq!(h.read_saved(), board);
+    h.host.command("close", Some(&board)).await.unwrap();
+    assert_eq!(h.host.running().await, 0);
+    assert!(
+        h.launches
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, _, process)| process.lock().unwrap().killed)
+    );
+    let restored = h.host.command("initialize", None).await.unwrap();
+    assert_eq!(restored["workspace"], board);
+    assert_eq!(h.launches.lock().unwrap().len(), 32, "restoring never starts processes");
+}
+
+#[tokio::test]
 async fn renderer_crashes_preserve_the_last_host_known_workspace() {
     let h = Harness::new();
     h.host.command("initialize", None).await.unwrap();

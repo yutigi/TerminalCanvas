@@ -20,7 +20,7 @@ use tc_core::launch::{LaunchRequest, take_requests, write_result};
 use tc_core::osc::{DirectoryReports, Report};
 use tc_core::recovery::CardMetadata;
 use tc_core::session::{Launch, LaunchToken, MetadataEvent, MetadataParser, MetadataPatch, Provider, session_metadata};
-use tc_core::workspace::{VERSION, limits, validate_card};
+use tc_core::workspace::{VERSION, validate_card};
 use tc_core::{Error, Platform, Result};
 
 use crate::integration::Integration;
@@ -419,9 +419,6 @@ impl TerminalManager {
         let (cols, rows) = dimensions(cols.unwrap_or(&Value::from(80)), rows.unwrap_or(&Value::from(24)))?;
         if self.sessions.contains_key(&card.id) {
             return invalid("This terminal is already running.");
-        }
-        if self.sessions.len() >= limits::CARDS {
-            return invalid("Terminal limit reached.");
         }
         let platform = self.config.platform;
         let windows = platform.is_windows();

@@ -1220,12 +1220,24 @@ test('Duplicate shortcut targets the focused terminal, preserves Ctrl+D, and ign
     assert.deepEqual(json(context, 'duplicated'), [board.cards[1].id]);
 });
 
-test('Duplicate enforces the card limit and ignores repeats or sources removed during lookup', async () => {
-    const full = createWorkspace(); full.cards = Array.from({ length: 24 }, () => createCard());
-    const limited = await boot(full);
-    await vm.runInContext('duplicateTerminal(workspace.cards[0])', limited.context);
-    assert.deepEqual(limited.calls.map(c => c.action), ['initialize']);
-    assert.match(limited.elements.get('#toast').textContent, /24/);
+test('launching and duplicating terminals can exceed 24 cards', async () => {
+    const board = createWorkspace(); board.cards = Array.from({ length: 24 }, () => createCard());
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) }
+        : action === 'duplicate-directory' ? { cwd: '/repo' } : null;
+    const { context, calls, elements } = await boot(board, { respond, terminals: true });
+    vm.runInContext('openLaunch("shell")', context);
+    assert.equal(elements.get('#launch-dialog').open, true);
+    elements.get('#cwd').value = '/repo';
+    elements.get('#launch-form').onsubmit({ preventDefault() {} });
+    await flush();
+    assert.equal(json(context, 'workspace.cards.length'), 25);
+    assert.equal(elements.get('#launch-dialog').open, false);
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    assert.equal(json(context, 'workspace.cards.length'), 26);
+    assert.deepEqual(calls.filter(c => c.action === 'start').map(c => c.payload.card.id), json(context, 'workspace.cards.slice(24).map(c => c.id)'));
+});
+
+test('Duplicate ignores repeats or sources removed during lookup', async () => {
     const board = createWorkspace(); board.cards.push(createCard());
     const { context, bridge, calls } = await boot(board);
     let complete;
@@ -1315,14 +1327,21 @@ test('a terminal request opens a started card beside its parent, joined by an un
     assert.equal(calls.filter(c => c.action === 'create-card').length, 1, 'requests from closed terminals are dropped');
 });
 
-test('terminal requests respect the terminal limit', async () => {
+test('internal and external terminal requests can exceed 24 cards', async () => {
     const workspace = createWorkspace();
     for (let index = 0; index < 24; index++) workspace.cards.push(createCard({ x: index * 700, y: 0 }));
-    const { context, calls, elements, bridge } = await boot(workspace);
-    bridge.event({ type: 'launch', id: workspace.cards[0].id, profile: 'shell', title: 'Overflow', cwd: '/repo', command: '' });
-    await vm.runInContext('terminalRequests', context);
-    assert.equal(calls.some(c => c.action === 'create-card'), false);
-    assert.match(elements.get('#toast').textContent, /up to 24 terminals/);
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null;
+    const { context, calls, bridge } = await boot(workspace, { respond, terminals: true });
+    for (const external of [false, true]) {
+        const request = external ? 'req-external' : 'req-internal';
+        bridge.event({ type: 'launch', id: workspace.cards[0].id, parent: workspace.cards[0].id, external, request, profile: 'shell', title: 'Worker', cwd: '/repo', command: '' });
+        await vm.runInContext('terminalRequests', context);
+        const child = json(context, 'workspace.cards').at(-1);
+        assert.deepEqual(structuredClone(calls.filter(c => c.action === 'launch-result').at(-1).payload), { request, card: child.id, parent: workspace.cards[0].id });
+        assert.equal(calls.filter(c => c.action === 'start').at(-1).payload.card.id, child.id);
+    }
+    assert.equal(json(context, 'workspace.cards.length'), 26);
+    assert.equal(calls.filter(c => c.action === 'create-card').length, 2);
 });
 
 test('programs outside the canvas open terminals in view, beside a named parent when it exists', async () => {
@@ -1403,10 +1422,13 @@ test('every terminal request reports its card or why nothing opened, and starts 
     assert.deepEqual(results().at(-1), { request: 'req-closed', error: 'The terminal that asked for a new terminal has closed.' });
 
     for (let index = workspace.cards.length; vm.runInContext('workspace.cards.length', context) < 24; index++) {
-        vm.runInContext(`workspace.cards.push(${JSON.stringify(createCard({ x: 5000 + index * 700 }))})`, context);
+        vm.runInContext(`{ const card = ${JSON.stringify(createCard({ x: 5000 + index * 700 }))}; workspace.cards.push(card); mount(card); }`, context);
     }
-    bridge.event(launch({ request: 'req-full' }));
+    failStart = false;
+    bridge.event(launch({ request: 'req-beyond-24' }));
     await flush();
-    assert.match(results().at(-1).error, /up to 24 terminals/);
+    const beyond = json(context, 'workspace.cards').at(-1);
+    assert.deepEqual(results().at(-1), { request: 'req-beyond-24', card: beyond.id, parent: parent.id });
+    assert.equal(json(context, 'workspace.cards.length'), 25);
     assert.equal(results().length, 4, 'one report per request');
 });

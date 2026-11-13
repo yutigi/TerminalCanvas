@@ -502,14 +502,22 @@ fn rejects_duplicate_starts_bad_dimensions_large_input_and_missing_folders() {
 }
 
 #[test]
-fn the_terminal_limit_is_24() {
+fn more_than_24_terminals_can_run_and_stop() {
     let mut h = harness();
-    for _ in 0..24 {
+    for _ in 0..32 {
         h.start(&card(json!({}))).unwrap();
     }
-    assert_eq!(
-        h.start(&card(json!({}))).unwrap_err().to_string(),
-        "Terminal limit reached."
+    assert_eq!(h.manager.running(), 32);
+    assert_eq!(h.launches(), 32);
+    h.manager.stop_all();
+    assert_eq!(h.manager.running(), 0);
+    assert!(
+        h.state
+            .lock()
+            .unwrap()
+            .processes
+            .iter()
+            .all(|process| process.lock().unwrap().killed)
     );
 }
 

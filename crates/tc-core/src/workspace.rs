@@ -20,7 +20,6 @@ use crate::{Result, invalid};
 pub const VERSION: u32 = 3;
 
 pub mod limits {
-    pub const CARDS: usize = 24;
     pub const ITEMS: usize = 1000;
     /// The largest workspace file the host reads.
     pub const BYTES: u64 = 64 * 1024 * 1024;
@@ -620,9 +619,7 @@ pub fn validate_workspace(raw: &Value) -> Result<Workspace> {
     let version = field(Some(raw), "version")
         .and_then(Value::as_f64)
         .filter(|v| [1.0, 2.0, 3.0].contains(v));
-    let cards = field(Some(raw), "cards")
-        .and_then(Value::as_array)
-        .filter(|cards| cards.len() <= limits::CARDS);
+    let cards = field(Some(raw), "cards").and_then(Value::as_array);
     let (Some(version), Some(raw_cards)) = (version, cards) else {
         return invalid("Unsupported workspace format or too many terminals.");
     };

@@ -619,7 +619,6 @@ viewport.addEventListener('wheel', event => {
 }, { passive: false });
 async function duplicateTerminal(source) {
     if (!ready || duplicateBusy || document.querySelector('dialog[open]')) return;
-    if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
     duplicateBusy = true;
     try {
         const result = await invoke('duplicate-directory', source);
@@ -631,10 +630,8 @@ async function duplicateTerminal(source) {
             $('#launch-error').hidden = false;
             return;
         }
-        if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
         const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
-        if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
         await start(card);
@@ -666,10 +663,6 @@ async function openRequestedTerminal(event) {
     const closed = 'The terminal that asked for a new terminal has closed.';
     if (!event.external && !parent) throw new Error(closed);
     const requester = () => parent?.title || 'A program';
-    const ensureRoom = () => {
-        if (workspace.cards.length >= 24) throw new Error(`${requester()} asked for a new terminal, but a workspace can contain up to 24 terminals.`);
-    };
-    ensureRoom();
     await whenBoardIdle();
     const size = { w: 660, h: 430 };
     const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
@@ -679,7 +672,6 @@ async function openRequestedTerminal(event) {
         if (!event.external) throw new Error(closed);
         parent = null;
     }
-    ensureRoom();
     await whenBoardIdle();
     workspace.cards.push(card); mount(card);
     if (parent && workspace.items.length < ITEM_LIMIT) {
@@ -696,7 +688,6 @@ async function openRequestedTerminal(event) {
 }
 function openLaunch(profileId = 'shell') {
     if (!ready || document.querySelector('dialog[open]')) return;
-    if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
