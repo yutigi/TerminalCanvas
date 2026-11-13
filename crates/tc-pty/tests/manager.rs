@@ -962,3 +962,65 @@ fn events_serialize_like_the_javascript_host() {
         [json!({ "type": "error", "id": card["id"], "message": "careful" })]
     );
 }
+
+#[test]
+fn launch_requests_open_beside_their_terminal_once_and_report_refusals() {
+    use tc_core::launch::{validate_request, write_request};
+    let folder = tempdir("launch");
+    let inbox = folder.join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    let session_file = folder.join("session.json");
+    let requests = inbox.clone();
+    let integrations: Integrations = Box::new(move |_, _| {
+        Ok(Some(
+            Integration::new(None, None, session_file.clone(), Vec::new()).with_launch_dir(requests.clone()),
+        ))
+    });
+    let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
+    let parent = card(json!({}));
+    h.start(&parent).unwrap();
+    assert_eq!(h.launch(0).env["TC_CARD_ID"], id(&parent));
+    let request = validate_request(
+        &json!({ "profile": "claude", "title": "Handover", "cwd": cwd(), "command": "claude \"go\"" }),
+        Platform::current(),
+    )
+    .unwrap();
+    let (request_id, _) = write_request(&inbox, &request).unwrap();
+    let mut missing = request.clone();
+    missing.cwd = folder.join("gone").to_string_lossy().into_owned();
+    let (refused, _) = write_request(&inbox, &missing).unwrap();
+    h.manager.poll_hooks();
+    let launches = h.of_type("launch");
+    assert_eq!(
+        launches,
+        [
+            json!({ "type": "launch", "id": id(&parent), "request": request_id, "profile": "claude", "title": "Handover", "cwd": cwd(), "command": "claude \"go\"" })
+        ]
+    );
+    // The sender of a refused request hears why.
+    let answer: Value =
+        serde_json::from_str(&std::fs::read_to_string(tc_core::launch::result_path(&inbox, &refused)).unwrap())
+            .unwrap();
+    assert_eq!(
+        answer,
+        json!({ "status": "refused", "error": "Working directory is unavailable." })
+    );
+    std::fs::remove_file(tc_core::launch::result_path(&inbox, &refused)).unwrap();
+    let errors = h.of_type("error");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["id"], id(&parent));
+    assert_eq!(
+        errors[0]["message"],
+        "Could not open the requested terminal: Working directory is unavailable."
+    );
+    h.manager.poll_hooks();
+    assert_eq!(h.of_type("launch").len(), 1, "each request opens one terminal");
+    assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 0);
+
+    // A request written just before the shell exits still opens, and exiting removes the inbox.
+    write_request(&inbox, &request).unwrap();
+    h.exit(0, 0);
+    assert_eq!(h.of_type("launch").len(), 2);
+    assert!(!inbox.exists(), "the inbox goes with the terminal");
+    let _ = std::fs::remove_dir_all(folder);
+}

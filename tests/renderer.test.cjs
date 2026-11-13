@@ -1284,3 +1284,129 @@ for (const focus of [false, true]) {
         }
     });
 }
+
+test('a terminal request opens a started card beside its parent, joined by an undoable arrow', async () => {
+    const workspace = createWorkspace();
+    const parent = createCard({ title: 'Planner', x: 100, y: 50 });
+    workspace.cards.push(parent);
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) } : action === 'start' ? { cwd: payload.card.cwd } : null;
+    const { context, calls, elements, bridge } = await boot(workspace, { respond, terminals: true });
+    const flush = () => vm.runInContext('terminalRequests', context);
+    bridge.event({ type: 'launch', id: parent.id, profile: 'claude', title: 'Handover', cwd: '/repo', command: 'claude "Read the handover"' });
+    await flush();
+    const created = structuredClone(calls.find(c => c.action === 'create-card').payload);
+    assert.deepEqual(created, { profile: 'claude', title: 'Handover', cwd: '/repo', command: 'claude "Read the handover"', x: 840, y: 50 });
+    const cards = json(context, 'workspace.cards');
+    assert.equal(cards.length, 2);
+    const child = cards[1];
+    assert.equal(child.title, 'Handover');
+    const arrow = json(context, 'workspace.items[0]');
+    assert.deepEqual({ ...arrow, id: undefined }, { id: undefined, type: 'line', start: { id: parent.id }, end: { id: child.id }, arrow: true });
+    assert.equal(elements.get('#line-layer').childElementCount, 1);
+    assert.equal(calls.filter(c => c.action === 'start').at(-1).payload.card.id, child.id, 'the new terminal starts');
+    assert.equal(vm.runInContext('selected', context), child.id);
+    assert.match(elements.get('#toast').textContent, /Planner opened a new terminal: Handover/);
+    vm.runInContext('undo()', context);
+    assert.equal(json(context, 'workspace.items').length, 0, 'undo removes the arrow');
+    assert.equal(json(context, 'workspace.cards').length, 2, 'but never closes the terminal');
+
+    bridge.event({ type: 'launch', id: 'closed-terminal', profile: 'shell', title: 'Ignored', cwd: '/repo', command: '' });
+    await flush();
+    assert.equal(calls.filter(c => c.action === 'create-card').length, 1, 'requests from closed terminals are dropped');
+});
+
+test('terminal requests respect the terminal limit', async () => {
+    const workspace = createWorkspace();
+    for (let index = 0; index < 24; index++) workspace.cards.push(createCard({ x: index * 700, y: 0 }));
+    const { context, calls, elements, bridge } = await boot(workspace);
+    bridge.event({ type: 'launch', id: workspace.cards[0].id, profile: 'shell', title: 'Overflow', cwd: '/repo', command: '' });
+    await vm.runInContext('terminalRequests', context);
+    assert.equal(calls.some(c => c.action === 'create-card'), false);
+    assert.match(elements.get('#toast').textContent, /up to 24 terminals/);
+});
+
+test('programs outside the canvas open terminals in view, beside a named parent when it exists', async () => {
+    const workspace = createWorkspace();
+    const parent = createCard({ title: 'Lead', x: 100, y: 50 });
+    workspace.cards.push(parent);
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) } : action === 'start' ? { cwd: payload.card.cwd } : null;
+    const { context, calls, elements, bridge } = await boot(workspace, { respond, terminals: true });
+    const flush = () => vm.runInContext('terminalRequests', context);
+    const request = extra => ({ type: 'launch', external: true, profile: 'codex', title: 'Worker', cwd: '/repo', command: 'codex', ...extra });
+    const lastResult = () => structuredClone(calls.filter(c => c.action === 'launch-result').at(-1).payload);
+
+    bridge.event(request({ request: 'req-alone' }));
+    await flush();
+    assert.deepEqual(Object.keys(lastResult()), ['request', 'card'], 'no parent is reported without one');
+    const standalone = structuredClone(calls.filter(c => c.action === 'create-card').at(-1).payload);
+    const center = json(context, 'viewportCenterWorld()');
+    assert.deepEqual({ x: standalone.x, y: standalone.y }, json(context, `Geometry.placeNear(${JSON.stringify(center)}, { w: 660, h: 430 }, [${JSON.stringify(parent)}].map(boundsOf))`));
+    assert.equal(json(context, 'workspace.items').length, 0, 'no parent, no arrow');
+    assert.match(elements.get('#toast').textContent, /A program opened a new terminal: Worker/);
+
+    bridge.event(request({ request: 'req-child', parent: parent.id, title: 'Child' }));
+    await flush();
+    const child = json(context, 'workspace.cards').at(-1);
+    assert.deepEqual(lastResult(), { request: 'req-child', card: child.id, parent: parent.id });
+    assert.equal(child.title, 'Child');
+    assert.deepEqual(json(context, 'workspace.items').map(({ start, end }) => ({ start, end })), [{ start: { id: parent.id }, end: { id: child.id } }]);
+    assert.match(elements.get('#toast').textContent, /Lead opened a new terminal: Child/);
+
+    bridge.event(request({ request: 'req-orphan', parent: 'closed-card', title: 'Orphan' }));
+    await flush();
+    assert.equal(lastResult().parent, undefined, 'an unknown parent is not reported as the one used');
+    assert.equal(json(context, 'workspace.cards').at(-1).title, 'Orphan', 'an unknown parent still opens the terminal');
+    assert.equal(json(context, 'workspace.items').length, 1, 'but without an arrow');
+    assert.equal(calls.filter(c => c.action === 'start').length, 3);
+});
+
+test('terminal requests that arrive before the workspace loads wait for it', async () => {
+    const workspace = createWorkspace();
+    let finishInitialize;
+    const respond = (action, payload) => action === 'initialize' ? new Promise(resolve => { finishInitialize = resolve; })
+        : action === 'create-card' ? { card: createCard(payload) } : null;
+    const { context, calls, bridge } = await boot(workspace, { respond });
+    bridge.event({ type: 'launch', external: true, profile: 'shell', title: 'Early', cwd: '/repo', command: '' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.some(c => c.action === 'create-card'), false);
+    finishInitialize({ workspace: structuredClone(workspace), profiles: PROFILES, home: '', platform: 'win32' });
+    await new Promise(resolve => setImmediate(resolve));
+    await vm.runInContext('terminalRequests', context).catch(() => {});
+    assert.equal(calls.filter(c => c.action === 'create-card').length, 1);
+});
+
+test('every terminal request reports its card or why nothing opened, and starts with its request ID', async () => {
+    const workspace = createWorkspace();
+    const parent = createCard({ title: 'Agent', x: 0, y: 0 });
+    workspace.cards.push(parent);
+    let failStart = false;
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) }
+        : action === 'start' ? (failStart ? { error: 'Working directory is unavailable.' } : { cwd: payload.card.cwd }) : null;
+    const { context, calls, bridge } = await boot(workspace, { respond, terminals: true });
+    const flush = () => vm.runInContext('terminalRequests', context);
+    const results = () => structuredClone(calls.filter(c => c.action === 'launch-result').map(c => c.payload));
+    const launch = extra => ({ type: 'launch', id: parent.id, profile: 'shell', title: 'Worker', cwd: '/repo', command: 'ls', ...extra });
+
+    bridge.event(launch({ request: 'req-opened' }));
+    await flush();
+    const child = json(context, 'workspace.cards').at(-1);
+    assert.equal(structuredClone(calls.find(c => c.action === 'start' && c.payload.card.id === child.id).payload).launch, 'req-opened');
+    assert.deepEqual(results(), [{ request: 'req-opened', card: child.id, parent: parent.id }]);
+
+    failStart = true;
+    bridge.event(launch({ request: 'req-start-failed' }));
+    await flush();
+    assert.deepEqual(results().at(-1), { request: 'req-start-failed', error: 'Working directory is unavailable.' });
+
+    bridge.event(launch({ request: 'req-closed', id: 'closed-card' }));
+    await flush();
+    assert.deepEqual(results().at(-1), { request: 'req-closed', error: 'The terminal that asked for a new terminal has closed.' });
+
+    for (let index = workspace.cards.length; vm.runInContext('workspace.cards.length', context) < 24; index++) {
+        vm.runInContext(`workspace.cards.push(${JSON.stringify(createCard({ x: 5000 + index * 700 }))})`, context);
+    }
+    bridge.event(launch({ request: 'req-full' }));
+    await flush();
+    assert.match(results().at(-1).error, /up to 24 terminals/);
+    assert.equal(results().length, 4, 'one report per request');
+});

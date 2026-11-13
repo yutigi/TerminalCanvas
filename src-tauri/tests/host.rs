@@ -611,3 +611,98 @@ async fn legacy_autosave_and_portable_images_open_stopped_and_rust_files_are_rea
         }
     }
 }
+
+#[tokio::test]
+async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_app_inbox() {
+    use tc_core::launch::{app_inbox, log_path, result_path, validate_request, write_request};
+    let h = Harness::new();
+    let inbox = app_inbox(&h.folder);
+    assert!(inbox.is_dir(), "the app creates its inbox at startup");
+    let platform = tc_core::Platform::current();
+    let raw = json!({ "profile": "codex", "title": "Reviewer", "cwd": h.folder, "parent": "parent-card",
+        "reply": true, "log": true });
+    let (id, _) = write_request(&inbox, &validate_request(&raw, platform).unwrap()).unwrap();
+    let mut missing = validate_request(&json!({ "cwd": h.folder, "reply": true }), platform).unwrap();
+    missing.cwd = h.folder.join("gone").to_string_lossy().into_owned();
+    let (refused, _) = write_request(&inbox, &missing).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let seen = |kind: &str| {
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == kind)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    while (seen("launch").is_empty() || seen("error").is_empty()) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        seen("launch"),
+        [
+            json!({ "type": "launch", "external": true, "request": id, "profile": "codex", "title": "Reviewer",
+            "cwd": h.folder.to_string_lossy(), "command": "codex", "parent": "parent-card" })
+        ]
+    );
+    assert_eq!(
+        seen("error")[0]["message"],
+        "Could not open the requested terminal: Working directory is unavailable."
+    );
+    let refusal: Value = serde_json::from_slice(&std::fs::read(result_path(&inbox, &refused)).unwrap()).unwrap();
+    assert_eq!(refusal["status"], "refused");
+
+    // The UI starts the card with the request ID, so its output is logged from the first byte.
+    let card = json!(create_card(&json!({ "cwd": h.folder, "profile": "codex" })).unwrap());
+    h.host
+        .command(
+            "start",
+            Some(&json!({ "card": card, "cols": 80, "rows": 24, "launch": id })),
+        )
+        .await
+        .unwrap();
+    let (key, events, _) = h.launches.lock().unwrap()[0].clone();
+    events(key.clone(), SessionEvent::Output("\x1b[1mworking\x1b[0m\r\n".into()));
+    let card_id = card["id"].as_str().unwrap();
+    assert_eq!(
+        h.host
+            .command(
+                "launch-result",
+                Some(&json!({ "request": id, "card": card_id, "parent": "parent-card" }))
+            )
+            .await
+            .unwrap(),
+        json!({ "ok": true })
+    );
+    let log = log_path(&inbox, &id);
+    let answer: Value = serde_json::from_slice(&std::fs::read(result_path(&inbox, &id)).unwrap()).unwrap();
+    assert_eq!(
+        answer,
+        json!({ "status": "opened", "card": card_id, "parent": "parent-card", "log": log.to_string_lossy() })
+    );
+    events(key, SessionEvent::Exit(ExitStatus { code: 0, signal: None }));
+    h.host.running().await;
+    let mut text = String::new();
+    for _ in 0..100 {
+        text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.contains("exited") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(text, "working\n\n[Terminal Canvas: the process exited with code 0]\n");
+    assert_eq!(
+        h.host
+            .command("launch-result", Some(&json!({ "request": id, "card": card_id })))
+            .await
+            .unwrap(),
+        json!({ "ok": false }),
+        "a request is answered once"
+    );
+    assert!(
+        h.host
+            .command("launch-result", Some(&json!({ "request": "../x", "card": "c" })))
+            .await
+            .is_err()
+    );
+}

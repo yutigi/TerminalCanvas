@@ -27,6 +27,7 @@
     "allow-open-link",
     "allow-clipboard-read",
     "allow-clipboard-write",
+    "allow-launch-result",
     "allow-input",
     "allow-resize",
     "allow-ack"

@@ -1,6 +1,6 @@
 [package]
 name = "tc-hook"
-description = "Terminal Canvas sidecar: records Claude session IDs and reports AI CLI launches to the host."
+description = "Terminal Canvas sidecar: records Claude session IDs, reports AI CLI launches to the host, and requests new terminals."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,11 +8,11 @@ publish.workspace = true
 
 [dependencies]
 base64.workspace = true
+dunce.workspace = true
 serde_json.workspace = true
 tc-core.workspace = true
 
 [dev-dependencies]
-dunce.workspace = true
 tc-pty.workspace = true
 
 [lints]

@@ -20,6 +20,9 @@ pub struct Integration {
     pub command: Option<String>,
     /// Where `tc-hook record claude` writes the session the Claude hook reported.
     pub session_file: PathBuf,
+    /// The private folder `tc-hook new-terminal` writes launch requests to, named by
+    /// `TC_LAUNCH_DIR` (see [`tc_core::launch`]).
+    pub launch_dir: Option<PathBuf>,
     pub env: Vec<(String, String)>,
     files: Vec<PathBuf>,
 }
@@ -36,15 +39,26 @@ impl Integration {
             args,
             command,
             session_file,
+            launch_dir: None,
             env,
             files: Vec::new(),
         }
     }
 
-    /// Removes the integration's files. Missing files are fine.
+    /// Accepts launch requests from `folder`, which the caller has created.
+    #[must_use]
+    pub fn with_launch_dir(mut self, folder: PathBuf) -> Self {
+        self.launch_dir = Some(folder);
+        self
+    }
+
+    /// Removes the integration's files and any requests it never handled. Missing files are fine.
     pub fn cleanup(&self) {
         for file in self.files.iter().chain([&self.session_file]) {
             let _ = fs::remove_file(file);
+        }
+        if let Some(folder) = &self.launch_dir {
+            let _ = fs::remove_dir_all(folder);
         }
     }
 }
@@ -61,11 +75,26 @@ pub fn is_cmd(shell: &str) -> bool {
 }
 
 /// Writes the integration files for one terminal in `folder`. `hook` is the `tc-hook` executable.
-/// Returns `None` for cmd.
+/// Every terminal gets a launch request inbox (see [`tc_core::launch`]). cmd runs no integration
+/// script, so it gets only the inbox and `TC_HOOK`.
 pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> io::Result<Option<Integration>> {
     let windows = platform.is_windows();
+    let launch_dir = tc_core::launch::terminal_inbox();
+    let launch_env = (
+        tc_core::launch::ENV.to_owned(),
+        launch_dir.to_string_lossy().into_owned(),
+    );
     if windows && is_cmd(shell) {
-        return Ok(None);
+        tc_core::launch::create_inbox(&launch_dir, true)?;
+        return Ok(Some(Integration {
+            args: None,
+            command: None,
+            // Never written: cmd has no AI launch wrappers.
+            session_file: folder.join(format!("{}.json", uuid::Uuid::new_v4())),
+            launch_dir: Some(launch_dir),
+            env: vec![("TC_HOOK".to_owned(), hook.to_string_lossy().into_owned()), launch_env],
+            files: Vec::new(),
+        }));
     }
     create_private_dir(folder)?;
     let stem = folder.join(uuid::Uuid::new_v4().to_string());
@@ -103,17 +132,25 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
     } else {
         (None, None)
     };
+    if let Err(error) = tc_core::launch::create_inbox(&launch_dir, true) {
+        for file in &files {
+            let _ = fs::remove_file(file);
+        }
+        return Err(error);
+    }
     let env = vec![
         (
             "TC_SESSION_FILE".to_owned(),
             session_file.to_string_lossy().into_owned(),
         ),
         ("TC_HOOK".to_owned(), hook.into_owned()),
+        launch_env,
     ];
     Ok(Some(Integration {
         args,
         command,
         session_file,
+        launch_dir: Some(launch_dir),
         env,
         files,
     }))

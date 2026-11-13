@@ -44,7 +44,11 @@ fn hook(args: &[&str], folder: &Path) -> Command {
         .args(args)
         .current_dir(folder)
         .env_remove("TC_LAUNCH_TOKEN")
-        .env_remove("TC_SESSION_FILE");
+        .env_remove("TC_SESSION_FILE")
+        .env_remove(tc_core::launch::ENV)
+        .env_remove(tc_core::launch::CARD_ENV)
+        // Never reach the real app's data folder from a test.
+        .env(tc_core::launch::DATA_ENV, folder.join("no-app-data"));
     command
 }
 
@@ -503,4 +507,257 @@ mod windows {
             );
         }
     }
+}
+
+#[test]
+fn new_terminal_queues_a_validated_request_for_the_host() {
+    use tc_core::launch::take_requests;
+    let folder = temp_folder("new-terminal");
+    let inbox = folder.join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    let project = folder.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let run = |args: &[&str]| {
+        let mut command = hook(&["new-terminal"], &folder);
+        command.args(args).env(tc_core::launch::ENV, &inbox);
+        command.output().unwrap()
+    };
+
+    let outside = hook(&["new-terminal", "--no-wait"], &folder).output().unwrap();
+    assert_eq!(outside.status.code(), Some(1), "no app has created its inbox");
+    assert!(String::from_utf8_lossy(&outside.stderr).contains("start the app first"));
+    assert_eq!(run(&["--bogus"]).status.code(), Some(1));
+    assert_eq!(run(&["--title"]).status.code(), Some(1));
+    assert_eq!(run(&["--profile", "vim", "--no-wait"]).status.code(), Some(2));
+    assert_eq!(run(&["--cwd", "missing", "--no-wait"]).status.code(), Some(2));
+    assert_eq!(
+        std::fs::read_dir(&inbox).unwrap().count(),
+        0,
+        "refused requests write nothing"
+    );
+
+    let queued = run(&[
+        "--profile",
+        "claude",
+        "--title",
+        "Handover",
+        "--cwd",
+        "project",
+        "--command",
+        "claude \"Read it\"",
+        "--no-wait",
+    ]);
+    assert_eq!(
+        queued.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&queued.stderr)
+    );
+    let taken = take_requests(&inbox, Platform::current());
+    let request = taken[0].request.as_ref().unwrap();
+    assert!(!request.reply, "--no-wait asks for no answer");
+    assert_eq!(taken.len(), 1);
+    assert_eq!(
+        (
+            request.title.as_str(),
+            request.command.as_str(),
+            request.profile.as_str()
+        ),
+        ("Handover", "claude \"Read it\"", "claude")
+    );
+    assert_eq!(
+        Path::new(&request.cwd),
+        project,
+        "relative folders resolve from the current directory"
+    );
+
+    // A stand-in for the app: takes one request and answers it, or leaves it unanswered.
+    let app = |answer: Option<Value>| {
+        let inbox = inbox.clone();
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(taken) = take_requests(&inbox, Platform::current()).pop() {
+                    let id = taken.id.unwrap();
+                    assert!(taken.request.unwrap().reply);
+                    if let Some(answer) = &answer {
+                        tc_core::launch::write_result(&inbox, &id, answer);
+                    }
+                    return Some(id);
+                }
+            }
+            None
+        })
+    };
+    let host = app(Some(json!({ "status": "opened", "card": "card-7", "log": "ignored" })));
+    let opened = run(&["--command", "ls", "--log"]);
+    let id = host.join().unwrap().unwrap();
+    assert_eq!(
+        opened.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&opened.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&opened.stdout);
+    assert!(
+        stdout.contains("opened a new terminal: Terminal (card card-7)"),
+        "{stdout}"
+    );
+    let log = tc_core::launch::log_path(&inbox, &id);
+    assert!(stdout.contains(&format!("Output log: {}", log.display())), "{stdout}");
+    assert!(
+        !tc_core::launch::result_path(&inbox, &id).exists(),
+        "the answer is consumed"
+    );
+
+    // Opening can still fail after the app took the request, for example at the terminal limit.
+    let host = app(Some(
+        json!({ "status": "failed", "error": "A workspace can contain up to 24 terminals." }),
+    ));
+    let failed = run(&["--json"]);
+    host.join().unwrap().unwrap();
+    assert_eq!(failed.status.code(), Some(2));
+    let report: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(report["status"], "failed");
+    assert!(report["error"].as_str().unwrap().contains("up to 24 terminals"));
+
+    // Taken but never answered: the caller learns a terminal may still open.
+    let host = app(None);
+    let unconfirmed = run(&["--timeout", "2", "--json"]);
+    host.join().unwrap().unwrap();
+    assert_eq!(unconfirmed.status.code(), Some(4));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&unconfirmed.stdout).unwrap()["status"],
+        "unconfirmed"
+    );
+
+    // Without a host, the request is withdrawn so it cannot open a terminal later.
+    let unanswered = run(&["--timeout", "1"]);
+    assert_eq!(unanswered.status.code(), Some(3));
+    assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(folder);
+}
+
+#[test]
+fn new_terminal_outside_a_terminal_asks_the_app_and_reports_json() {
+    use tc_core::launch::{app_inbox, take_requests};
+    let folder = temp_folder("new-terminal-app");
+    let data = folder.join("app data");
+    let inbox = app_inbox(&data);
+    std::fs::create_dir_all(&inbox).unwrap();
+    let card_inbox = folder.join("card inbox");
+    std::fs::create_dir_all(&card_inbox).unwrap();
+    let run = |args: &[&str], envs: &[(&str, &Path)]| {
+        let mut command = hook(&["new-terminal"], &folder);
+        command.args(args).env(tc_core::launch::DATA_ENV, &data);
+        for (name, value) in envs {
+            command.env(name, value);
+        }
+        command.output().unwrap()
+    };
+    let json = |output: &std::process::Output| -> Value { serde_json::from_slice(&output.stdout).unwrap() };
+
+    // Outside any terminal, the app inbox takes the request; a parent may be named.
+    let queued = run(
+        &["--profile", "gemini", "--parent", "card-1", "--no-wait", "--json"],
+        &[],
+    );
+    assert_eq!(queued.status.code(), Some(0));
+    let report = json(&queued);
+    assert_eq!(
+        (report["status"].as_str(), report["via"].as_str()),
+        (Some("queued"), Some("app"))
+    );
+    assert_eq!(report["request"]["command"], "gemini");
+    let taken = take_requests(&inbox, Platform::current());
+    assert_eq!(taken[0].request.as_ref().unwrap().parent.as_deref(), Some("card-1"));
+    assert_eq!(report["request"]["parent"], "card-1");
+    assert!(
+        report.get("parent").is_none(),
+        "until the app answers, the parent it will use is unknown"
+    );
+
+    // Once it answers, the report names the parent the app actually used, if any.
+    let answered = |answer: Value, args: &[&str]| {
+        let inbox = inbox.clone();
+        let host = std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(taken) = take_requests(&inbox, Platform::current()).pop() {
+                    tc_core::launch::write_result(&inbox, &taken.id.unwrap(), &answer);
+                    return;
+                }
+            }
+        });
+        let output = run(args, &[]);
+        host.join().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        json(&output)
+    };
+    let beside = answered(
+        json!({ "status": "opened", "card": "card-2", "parent": "card-1" }),
+        &["--parent", "card-1", "--json"],
+    );
+    assert_eq!(
+        (beside["card"].as_str(), beside["parent"].as_str()),
+        (Some("card-2"), Some("card-1"))
+    );
+    let orphan = answered(
+        json!({ "status": "opened", "card": "card-3" }),
+        &["--parent", "closed-card", "--json"],
+    );
+    assert_eq!(orphan["request"]["parent"], "closed-card");
+    assert!(
+        orphan.get("parent").is_none(),
+        "a parent that no longer exists is not reported as used: {orphan}"
+    );
+    assert_eq!(report["id"], taken[0].id.clone().unwrap());
+
+    // With --no-wait --log, the log path is known before the app answers.
+    let logged = run(&["--no-wait", "--log", "--json"], &[]);
+    let report = json(&logged);
+    let id = report["id"].as_str().unwrap();
+    assert_eq!(
+        report["log"],
+        tc_core::launch::log_path(&inbox, id).to_string_lossy().as_ref()
+    );
+    assert!(
+        take_requests(&inbox, Platform::current())[0]
+            .request
+            .as_ref()
+            .unwrap()
+            .log
+    );
+
+    // Inside a terminal its own inbox wins, unless a parent or data folder is named.
+    let own = run(&["--no-wait"], &[(tc_core::launch::ENV, &card_inbox)]);
+    assert_eq!(own.status.code(), Some(0));
+    assert_eq!(take_requests(&card_inbox, Platform::current()).len(), 1);
+    let named = run(
+        &["--no-wait", "--parent", "other"],
+        &[(tc_core::launch::ENV, &card_inbox)],
+    );
+    assert_eq!(named.status.code(), Some(0));
+    assert_eq!(take_requests(&inbox, Platform::current()).len(), 1);
+
+    let refused = run(&["--parent", "../bad", "--json"], &[]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(json(&refused)["status"], "refused");
+    let timeout = run(&["--timeout", "1", "--json"], &[]);
+    assert_eq!(timeout.status.code(), Some(3));
+    assert_eq!(json(&timeout)["status"], "timeout");
+    assert_eq!(
+        std::fs::read_dir(&inbox).unwrap().count(),
+        0,
+        "a timed-out request is withdrawn"
+    );
+    let missing = run(&["--data-dir", "nowhere", "--json"], &[]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(json(&missing)["status"], "unavailable");
+    let _ = std::fs::remove_dir_all(folder);
 }
