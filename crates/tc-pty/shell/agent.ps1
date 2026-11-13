@@ -12,6 +12,7 @@ function global:__tc_agent($provider, $arguments) {
     catch { __tc_emit @{ type = 'warning'; message = 'The AI tool is unavailable. Install it on PATH, or stop this terminal and use Start fresh shell. The saved ID is retained.' }; Write-Error ($provider + ' is unavailable.'); return }
     $env:TC_LAUNCH_TOKEN = [guid]::NewGuid().ToString()
     $sessionId = $null
+    $prefix = @()
     $extra = @()
     for ($i = 0; $i -lt $arguments.Count; $i++) {
         if ($arguments[$i] -match '^(--resume|-r|--session-id)$' -or ($provider -eq 'codex' -and $arguments[$i] -eq 'resume')) {
@@ -22,8 +23,9 @@ function global:__tc_agent($provider, $arguments) {
         if ($arguments.Count -eq 0) { $sessionId = [guid]::NewGuid().ToString(); $extra += @('--session-id', $sessionId) }
         if (-not ($arguments -match '^--settings(=|$)')) { $extra += @('--settings', {{SETTINGS}}) }
     }
+    if ($provider -eq 'codex') { $prefix = @('-c', {{CODEX_HOOK}}) }
     __tc_emit @{ type = 'launch'; provider = $provider; token = $env:TC_LAUNCH_TOKEN; cwd = (Get-Location).ProviderPath; sessionId = $sessionId }
-    & $executable @arguments @extra
+    & $executable @prefix @arguments @extra
     $tcSucceeded = $?
     $tcExit = $LASTEXITCODE
     if (-not $tcSucceeded -and -not $tcExit) { $tcExit = 1 }

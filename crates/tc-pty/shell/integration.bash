@@ -10,13 +10,14 @@ __tc_agent() {
         case "$previous" in --resume|-r|--session-id|resume) session_id="$argument";; esac
         previous="$argument"
     done
-    local extra=()
+    local prefix=() extra=()
     if [ "$provider" = claude ]; then
         if [ "$#" -eq 0 ]; then session_id="$token"; extra+=(--session-id "$session_id"); fi
         case " $* " in *' --settings '*|*' --settings='*) ;; *) extra+=(--settings {{SETTINGS}});; esac
     fi
+    if [ "$provider" = codex ]; then prefix=(-c {{CODEX_HOOK}}); fi
     "$TC_HOOK" emit launch "$provider" "$session_id"
-    "$executable" "$@" "${extra[@]}"
+    "$executable" "${prefix[@]}" "$@" "${extra[@]}"
     code=$?
     "$TC_HOOK" emit end "$code"
     return "$code"

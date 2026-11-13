@@ -6,7 +6,7 @@ const { launch, until, hasOutputLine, psQuote, screenshot, root } = require('./h
 const { powerShellLiteral } = require('../baseline/support.cjs');
 const ids = { claude: '12345678-1234-4321-9876-123456789abc', codex: '0f1e2d3c-4b5a-4968-8776-655443322110' };
 
-test('two launches recover Claude and Codex IDs, resume exactly, and retain metadata in a fresh shell', {
+test('closing with Codex still running preserves hook IDs for exact resume and fresh shells', {
     skip: process.platform !== 'win32', timeout: 180000
 }, async t => {
     const project = path.join(root, '.cache', 'tauri-restoration-project');
@@ -27,7 +27,15 @@ if (provider === 'claude' && settings >= 0) {
     const result = spawnSync(command, { shell: true, input: JSON.stringify(payload), encoding: 'utf8', windowsHide: true });
     if (result.status !== 0) { console.error(result.stderr); process.exit(1); }
 }
-if (provider === 'codex') console.log('session id: ${ids.codex}');
+if (provider === 'codex') {
+    const config = args[args.indexOf('-c') + 1];
+    const command = config.match(/command='([^']*)'/)[1];
+    const payload = { hook_event_name: 'SessionStart', session_id: '${ids.codex}', cwd: process.cwd(), transcript_path: 'MUST_NOT_BE_SAVED' };
+    const result = spawnSync(command, { shell: true, input: JSON.stringify(payload), encoding: 'utf8', windowsHide: true });
+    if (result.status !== 0) { console.error(result.stderr); process.exit(1); }
+    // New interactive sessions stay alive without printing an exit/resume hint.
+    if (!args.includes('resume')) { console.log('CODEX_STILL_RUNNING'); setInterval(() => {}, 1000); }
+}
 console.log('SESSION_TEST_DONE:' + provider);
 `);
     for (const provider of Object.keys(ids)) {
@@ -78,6 +86,8 @@ console.log('SESSION_TEST_DONE:' + provider);
         return saved.cards.length === 2 && saved.cards.every((card, index) => card.session?.sessionId === ids[Object.keys(ids)[index]]);
     }, 'Hook and parsed metadata were not immediately autosaved.');
     const persisted = JSON.parse(await fs.readFile(recovery, 'utf8'));
+    assert.ok((await first.output(cards[1].id)).includes('CODEX_STILL_RUNNING'));
+    assert.ok(!(await first.output(cards[1].id)).includes('session id:'), 'Capture must not depend on a printed session ID.');
     for (const card of persisted.cards) {
         assert.equal(card.cwd, changed); assert.equal(card.session.cwd, changed);
     }
@@ -88,6 +98,7 @@ console.log('SESSION_TEST_DONE:' + provider);
     const restored = await second.page.evaluate(() => workspace);
     assert.equal(restored.name, 'Saved during close');
     assert.equal((await second.state()).host.running, 0, 'Reopening must not execute a saved command.');
+    await screenshot(second.page, 'codex-restored');
     for (const [index, provider] of Object.keys(ids).entries()) {
         const card = restored.cards[index];
         assert.equal(card.session.sessionId, ids[provider]);

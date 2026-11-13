@@ -707,7 +707,7 @@ impl TerminalManager {
         });
     }
 
-    /// Reads the session the Claude hook recorded for the current launch, if any.
+    /// Reads the session a provider hook recorded for the current launch, if any.
     fn poll_metadata(&mut self, id: &str) {
         let Some(session) = self.sessions.get(id) else { return };
         let (Some(integration), Some(launch)) = (&session.integration, &session.launch) else {

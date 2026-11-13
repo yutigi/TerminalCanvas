@@ -2,8 +2,8 @@
 //!
 //! The scripts live in `crates/tc-pty/shell/` and are embedded at build time. `{{SETTINGS}}` marks
 //! where the quoted path of the Claude settings file goes. The golden tests compare the generated
-//! text with the JavaScript host's output byte for byte; the only intended difference is that Bash
-//! runs `"$TC_HOOK" emit` directly instead of starting Electron as Node.
+//! text with the JavaScript host's output, with explicit differences for native hooks and Codex's
+//! per-launch SessionStart hook.
 
 use base64::Engine;
 
@@ -14,6 +14,7 @@ pub const POWERSHELL_BOOTSTRAP: &str = include_str!("../shell/bootstrap.ps1");
 const POWERSHELL_AGENT: &str = include_str!("../shell/agent.ps1");
 const BASH_INTEGRATION: &str = include_str!("../shell/integration.bash");
 const SETTINGS: &str = "{{SETTINGS}}";
+const CODEX_HOOK: &str = "{{CODEX_HOOK}}";
 
 /// A PowerShell single-quoted string.
 pub fn ps_quote(value: &str) -> String {
@@ -53,13 +54,39 @@ pub fn powershell_args(script: &str) -> Vec<String> {
 pub fn powershell_source(settings: &str) -> String {
     format!(
         "{POWERSHELL_BOOTSTRAP}{}",
-        POWERSHELL_AGENT.replacen(SETTINGS, &ps_quote(settings), 1)
+        POWERSHELL_AGENT.replacen(SETTINGS, &ps_quote(settings), 1).replacen(
+            CODEX_HOOK,
+            &ps_quote(&codex_hook_config(true)),
+            1
+        )
     )
 }
 
 /// The Bash integration: the same wrappers, plus an OSC 7 directory report in `PROMPT_COMMAND`.
 pub fn bash_source(settings: &str) -> String {
-    BASH_INTEGRATION.replacen(SETTINGS, &sh_quote(settings), 1)
+    BASH_INTEGRATION.replacen(SETTINGS, &sh_quote(settings), 1).replacen(
+        CODEX_HOOK,
+        &sh_quote(&codex_hook_config(false)),
+        1,
+    )
+}
+
+/// A launch-only Codex override. Hook sources from other config layers are merged by Codex;
+/// user-supplied CLI overrides still take precedence. The command stays stable across terminals
+/// so Codex can remember its trust decision, while the inherited environment identifies the card.
+pub fn codex_hook_config(windows: bool) -> String {
+    let command = if windows {
+        let script = "$reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.Encoding]::UTF8); $payload = $reader.ReadToEnd(); $reader.Dispose(); $OutputEncoding = New-Object Text.UTF8Encoding $false; $payload | & $env:TC_HOOK record codex";
+        format!(
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+            encode_command(script)
+        )
+    } else {
+        "\"$TC_HOOK\" record codex".to_owned()
+    };
+    // TOML literal strings survive Windows PowerShell's legacy native argument quoting,
+    // including npm's codex.cmd shim. Neither fixed command contains an apostrophe.
+    format!("hooks.SessionStart=[{{hooks=[{{type='command',command='{command}',timeout=5}}]}}]")
 }
 
 /// The Claude `SessionStart` hook command. On Windows it reads the hook input as UTF-8 before
