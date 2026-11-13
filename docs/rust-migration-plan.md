@@ -80,7 +80,7 @@ tests/                  JS UI tests (stay), tests/golden/ fixtures, tests/e2e/
 ### Design decisions
 
 1. **One host actor owns all state.** The JS host relies on Node's event loop to run everything in order: the `this.sessions.get(id) !== entry` checks, the write queue, and the `serialize()` asset tasks all depend on it. The Rust host keeps that model. One tokio task owns `TerminalManager` and `WorkspaceRecovery` and handles messages one at a time: commands (each answered through a oneshot reply), PTY output, exits, and poll ticks. The code can then be ported almost line by line, and the existing tests carry over directly. File writes and asset tasks each keep their own serial queue, as they do today.
-2. **Each terminal has three threads, outside the actor.** A blocking reader, a writer (so a stalled shell cannot block IPC), and an exit waiter. At the 24-terminal limit that is 72 threads, which is fine.
+2. **Each terminal has three threads, outside the actor.** A blocking reader, a writer (so a stalled shell cannot block IPC), and an exit waiter. Terminal count has no fixed cap; thread and process usage grow with the number of running terminals.
 3. **Backpressure works without `pause()`.** When unacknowledged output goes above 256,000, the reader thread stops reading until it drops below 32,000. The PTY's buffer then fills and the child process blocks, which is what node-pty's `pause()` achieved. Pending output is counted in UTF-16 units, so the renderer's `event.data.length` acknowledgments keep working unchanged.
 4. **Output stays text.** The reader decodes UTF-8 and carries any sequence split across two reads over to the next one. Invalid bytes become U+FFFD, matching node-pty. A raw-bytes channel can come later as an optimization.
 5. **Events go through one Tauri Channel**, registered by `initialize`. Channels deliver messages in order. `bridge.js` passes each message to the `onEvent` listeners, so `renderer.js` keeps its single handler.
@@ -151,7 +151,7 @@ Done when `cargo test -p tc-core` passes on all three CI runners, golden fixture
     - Everywhere: set `TERM`, `COLORTERM`, and `TERMINAL_CANVAS`.
     - macOS and Linux: start `$SHELL` as a login shell. For Bash, queue its `source` command.
 - **Lifecycle, ported exactly:**
-    - the `start`, `resume`, and `fresh` modes and the 24-terminal limit
+    - the `start`, `resume`, and `fresh` modes (the original 24-terminal cap has since been removed)
     - dimension checks, the 64 KB input limit, and resetting readiness on CR/LF
     - 500 ms hook polling and metadata merging
     - Stop with its 5 s fallback, and `shutdown` waiting for every exit

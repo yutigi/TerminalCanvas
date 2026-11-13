@@ -72,7 +72,7 @@ limits (100, 4,096, and 2,000 characters).
 | 0 | `queued` | `--no-wait`: the request was written; nothing is known yet |
 | 1 | `usage` / `unavailable` | Bad options, no running app to ask, or the request folder could not be written |
 | 2 | `refused` | The request was invalid: unknown profile, missing folder, invalid parent, or a value over the limits |
-| 2 | `failed` | The app could not open it, for example at the 24-terminal limit or when the terminal failed to start |
+| 2 | `failed` | The app could not open it, for example when its working directory is unavailable or the terminal failed to start |
 | 3 | `timeout` | The app did not take the request in time; it was withdrawn and nothing opens |
 | 4 | `unconfirmed` | The app took the request but did not answer in time; a terminal may still open |
 

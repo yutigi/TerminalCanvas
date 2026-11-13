@@ -187,13 +187,12 @@ mod tests {
             .unwrap();
         assert_eq!(recovery.remember_card(&raw).unwrap().cwd, "/moved");
         assert_eq!(recovery.board().cards.len(), 1);
-        let full: Vec<Value> = (0..24)
-            .map(|_| serde_json::to_value(create_card(&json!({})).unwrap()).unwrap())
-            .collect();
-        let error = full
-            .iter()
-            .try_for_each(|card| recovery.remember_card(card).map(drop))
-            .unwrap_err();
-        assert_eq!(error.to_string(), "Unsupported workspace format or too many terminals.");
+        for _ in 0..31 {
+            let extra = json!(create_card(&json!({})).unwrap());
+            recovery.remember_card(&extra).unwrap();
+        }
+        assert_eq!(recovery.board().cards.len(), 32);
+        assert_eq!(recovery.remember_card(&raw).unwrap().cwd, "/moved");
+        assert_eq!(recovery.persist(None).unwrap().cards.len(), 32);
     }
 }
