@@ -85,7 +85,7 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
         launch_dir.to_string_lossy().into_owned(),
     );
     if windows && is_cmd(shell) {
-        tc_core::launch::create_inbox(&launch_dir, true)?;
+        tc_core::launch::create_inbox(&launch_dir, true).map_err(at(&launch_dir))?;
         return Ok(Some(Integration {
             args: None,
             command: None,
@@ -96,7 +96,7 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
             files: Vec::new(),
         }));
     }
-    create_private_dir(folder)?;
+    create_private_dir(folder).map_err(at(folder))?;
     let stem = folder.join(uuid::Uuid::new_v4().to_string());
     let with_suffix = |suffix: &str| {
         let mut path = stem.clone().into_os_string();
@@ -106,7 +106,7 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
     let session_file = with_suffix(".json");
     let settings = with_suffix(".settings.json");
     let hook = hook.to_string_lossy();
-    write_private(&settings, claude_settings(&hook, windows).as_bytes())?;
+    write_private(&settings, claude_settings(&hook, windows).as_bytes()).map_err(at(&settings))?;
     let settings_text = settings.to_string_lossy();
     let source = if windows {
         powershell_source(&settings_text)
@@ -117,7 +117,7 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
     let files = vec![settings.clone(), script.clone()];
     if let Err(error) = write_private(&script, source.as_bytes()) {
         let _ = fs::remove_file(&settings);
-        return Err(error);
+        return Err(at(&script)(error));
     }
     let (args, command) = if windows {
         (Some(powershell_args(&source)), None)
@@ -136,7 +136,7 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
         for file in &files {
             let _ = fs::remove_file(file);
         }
-        return Err(error);
+        return Err(at(&launch_dir)(error));
     }
     let env = vec![
         (
@@ -154,6 +154,11 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
         env,
         files,
     }))
+}
+
+/// Names `path` in an error, so a failed setup says which file or folder to fix.
+fn at(path: &Path) -> impl FnOnce(io::Error) -> io::Error + '_ {
+    move |error| io::Error::new(error.kind(), format!("{}: {error}", path.display()))
 }
 
 fn create_private_dir(folder: &Path) -> io::Result<()> {

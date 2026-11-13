@@ -148,7 +148,7 @@ fn sidecar(name: &str) -> Option<PathBuf> {
         Some(hook)
     } else {
         eprintln!(
-            "{} was not found, so AI sessions will not be captured. Build it with: cargo build -p tc-hook",
+            "{} was not found, so AI sessions will not be captured and programs in terminals cannot open new ones. Build it with: cargo build -p tc-hook",
             hook.display()
         );
         None

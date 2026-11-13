@@ -467,8 +467,16 @@ impl TerminalManager {
             };
             command.clear();
         }
+        // Integration adds AI session capture, folder reports, and the launch request inbox. A
+        // terminal whose integration files cannot be written still starts without them, and says so.
+        let mut warning = None;
         let integration = match &mut self.integrations {
-            Some(prepare) => prepare(&shell, platform)?,
+            Some(prepare) => prepare(&shell, platform).unwrap_or_else(|error| {
+                warning = Some(format!(
+                    "This terminal started without Terminal Canvas integration ({error}), so its AI session will not be saved and programs in it cannot open terminals on the canvas. Make that location writable, then restart the terminal."
+                ));
+                None
+            }),
             None => None,
         };
         let args = match integration.as_ref().and_then(|integration| integration.args.clone()) {
@@ -478,6 +486,11 @@ impl TerminalManager {
             None => vec!["-l".to_owned()],
         };
         let mut env = self.config.env.clone();
+        // When the app was started from a Terminal Canvas terminal, these name that terminal's
+        // files, perhaps in another app. Only this terminal's own integration may set them.
+        for key in ["TC_HOOK", "TC_SESSION_FILE", "TC_LAUNCH_TOKEN", tc_core::launch::ENV] {
+            env.remove(key);
+        }
         env.extend(
             integration
                 .iter()
@@ -545,6 +558,12 @@ impl TerminalManager {
             metadata,
             initial: true,
         });
+        if let Some(message) = warning {
+            self.emit(TerminalEvent::Error {
+                id: card.id.clone(),
+                message,
+            });
+        }
         if !windows && let Some(pid) = pid {
             let watch = self
                 .backend

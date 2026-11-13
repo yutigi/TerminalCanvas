@@ -587,7 +587,34 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
 
     let outside = hook(&["new-terminal", "--no-wait"], &folder).output().unwrap();
     assert_eq!(outside.status.code(), Some(1), "no app has created its inbox");
-    assert!(String::from_utf8_lossy(&outside.stderr).contains("start the app first"));
+    let stderr = String::from_utf8_lossy(&outside.stderr);
+    let missing_inbox = tc_core::launch::app_inbox(&folder.join("no-app-data"));
+    assert!(
+        stderr.contains(&format!(
+            "({} does not exist): start the app first",
+            missing_inbox.display()
+        )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "To open it yourself, start a terminal in {}.",
+            folder.display()
+        )),
+        "a failure says how to continue by hand: {stderr}"
+    );
+    // A terminal's request folder disappears when its terminal ends.
+    let ended = hook(&["new-terminal", "--command", "codex"], &folder)
+        .env(tc_core::launch::ENV, folder.join("ended terminal"))
+        .output()
+        .unwrap();
+    assert_eq!(ended.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&ended.stderr);
+    assert!(
+        stderr.contains("pass --parent with its TC_CARD_ID to ask the app instead"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("and run: codex"), "{stderr}");
     assert_eq!(run(&["--bogus"]).status.code(), Some(1));
     assert_eq!(run(&["--title"]).status.code(), Some(1));
     assert_eq!(run(&["--profile", "vim", "--no-wait"]).status.code(), Some(2));
@@ -687,6 +714,12 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
             .unwrap()
             .contains("Working directory is unavailable.")
     );
+    assert_eq!(
+        (report["via"].as_str(), report["request"]["profile"].as_str()),
+        (Some("terminal"), Some("shell")),
+        "a failure echoes the request, so the caller can open it another way: {report}"
+    );
+    assert!(report["id"].is_string());
 
     // Taken but never answered: the caller learns a terminal may still open.
     let host = app(None);
@@ -699,8 +732,17 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
     );
 
     // Without a host, the request is withdrawn so it cannot open a terminal later.
-    let unanswered = run(&["--timeout", "1"]);
+    let unanswered = run(&["--timeout", "1", "--command", "npm test"]);
     assert_eq!(unanswered.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&unanswered.stderr);
+    assert!(stderr.contains("within 1 second, so it was withdrawn"), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "To open it yourself, start a terminal in {} and run: npm test",
+            folder.display()
+        )),
+        "{stderr}"
+    );
     assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 0);
     let _ = std::fs::remove_dir_all(folder);
 }
@@ -815,6 +857,10 @@ fn new_terminal_outside_a_terminal_asks_the_app_and_reports_json() {
     let refused = run(&["--parent", "../bad", "--json"], &[]);
     assert_eq!(refused.status.code(), Some(2));
     assert_eq!(json(&refused)["status"], "refused");
+    assert!(
+        json(&refused).get("request").is_none(),
+        "an invalid request is not echoed"
+    );
     let timeout = run(&["--timeout", "1", "--json"], &[]);
     assert_eq!(timeout.status.code(), Some(3));
     assert_eq!(json(&timeout)["status"], "timeout");
@@ -825,6 +871,15 @@ fn new_terminal_outside_a_terminal_asks_the_app_and_reports_json() {
     );
     let missing = run(&["--data-dir", "nowhere", "--json"], &[]);
     assert_eq!(missing.status.code(), Some(1));
-    assert_eq!(json(&missing)["status"], "unavailable");
+    let report = json(&missing);
+    assert_eq!(report["status"], "unavailable");
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("does not exist): start the app first")
+    );
+    assert_eq!(report["request"]["cwd"], folder.to_string_lossy().as_ref());
+    assert!(report.get("id").is_none(), "nothing was written");
     let _ = std::fs::remove_dir_all(folder);
 }

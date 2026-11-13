@@ -327,6 +327,65 @@ fn shell_initialization_runs_before_a_saved_ai_command_or_resume() {
 }
 
 #[test]
+fn a_terminal_whose_integration_cannot_be_prepared_starts_without_it_and_says_why() {
+    // The app may itself run in a Terminal Canvas terminal; that terminal's variables must not leak.
+    let inherited = [
+        ("TC_HOOK", "C:\\outer\\tc-hook.exe"),
+        ("TC_LAUNCH_DIR", "C:\\outer\\tc-launch"),
+        ("TC_SESSION_FILE", "C:\\outer\\session.json"),
+        ("TC_LAUNCH_TOKEN", SAVED_ID),
+        ("TC_CARD_ID", "outer-card"),
+    ];
+    let env: Vec<_> = WINDOWS_ENV.iter().copied().chain(inherited).collect();
+    let integrations: Integrations = Box::new(|_, _| {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "C:\\Users\\me\\AppData\\Local\\Temp\\tc-launch-1: Access is denied.",
+        ))
+    });
+    let mut h = harness_with(config(Platform::Windows, &env), Some(integrations));
+    let card = card(json!({ "profile": "codex" }));
+    h.start(&card).expect("the terminal still starts");
+    let launch = h.launch(0);
+    assert_eq!(
+        launch.args[..5],
+        [
+            "-NoLogo",
+            "-NoExit",
+            "-ExecutionPolicy",
+            "RemoteSigned",
+            "-EncodedCommand"
+        ],
+        "the plain PowerShell bootstrap runs instead"
+    );
+    for (key, _) in &inherited[..4] {
+        assert_eq!(launch.env.get(*key), None, "{key} names another terminal's files");
+    }
+    assert_eq!(launch.env["TC_CARD_ID"], id(&card));
+    assert_eq!(h.writes(0), ["codex\r"]);
+    let errors = h.of_type("error");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0]["id"], id(&card));
+    let message = errors[0]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("This terminal started without Terminal Canvas integration (C:\\Users\\me\\AppData\\Local\\Temp\\tc-launch-1: Access is denied.)"),
+        "{message}"
+    );
+    assert!(message.contains("cannot open terminals on the canvas"), "{message}");
+    h.manager.stop_all();
+
+    // Without any integration (no tc-hook), inherited variables are dropped as well, silently: the
+    // app reports a missing hook once, when it starts.
+    let mut h = harness_with(config(Platform::Windows, &env), None);
+    h.start(&card).unwrap();
+    for (key, _) in &inherited[..4] {
+        assert_eq!(h.launch(0).env.get(*key), None, "{key}");
+    }
+    assert!(h.of_type("error").is_empty());
+    h.manager.stop_all();
+}
+
+#[test]
 fn uses_windows_powershell_from_system_root() {
     let mut h = harness_with(
         config(

@@ -82,7 +82,9 @@ over to a fresh session or start a helper without you opening the New terminal d
 Terminal Canvas terminal, the new card opens beside that terminal, joined to it by an arrow, and
 starts immediately. Programs outside the canvas can ask the running app too; their card opens beside
 the card they name with `--parent`, or in view on its own. The caller gets the new card's ID, or why
-nothing opened, and with `--log` can read the new terminal's output as it runs.
+nothing opened and what to do next, including the folder and command to open by hand, and with
+`--log` can read the new terminal's output as it runs. If the app cannot find its `tc-hook` helper,
+or cannot prepare one terminal's integration, a notification says so and the terminals still start.
 
 ```bash
 # Inside a terminal: Bash, zsh, or Git Bash (Claude Code's Bash tool on Windows)

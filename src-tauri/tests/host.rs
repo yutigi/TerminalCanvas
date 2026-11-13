@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use tc_core::workspace::{create_card, create_workspace};
 use tc_pty::manager::{Backend, Config, EventSink, ExitStatus, Process, SessionEvent, SessionKey, SpawnRequest};
-use terminal_canvas::host::{BoxFuture, FileKind, Host, Paths, Platform};
+use terminal_canvas::host::{BoxFuture, FileKind, HELPER_MISSING, Host, Paths, Platform};
 
 #[derive(Default)]
 struct FakePlatform {
@@ -127,7 +127,13 @@ struct Harness {
     folder: PathBuf,
 }
 impl Harness {
+    /// A host without `tc-hook`, so terminals start without integration.
     fn new() -> Self {
+        Self::with_hook(false)
+    }
+    /// With `hook`, the host is told `tc-hook` is in the test folder; nothing runs it unless a
+    /// terminal starts.
+    fn with_hook(hook: bool) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let folder = std::env::temp_dir().join(format!(
             "tc-host-{}-{}",
@@ -143,7 +149,7 @@ impl Harness {
         let host = Host::new(
             Paths {
                 data: folder.clone(),
-                hook: None,
+                hook: hook.then(|| folder.join("tc-hook")),
             },
             platform.clone(),
             Box::new(backend),
@@ -295,6 +301,26 @@ async fn links_are_normalized_and_unsafe_links_never_reach_the_os() {
             .await
             .unwrap_err(),
         "No default browser available."
+    );
+}
+
+#[tokio::test]
+async fn startup_reports_a_missing_hook_so_users_know_why_nothing_can_open_terminals() {
+    let h = Harness::with_hook(true);
+    let initial = h.host.command("initialize", None).await.unwrap();
+    assert!(initial.get("warning").is_none(), "{initial}");
+
+    let h = Harness::new();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    assert_eq!(initial["warning"], HELPER_MISSING);
+    // A workspace that cannot be restored is reported along with it.
+    std::fs::write(h.recovery(), b"{").unwrap();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    let warning = initial["warning"].as_str().unwrap();
+    assert!(
+        warning.starts_with("Could not restore your last workspace: ")
+            && warning.ends_with(&format!(" {HELPER_MISSING}")),
+        "{warning}"
     );
 }
 
@@ -602,7 +628,10 @@ async fn legacy_autosave_and_portable_images_open_stopped_and_rust_files_are_rea
             }
         }
         let restored = h.host.command("initialize", None).await.unwrap();
-        assert!(restored.get("warning").is_none(), "{input}: {restored}");
+        assert_eq!(
+            restored["warning"], HELPER_MISSING,
+            "{input}: only the harness's missing hook is reported: {restored}"
+        );
         assert_eq!(validate_workspace(&restored["workspace"]).unwrap(), expected);
         assert_eq!(h.host.running().await, 0);
         assert!(
