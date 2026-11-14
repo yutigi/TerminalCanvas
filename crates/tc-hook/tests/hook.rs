@@ -603,13 +603,18 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
         )),
         "a failure says how to continue by hand: {stderr}"
     );
-    // A terminal's request folder disappears when its terminal ends.
+    // A terminal's request folder disappears when its terminal ends, and a sandbox with its own
+    // temporary folder cannot see it either.
     let ended = hook(&["new-terminal", "--command", "codex"], &folder)
         .env(tc_core::launch::ENV, folder.join("ended terminal"))
         .output()
         .unwrap();
     assert_eq!(ended.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&ended.stderr);
+    assert!(
+        stderr.contains("a sandbox may hide it (run this command outside the sandbox, or approve it)"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("pass --parent with its TC_CARD_ID to ask the app instead"),
         "{stderr}"
@@ -678,7 +683,10 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
             None
         })
     };
-    let host = app(Some(json!({ "status": "opened", "card": "card-7", "log": "ignored" })));
+    let host = app(Some(json!({
+        "status": "opened", "card": "card-7", "log": "ignored",
+        "warning": "The new terminal started without Terminal Canvas integration."
+    })));
     let opened = run(&["--command", "ls", "--log"]);
     let id = host.join().unwrap().unwrap();
     assert_eq!(
@@ -694,6 +702,10 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
     );
     let log = tc_core::launch::log_path(&inbox, &id);
     assert!(stdout.contains(&format!("Output log: {}", log.display())), "{stdout}");
+    assert!(
+        stdout.contains("Warning: The new terminal started without Terminal Canvas integration."),
+        "the app's warning about the new terminal is passed on: {stdout}"
+    );
     assert!(
         !tc_core::launch::result_path(&inbox, &id).exists(),
         "the answer is consumed"
@@ -721,14 +733,99 @@ fn new_terminal_queues_a_validated_request_for_the_host() {
     );
     assert!(report["id"].is_string());
 
-    // Taken but never answered: the caller learns a terminal may still open.
+    // Taken but never answered: the caller learns a terminal may still open, and where its output
+    // would go.
     let host = app(None);
-    let unconfirmed = run(&["--timeout", "2", "--json"]);
+    let unconfirmed = run(&["--timeout", "2", "--log", "--json"]);
+    let id = host.join().unwrap().unwrap();
+    assert_eq!(unconfirmed.status.code(), Some(4));
+    let report: Value = serde_json::from_slice(&unconfirmed.stdout).unwrap();
+    assert_eq!(report["status"], "unconfirmed");
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("did not report the result within 2 seconds"),
+        "{report}"
+    );
+    assert_eq!(
+        report["log"],
+        tc_core::launch::log_path(&inbox, &id).to_string_lossy().as_ref(),
+        "{report}"
+    );
+    // Opening it by hand waits until the user has checked the canvas, so it never opens twice.
+    let host = app(None);
+    let unconfirmed = run(&["--timeout", "1", "--command", "npm test"]);
     host.join().unwrap().unwrap();
     assert_eq!(unconfirmed.status.code(), Some(4));
-    assert_eq!(
-        serde_json::from_slice::<Value>(&unconfirmed.stdout).unwrap()["status"],
-        "unconfirmed"
+    let stderr = String::from_utf8_lossy(&unconfirmed.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "If no new terminal appears on the canvas, open it yourself: start a terminal in {} and run: npm test",
+            folder.display()
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("To open it yourself"), "{stderr}");
+
+    // An unreadable answer is not reported as a slow app.
+    let unreadable = {
+        let inbox = inbox.clone();
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(taken) = take_requests(&inbox, Platform::current()).pop() {
+                    std::fs::write(tc_core::launch::result_path(&inbox, &taken.id.unwrap()), "{").unwrap();
+                    return;
+                }
+            }
+        })
+    };
+    let garbled = run(&["--json"]);
+    unreadable.join().unwrap();
+    assert_eq!(garbled.status.code(), Some(4));
+    let report: Value = serde_json::from_slice(&garbled.stdout).unwrap();
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("its answer could not be read"),
+        "{report}"
+    );
+
+    // Nor is a request folder that disappears, as when the terminal that asked ends.
+    let short_lived = folder.join("short-lived");
+    std::fs::create_dir_all(&short_lived).unwrap();
+    let ending = {
+        let inbox = short_lived.clone();
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if !take_requests(&inbox, Platform::current()).is_empty() {
+                    std::fs::remove_dir_all(&inbox).unwrap();
+                    return;
+                }
+            }
+        })
+    };
+    let started = std::time::Instant::now();
+    let orphaned = hook(&["new-terminal", "--timeout", "30", "--json"], &folder)
+        .env(tc_core::launch::ENV, &short_lived)
+        .output()
+        .unwrap();
+    ending.join().unwrap();
+    assert_eq!(orphaned.status.code(), Some(4));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "it stops waiting at once"
+    );
+    let report: Value = serde_json::from_slice(&orphaned.stdout).unwrap();
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("disappeared before Terminal Canvas answered, usually because the terminal that asked has ended"),
+        "{report}"
     );
 
     // Without a host, the request is withdrawn so it cannot open a terminal later.

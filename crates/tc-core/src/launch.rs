@@ -203,8 +203,31 @@ pub fn write_request(inbox: &Path, request: &LaunchRequest) -> io::Result<(Strin
     Ok((id, file))
 }
 
+/// Moves request `file` aside under a name ending in `suffix`, which no poll takes. A rename is
+/// atomic, so when the app takes a request while its sender withdraws it, exactly one succeeds.
+fn claim(file: &Path, suffix: &str) -> io::Result<PathBuf> {
+    let mut claimed = file.with_extension("").into_os_string();
+    claimed.push(suffix);
+    let claimed = PathBuf::from(claimed);
+    fs::rename(file, &claimed)?;
+    Ok(claimed)
+}
+
+/// Withdraws a request the app has not taken, so it never opens a terminal. Returns `false` when the
+/// app took it first (or it is gone for another reason): a terminal may then still open.
+pub fn withdraw_request(file: &Path) -> bool {
+    match claim(file, ".withdrawn") {
+        Ok(claimed) => {
+            let _ = fs::remove_file(claimed);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Takes up to [`REQUESTS_PER_POLL`] finished requests from `inbox`, oldest first, removing each
-/// file. Each request is parsed, or carries the reason it was refused.
+/// file. Each request is parsed, or carries the reason it was refused. A request is claimed before
+/// it is read, so one its sender withdrew at the same moment is skipped, never opened.
 pub fn take_requests(inbox: &Path, platform: Platform) -> Vec<Taken> {
     let Ok(entries) = fs::read_dir(inbox) else {
         return Vec::new();
@@ -226,10 +249,12 @@ pub fn take_requests(inbox: &Path, platform: Platform) -> Vec<Taken> {
     files
         .into_iter()
         .take(REQUESTS_PER_POLL)
-        .map(|(_, file)| {
-            let read = read_request(&file);
+        .filter_map(|(_, file)| {
+            // Withdrawn by its sender since the folder was listed.
+            let claimed = claim(&file, ".taken").ok()?;
+            let read = read_request(&claimed);
             // A request runs at most once, even when it cannot be parsed.
-            let _ = fs::remove_file(&file);
+            let _ = fs::remove_file(&claimed);
             let id = file
                 .file_stem()
                 .and_then(|stem| stem.to_str())
@@ -239,7 +264,7 @@ pub fn take_requests(inbox: &Path, platform: Platform) -> Vec<Taken> {
                 Some(_) => read.and_then(|raw| validate_request(&raw, platform)),
                 None => invalid("Invalid terminal request name."),
             };
-            Taken { id, request }
+            Some(Taken { id, request })
         })
         .collect()
 }
@@ -361,6 +386,30 @@ mod tests {
             0,
             "startup discards stale requests"
         );
+        fs::remove_dir_all(inbox).unwrap();
+    }
+
+    #[test]
+    fn a_request_is_either_taken_or_withdrawn_never_both() {
+        let inbox = folder();
+        let request = validate_request(&json!({ "cwd": "/a" }), Platform::Linux).unwrap();
+        let (_, withdrawn) = write_request(&inbox, &request).unwrap();
+        assert!(withdraw_request(&withdrawn));
+        assert!(
+            take_requests(&inbox, Platform::Linux).is_empty(),
+            "a withdrawn request never opens"
+        );
+        assert_eq!(fs::read_dir(&inbox).unwrap().count(), 0, "nothing is left behind");
+
+        let (id, taken) = write_request(&inbox, &request).unwrap();
+        let polled = take_requests(&inbox, Platform::Linux);
+        assert_eq!(polled.len(), 1);
+        assert_eq!(polled[0].id.as_deref(), Some(id.as_str()));
+        assert!(
+            !withdraw_request(&taken),
+            "once the app has taken a request, its sender learns a terminal may still open"
+        );
+        assert_eq!(fs::read_dir(&inbox).unwrap().count(), 0);
         fs::remove_dir_all(inbox).unwrap();
     }
 

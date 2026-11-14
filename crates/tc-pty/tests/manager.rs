@@ -329,23 +329,41 @@ fn shell_initialization_runs_before_a_saved_ai_command_or_resume() {
 #[test]
 fn a_terminal_whose_integration_cannot_be_prepared_starts_without_it_and_says_why() {
     // The app may itself run in a Terminal Canvas terminal; that terminal's variables must not leak.
+    // Windows matches names case-insensitively, so other spellings must not leak either.
     let inherited = [
         ("TC_HOOK", "C:\\outer\\tc-hook.exe"),
         ("TC_LAUNCH_DIR", "C:\\outer\\tc-launch"),
         ("TC_SESSION_FILE", "C:\\outer\\session.json"),
         ("TC_LAUNCH_TOKEN", SAVED_ID),
+        ("Tc_Hook", "C:\\outer\\tc-hook.exe"),
+        ("tc_launch_dir", "C:\\outer\\tc-launch"),
         ("TC_CARD_ID", "outer-card"),
+        ("Tc_Card_Id", "outer-card"),
+        ("terminal_canvas", "1"),
     ];
     let env: Vec<_> = WINDOWS_ENV.iter().copied().chain(inherited).collect();
-    let integrations: Integrations = Box::new(|_, _| {
+    // Fails twice, works once, then fails again.
+    let mut calls = 0;
+    let integrations: Integrations = Box::new(move |_, _| {
+        calls += 1;
+        if calls == 3 {
+            return Ok(Some(Integration::new(
+                None,
+                None,
+                std::env::temp_dir().join("tc-unused-session.json"),
+                Vec::new(),
+            )));
+        }
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "C:\\Users\\me\\AppData\\Local\\Temp\\tc-launch-1: Access is denied.",
         ))
     });
     let mut h = harness_with(config(Platform::Windows, &env), Some(integrations));
+    let [second, third, fourth] = [(); 3].map(|()| card(json!({})));
     let card = card(json!({ "profile": "codex" }));
     h.start(&card).expect("the terminal still starts");
+    assert_eq!(h.manager.integrated(id(&card)), Some(false));
     let launch = h.launch(0);
     assert_eq!(
         launch.args[..5],
@@ -358,10 +376,23 @@ fn a_terminal_whose_integration_cannot_be_prepared_starts_without_it_and_says_wh
         ],
         "the plain PowerShell bootstrap runs instead"
     );
-    for (key, _) in &inherited[..4] {
-        assert_eq!(launch.env.get(*key), None, "{key} names another terminal's files");
-    }
-    assert_eq!(launch.env["TC_CARD_ID"], id(&card));
+    let ours = |env: &BTreeMap<String, String>| -> Vec<(String, String)> {
+        env.iter()
+            .filter(|(key, _)| {
+                let key = key.to_ascii_uppercase();
+                key.starts_with("TC_") || key == "TERMINAL_CANVAS"
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    };
+    assert_eq!(
+        ours(&launch.env),
+        [
+            ("TC_CARD_ID".to_owned(), id(&card).to_owned()),
+            ("TERMINAL_CANVAS".to_owned(), "1".to_owned())
+        ],
+        "only this terminal's own values remain"
+    );
     assert_eq!(h.writes(0), ["codex\r"]);
     let errors = h.of_type("error");
     assert_eq!(errors.len(), 1, "{errors:?}");
@@ -372,17 +403,65 @@ fn a_terminal_whose_integration_cannot_be_prepared_starts_without_it_and_says_wh
         "{message}"
     );
     assert!(message.contains("cannot open terminals on the canvas"), "{message}");
+    assert!(
+        message.contains("Make that location writable, then restart the terminal."),
+        "{message}"
+    );
+
+    // A folder that stays broken fails every start; one notice covers them until a start works.
+    h.start(&second).unwrap();
+    assert_eq!(h.of_type("error").len(), 1, "no repeated notice");
+    h.start(&third).unwrap();
+    assert_eq!(h.manager.integrated(id(&third)), Some(true));
+    h.start(&fourth).unwrap();
+    let errors = h.of_type("error");
+    assert_eq!(errors.len(), 2, "a new failure after a working start is reported");
+    assert_eq!(errors[1]["id"], id(&fourth));
+    assert_eq!(h.manager.integrated("not-running"), None);
     h.manager.stop_all();
 
     // Without any integration (no tc-hook), inherited variables are dropped as well, silently: the
     // app reports a missing hook once, when it starts.
     let mut h = harness_with(config(Platform::Windows, &env), None);
     h.start(&card).unwrap();
-    for (key, _) in &inherited[..4] {
-        assert_eq!(h.launch(0).env.get(*key), None, "{key}");
-    }
+    assert_eq!(ours(&h.launch(0).env).len(), 2, "{:?}", h.launch(0).env);
     assert!(h.of_type("error").is_empty());
     h.manager.stop_all();
+
+    // Elsewhere names are case-sensitive: `tc_hook` is another variable, and is kept.
+    let unix = [
+        ("SHELL", "/bin/bash"),
+        ("TC_HOOK", "/outer/tc-hook"),
+        ("tc_hook", "kept"),
+    ];
+    let mut h = harness_with(config(Platform::Linux, &unix), None);
+    h.start(&card).unwrap();
+    assert_eq!(h.launch(0).env.get("TC_HOOK"), None);
+    assert_eq!(h.launch(0).env["tc_hook"], "kept");
+    h.manager.stop_all();
+}
+
+#[test]
+fn integration_warnings_say_how_to_fix_the_cause() {
+    let warning = |kind: io::ErrorKind| {
+        let integrations: Integrations = Box::new(move |_, _| {
+            Err(io::Error::new(
+                kind,
+                "C:\\Users\\me\\AppData\\Local\\Temp\\tc-launch-1: failed",
+            ))
+        });
+        let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
+        h.start(&card(json!({}))).unwrap();
+        let message = h.of_type("error")[0]["message"].as_str().unwrap().to_owned();
+        h.manager.stop_all();
+        message
+    };
+    assert!(warning(io::ErrorKind::PermissionDenied).contains("Make that location writable"));
+    assert!(warning(io::ErrorKind::NotFound).contains("Make sure that folder exists"));
+    assert!(warning(io::ErrorKind::StorageFull).contains("Free some disk space"));
+    let other = warning(io::ErrorKind::InvalidData);
+    assert!(other.contains("Fix the problem with that location"), "{other}");
+    assert!(!other.contains("writable"), "{other}");
 }
 
 #[test]

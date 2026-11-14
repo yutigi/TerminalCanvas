@@ -15,7 +15,8 @@
 //! did not answer in time (a terminal may still open).
 //!
 //! Every failure says what to do next. Once the request is valid, a failure also reports it, so the
-//! caller can tell the user which folder and command to open by hand.
+//! caller can tell the user which folder and command to open by hand. When a terminal may still
+//! open (`unconfirmed`), that advice waits until the user has checked the canvas.
 
 use std::env;
 use std::io;
@@ -49,54 +50,103 @@ when that terminal ends.
 unconfirmed, unavailable, or usage. Exit codes: 0 opened/queued, 1 usage/unavailable,
 2 refused/failed, 3 timeout (nothing opens), 4 unconfirmed (the app took the request but did not
 answer in time; a terminal may still open). A failure says what to do next and, once the request
-is valid, names the folder and command to open by hand (\"request\" with --json).";
+is valid, names the folder and command to open by hand (\"request\" with --json); for unconfirmed,
+only after checking the canvas.";
 
 /// How long to wait for the app to take a request by default.
 const WAIT: Duration = Duration::from_secs(10);
+
+/// The inbox a request went to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Via {
+    /// The requesting terminal's own inbox, `TC_LAUNCH_DIR`.
+    Terminal,
+    /// The app's inbox in its data folder.
+    App,
+}
+
+impl Via {
+    fn as_str(self) -> &'static str {
+        match self {
+            Via::Terminal => "terminal",
+            Via::App => "app",
+        }
+    }
+}
 
 struct Output {
     json: bool,
     /// The validated request, so a failure can say how to open it by hand.
     request: Option<LaunchRequest>,
-    /// The request's ID and inbox kind, once it has been written.
-    sent: Option<(String, &'static str)>,
+    /// The request's ID and inbox, once it has been written.
+    sent: Option<(String, Via)>,
+    /// Where the new terminal's output goes, when `--log` asked for it.
+    log: Option<PathBuf>,
 }
 
 impl Output {
-    /// A JSON report with `status` and what is known about the request so far.
-    fn report(&self, status: &str) -> Value {
+    /// A JSON report with `status` and what is known about the request so far. The log path is
+    /// only worth following when a terminal opened or may still open.
+    fn report(&self, status: &str, may_open: bool) -> Value {
         let mut report = json!({ "status": status });
         if let Some((id, via)) = &self.sent {
             report["id"] = id.as_str().into();
-            report["via"] = (*via).into();
+            report["via"] = via.as_str().into();
         }
         if let Some(request) = &self.request {
             report["request"] = json!(request);
         }
+        if let Some(log) = self.log.as_ref().filter(|_| may_open) {
+            report["log"] = log.to_string_lossy().into_owned().into();
+        }
         report
     }
 
-    /// Reports a failure on stderr, or as a JSON status on stdout. Once the request is valid, the
-    /// report includes it; as text, that is the folder and command to open by hand.
+    /// Reports a failure after which no terminal opens, on stderr or as a JSON status on stdout.
+    /// Once the request is valid, the report includes it; as text, that is the folder and command to
+    /// open by hand.
     fn fail(&self, code: u8, status: &str, message: &str) -> ExitCode {
         if self.json {
-            let mut report = self.report(status);
+            let mut report = self.report(status, false);
             report["error"] = message.into();
             println!("{report}");
         } else {
             eprintln!("tc-hook new-terminal: {message}");
             if let Some(request) = &self.request {
-                eprintln!("{}", by_hand(request));
+                eprintln!("To open it yourself, {}", by_hand(request));
             }
         }
         ExitCode::from(code)
     }
 
-    /// Reports success. `extra` holds the card ID, the parent it opened beside, and the log path,
-    /// when known.
+    /// Reports that the app took the request but its outcome is unknown, so a terminal may still
+    /// open. The report keeps the log such a terminal writes to, and opening the terminal by hand
+    /// waits until the user has checked the canvas, so it never opens twice.
+    fn unconfirmed(&self, message: &str) -> ExitCode {
+        if self.json {
+            let mut report = self.report("unconfirmed", true);
+            report["error"] = message.into();
+            println!("{report}");
+        } else {
+            eprintln!("tc-hook new-terminal: {message}");
+            if let Some(log) = &self.log {
+                eprintln!("If it opens, its output goes to {}", log.display());
+            }
+            if let Some(request) = &self.request {
+                eprintln!(
+                    "If no new terminal appears on the canvas, open it yourself: {}",
+                    by_hand(request)
+                );
+            }
+        }
+        ExitCode::from(4)
+    }
+
+    /// Reports success. `extra` holds the card ID, the parent it opened beside, and any warning from
+    /// the app, when known.
     fn done(&self, status: &str, extra: Map<String, Value>, message: &str) -> ExitCode {
         if self.json {
-            let mut report = self.report(status);
+            let mut report = self.report(status, true);
             for (key, value) in extra {
                 report[key] = value;
             }
@@ -108,14 +158,12 @@ impl Output {
     }
 }
 
-/// Tells the user how to open the requested terminal without Terminal Canvas.
+/// How to open the requested terminal without Terminal Canvas, such as "start a terminal in /repo
+/// and run: npm test".
 fn by_hand(request: &LaunchRequest) -> String {
     match request.command.as_str() {
-        "" => format!("To open it yourself, start a terminal in {}.", request.cwd),
-        command => format!(
-            "To open it yourself, start a terminal in {} and run: {command}",
-            request.cwd
-        ),
+        "" => format!("start a terminal in {}.", request.cwd),
+        command => format!("start a terminal in {} and run: {command}", request.cwd),
     }
 }
 
@@ -130,9 +178,11 @@ fn seconds(wait: Duration) -> String {
 }
 
 /// Why a request could not be written to `inbox`, and what to do about it.
-fn unwritable(inbox: &Path, via: &str, error: &io::Error) -> String {
-    let next = if error.kind() == io::ErrorKind::NotFound && via == "terminal" {
-        "This terminal's request folder no longer exists; pass --parent with its TC_CARD_ID to ask the app instead."
+fn unwritable(inbox: &Path, via: Via, error: &io::Error) -> String {
+    // A sandbox with a private temporary folder cannot see the folder either, and is the likelier
+    // cause while the terminal that set it still runs this command.
+    let next = if error.kind() == io::ErrorKind::NotFound && via == Via::Terminal {
+        "This terminal's request folder is not visible here: a sandbox may hide it (run this command outside the sandbox, or approve it), or the terminal that set TC_LAUNCH_DIR has ended (pass --parent with its TC_CARD_ID to ask the app instead)."
     } else {
         "If a sandbox blocks writes there, run this command outside the sandbox (approve it), or allow writes to that folder."
     };
@@ -147,6 +197,7 @@ pub fn run(args: &[String]) -> ExitCode {
         json: false,
         request: None,
         sent: None,
+        log: None,
     };
     let mut rest = args.iter();
     let usage = |output: &Output, message: &str| {
@@ -219,7 +270,7 @@ pub fn run(args: &[String]) -> ExitCode {
         .map(PathBuf::from)
         .filter(|_| request.parent.is_none() && data_dir.is_none());
     let (inbox, via) = match terminal_inbox {
-        Some(inbox) => (inbox, "terminal"),
+        Some(inbox) => (inbox, Via::Terminal),
         None => {
             let data = data_dir
                 .or_else(|| {
@@ -246,7 +297,7 @@ pub fn run(args: &[String]) -> ExitCode {
                     ),
                 );
             }
-            (inbox, "app")
+            (inbox, Via::App)
         }
     };
     let (id, file) = match write_request(&inbox, &request) {
@@ -254,16 +305,19 @@ pub fn run(args: &[String]) -> ExitCode {
         Err(error) => return output.fail(1, "unavailable", &unwritable(&inbox, via, &error)),
     };
     output.sent = Some((id.clone(), via));
-    let log = request.log.then(|| log_path(&inbox, &id));
+    output.log = request.log.then(|| log_path(&inbox, &id));
     let mut extra = Map::new();
     let mut lines = Vec::new();
-    if let Some(log) = &log {
-        extra.insert("log".into(), log.to_string_lossy().into_owned().into());
+    if let Some(log) = &output.log {
         lines.push(format!("Output log: {}", log.display()));
     }
     // A terminal's own inbox always opens beside that terminal, or not at all. The app inbox only
     // knows which parent it used once it answers: a named card may have closed.
-    let own_parent = || (via == "terminal").then(|| env::var(launch::CARD_ENV).ok()).flatten();
+    let own_parent = || {
+        (via == Via::Terminal)
+            .then(|| env::var(launch::CARD_ENV).ok())
+            .flatten()
+    };
     let Some(wait) = wait else {
         if let Some(parent) = own_parent() {
             extra.insert("parent".into(), parent.into());
@@ -275,9 +329,9 @@ pub fn run(args: &[String]) -> ExitCode {
     while file.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
-    // Withdraw a request the app has not taken, so it cannot open a terminal later. If the app
-    // took it in the meantime, the file is already gone and removing it fails.
-    if file.exists() && std::fs::remove_file(&file).is_ok() {
+    // Withdraw a request the app has not taken, so it cannot open a terminal later. The app claims
+    // a request the same way before reading it, so when both try at once, only one succeeds.
+    if launch::withdraw_request(&file) {
         return output.fail(
             3,
             "timeout",
@@ -293,22 +347,28 @@ pub fn run(args: &[String]) -> ExitCode {
     let answer = loop {
         if let Ok(text) = std::fs::read_to_string(&answer_file) {
             let _ = std::fs::remove_file(&answer_file);
-            break serde_json::from_str::<Value>(&text).ok();
+            match serde_json::from_str::<Value>(&text) {
+                Ok(answer) => break answer,
+                Err(_) => {
+                    return output.unconfirmed(
+                        "Terminal Canvas answered, but its answer could not be read; a terminal may have opened. Check the canvas before opening one yourself.",
+                    );
+                }
+            }
         }
-        if Instant::now() >= answer_deadline || !inbox.is_dir() {
-            break None;
+        if !inbox.is_dir() {
+            return output.unconfirmed(&format!(
+                "the request folder {} disappeared before Terminal Canvas answered, usually because the terminal that asked has ended; a terminal may still open. Check the canvas before opening one yourself.",
+                inbox.display()
+            ));
         }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-    let Some(answer) = answer else {
-        return output.fail(
-            4,
-            "unconfirmed",
-            &format!(
+        if Instant::now() >= answer_deadline {
+            return output.unconfirmed(&format!(
                 "Terminal Canvas took the request but did not report the result within {}; a terminal may still open. Check the canvas before opening one yourself.",
                 seconds(wait)
-            ),
-        );
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
     };
     let text = |key: &str| answer.get(key).and_then(Value::as_str);
     match (text("status"), text("card")) {
@@ -324,6 +384,11 @@ pub fn run(args: &[String]) -> ExitCode {
                 0,
                 format!("Terminal Canvas opened a new terminal: {} (card {card})", request.title),
             );
+            // For example, the new terminal started without integration, so it cannot open more.
+            if let Some(warning) = text("warning") {
+                extra.insert("warning".into(), warning.into());
+                lines.push(format!("Warning: {warning}"));
+            }
             output.done("opened", extra, &lines.join("\n"))
         }
         (status, _) => {
@@ -346,17 +411,23 @@ mod tests {
     fn failures_say_what_to_do_next() {
         let inbox = Path::new("inbox");
         let denied = io::Error::from(io::ErrorKind::PermissionDenied);
-        for via in ["terminal", "app"] {
+        for via in [Via::Terminal, Via::App] {
             assert!(
                 unwritable(inbox, via, &denied).ends_with(
                     "If a sandbox blocks writes there, run this command outside the sandbox (approve it), or allow writes to that folder."
                 ),
-                "{via}"
+                "{via:?}"
             );
         }
+        // A missing terminal folder: the terminal ended, or a sandbox has its own temporary folder.
         let gone = io::Error::from(io::ErrorKind::NotFound);
-        assert!(unwritable(inbox, "terminal", &gone).contains("pass --parent with its TC_CARD_ID"));
-        assert!(unwritable(inbox, "app", &gone).contains("If a sandbox blocks writes there"));
+        let missing = unwritable(inbox, Via::Terminal, &gone);
+        assert!(
+            missing.contains("a sandbox may hide it (run this command outside the sandbox"),
+            "{missing}"
+        );
+        assert!(missing.contains("pass --parent with its TC_CARD_ID"), "{missing}");
+        assert!(unwritable(inbox, Via::App, &gone).contains("If a sandbox blocks writes there"));
 
         assert_eq!(seconds(Duration::from_secs(1)), "1 second");
         assert_eq!(seconds(Duration::from_secs(10)), "10 seconds");
@@ -373,8 +444,8 @@ mod tests {
         };
         assert_eq!(
             by_hand(&request("codex \"Read the handover\"")),
-            "To open it yourself, start a terminal in /repo and run: codex \"Read the handover\""
+            "start a terminal in /repo and run: codex \"Read the handover\""
         );
-        assert_eq!(by_hand(&request("")), "To open it yourself, start a terminal in /repo.");
+        assert_eq!(by_hand(&request("")), "start a terminal in /repo.");
     }
 }

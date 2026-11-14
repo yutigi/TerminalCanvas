@@ -58,11 +58,12 @@ const mark = profile => {
     el.textContent = profile.initials;
     return el;
 };
+// A longer message, such as a startup warning with its fix, stays up long enough to read.
 function toast(message) {
     $('#toast').textContent = message;
     $('#toast').hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 6000);
+    toastTimer = setTimeout(() => { $('#toast').hidden = true; }, Math.max(6000, (message?.length || 0) * 60));
 }
 async function invoke(action, payload) {
     if (!bridge) throw new Error('Open Terminal Canvas with npm start.');

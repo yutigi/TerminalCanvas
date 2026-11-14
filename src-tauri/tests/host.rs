@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use tc_core::workspace::{create_card, create_workspace};
 use tc_pty::manager::{Backend, Config, EventSink, ExitStatus, Process, SessionEvent, SessionKey, SpawnRequest};
-use terminal_canvas::host::{BoxFuture, FileKind, HELPER_MISSING, Host, Paths, Platform};
+use terminal_canvas::host::{BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform};
 
 #[derive(Default)]
 struct FakePlatform {
@@ -313,15 +313,17 @@ async fn startup_reports_a_missing_hook_so_users_know_why_nothing_can_open_termi
     let h = Harness::new();
     let initial = h.host.command("initialize", None).await.unwrap();
     assert_eq!(initial["warning"], HELPER_MISSING);
-    // A workspace that cannot be restored is reported along with it.
+    // A workspace that cannot be restored is reported first, on its own line.
     std::fs::write(h.recovery(), b"{").unwrap();
     let initial = h.host.command("initialize", None).await.unwrap();
     let warning = initial["warning"].as_str().unwrap();
+    let lines: Vec<_> = warning.lines().collect();
+    assert_eq!(lines.len(), 2, "{warning}");
     assert!(
-        warning.starts_with("Could not restore your last workspace: ")
-            && warning.ends_with(&format!(" {HELPER_MISSING}")),
+        lines[0].starts_with("Could not restore your last workspace: "),
         "{warning}"
     );
+    assert_eq!(lines[1], HELPER_MISSING);
 }
 
 #[tokio::test]
@@ -753,7 +755,9 @@ async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_ap
     let answer: Value = serde_json::from_slice(&std::fs::read(result_path(&inbox, &id)).unwrap()).unwrap();
     assert_eq!(
         answer,
-        json!({ "status": "opened", "card": card_id, "parent": "parent-card", "log": log.to_string_lossy() })
+        json!({ "status": "opened", "card": card_id, "parent": "parent-card", "log": log.to_string_lossy(),
+            "warning": NO_INTEGRATION }),
+        "this harness has no tc-hook, so the requester learns the new terminal has no integration"
     );
     events(key, SessionEvent::Exit(ExitStatus { code: 0, signal: None }));
     h.host.running().await;
