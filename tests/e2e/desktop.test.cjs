@@ -129,7 +129,9 @@ test('native first-click typing reaches xterm and shell directory tracking follo
     await screenshot(h.page, 'native-input');
 });
 
-test('multi-message paste input keeps order, output flood pauses, and Stop kills the process tree', windows, async t => {
+// The paste alone may take a minute on a slow runner, and the other waits up to 15 s each, so this
+// test gets more than the default two minutes; otherwise it is cancelled before the paste reports.
+test('multi-message paste input keeps order, output flood pauses, and Stop kills the process tree', { ...windows, timeout: 240000 }, async t => {
     const h = await launch({ clean: true }); t.after(() => h.dispose());
     const { card, pids } = await ioFixture(h);
     // Longer than one input message, with a surrogate pair across the first piece boundary.
