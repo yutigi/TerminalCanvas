@@ -28,9 +28,12 @@ Every terminal the app starts has:
 | `TC_LAUNCH_DIR` | This terminal's private request folder |
 | `TC_CARD_ID` | This terminal's card ID, for `--parent` |
 
-All shells get them, including Command Prompt. A harness that filters the environment it passes to
-tool commands must let these through; otherwise the request goes to the app inbox and opens without
-an arrow, unless you pass `--parent "$TC_CARD_ID"` from a process that still has it.
+All shells get them, including Command Prompt. `TC_HOOK` and `TC_LAUNCH_DIR` come from the
+terminal's integration, so they are missing when the app cannot find `tc-hook` or cannot prepare that
+terminal's integration; a notification then says why (see [When no terminal opens](#when-no-terminal-opens)).
+A harness that filters the environment it passes to tool commands must let these through; otherwise
+the request goes to the app inbox and opens without an arrow, unless you pass `--parent "$TC_CARD_ID"`
+from a process that still has it.
 
 Outside the canvas, `tc-hook` finds the running app through its data folder: `%APPDATA%\terminal-canvas`
 on Windows, `~/Library/Application Support/terminal-canvas` on macOS, `~/.config/terminal-canvas` on
@@ -74,7 +77,7 @@ limits (100, 4,096, and 2,000 characters).
 | 2 | `refused` | The request was invalid: unknown profile, missing folder, invalid parent, or a value over the limits |
 | 2 | `failed` | The app could not open it, for example when its working directory is unavailable or the terminal failed to start |
 | 3 | `timeout` | The app did not take the request in time; it was withdrawn and nothing opens |
-| 4 | `unconfirmed` | The app took the request but did not answer in time; a terminal may still open |
+| 4 | `unconfirmed` | The app took the request but its outcome is unknown: it did not answer in time, its answer could not be read, or the request folder disappeared. A terminal may still open |
 
 With `--json`:
 
@@ -87,10 +90,37 @@ With `--json`:
 sent; `reply` is `false` with `--no-wait`, and `parent` appears there when `--parent` named one.
 The top-level `parent` is the card the new one actually opened beside, as the app reports it: it is
 absent when the card opened on its own, including when the named parent no longer exists, and with
-`--no-wait` from the app inbox, since nothing is known yet. Failures carry `error` instead of `card`.
+`--no-wait` from the app inbox, since nothing is known yet. An `opened` report may carry `warning`,
+for example when the new terminal started without integration, so its AI session is not saved and
+programs in it cannot open more terminals.
+
+Failures carry `error` instead of `card`: what went wrong and what to do next. Once the request is
+valid, a failure also carries `request` (and `id` and `via` once it was written), so the caller can
+tell the user which folder and command to open by hand. Without `--json`, the same advice goes to
+stderr, ending with a line such as
+`To open it yourself, start a terminal in D:\repo and run: codex "Review this branch"`.
+`unconfirmed` is different: a terminal may still open, so it keeps `log`, and the line reads
+`If no new terminal appears on the canvas, open it yourself: ...`. Opening it by hand before
+checking the canvas can leave two copies running.
 
 The new card's ID can be passed as `--parent` later, so an orchestrating program can build chains of
 terminals from outside the canvas.
+
+## When no terminal opens
+
+| What you see | Cause | What to do |
+| --- | --- | --- |
+| `TERMINAL_CANVAS` is `1` but `TC_HOOK` is unset | This terminal has no integration: the app started without `tc-hook` next to it (a notification said so at startup), or this terminal's integration files could not be written (a notification named the folder and what to fix). A harness that filters the environment also drops it | Reinstall Terminal Canvas if `tc-hook` is missing (in a development build, run `cargo build -p tc-hook`), or fix the folder the notification named; then restart the terminal. For a harness, let `TC_*` variables through |
+| `unavailable`: `... does not exist): start the app first` | No running app has used that data folder, for example when the command runs as another user | Start Terminal Canvas, or pass `--data-dir` with the running app's data folder |
+| `unavailable`: `could not write the request ... If a sandbox blocks writes there` | A sandbox blocks the request folder | Run the command outside the sandbox (approve it), or allow writes to the folder |
+| `unavailable`: `This terminal's request folder is not visible here` | A sandbox with its own temporary folder hides it, or the terminal that set `TC_LAUNCH_DIR` has ended | Run the command outside the sandbox (approve it); if the terminal ended, pass `--parent "$TC_CARD_ID"` to ask the app instead |
+| `timeout` | The app is closed or not responding; the request was withdrawn | Check that the app is running, then retry, with a longer `--timeout` if it is busy |
+| `unconfirmed` | The app took the request, but did not answer in time, sent an unreadable answer, or the requesting terminal ended | Check the canvas; open the terminal by hand only if none appeared |
+| `refused` / `failed` | The request or the new terminal was rejected; `error` says why | Fix what `error` names, or open the terminal by hand |
+
+Starting a terminal application from inside an agent sandbox often fails as well, so the dependable
+fallback is to report `error` and give the user the folder and command from `request` to open
+themselves.
 
 ## Following a terminal's output
 
@@ -113,6 +143,8 @@ So a program can wait for a result by reading the file until that line appears:
 ```bash
 report=$("$TC_HOOK" new-terminal --title "Tests" --command 'npm test; exit $?' --log --json)
 log=$(printf '%s' "$report" | sed -n 's/.*"log":"\([^"]*\)".*/\1/p')
+# No log means nothing opened (or will): the report's error says why.
+[ -n "$log" ] || { printf '%s\n' "$report"; exit 1; }
 until grep -q '^\[Terminal Canvas: the process exited' "$log" 2>/dev/null; do sleep 2; done
 tail -n 40 "$log"
 ```
@@ -162,10 +194,14 @@ canvas (a fresh agent session, a long-running server, a parallel task), run
 `"$TC_HOOK" new-terminal --title "<name>" --cwd "<folder>" --command "<command>" --json`.
 Use `--profile claude|codex|gemini` to start that agent with its default command. The new terminal
 opens beside yours, linked by an arrow, and starts immediately. Status `opened` (exit 0) gives the
-new card's ID; any other status means nothing opened (for `unconfirmed`, one may still open), so
-tell the user. To follow its output, add `--log` and read the file named by `log`; a line starting
-with `[Terminal Canvas: the process exited` marks the end. Never open more terminals than the task
-needs.
+new card's ID; pass on any `warning`. Status `unconfirmed` means one may still open: tell the user
+to check the canvas, and to open it by hand only if none appeared. Any other status means nothing
+opened: tell the user the `error`, which says what to do next, and the folder and command from
+`request` so they can open the terminal themselves. If `TC_HOOK` is unset, this terminal has no
+Terminal Canvas integration (the app showed why) or your harness dropped the variable: say so, and
+give the folder and command the same way.
+To follow its output, add `--log` and read the file named by `log`; a line starting with
+`[Terminal Canvas: the process exited` marks the end. Never open more terminals than the task needs.
 ```
 
 The Claude Code `session-handover` skill uses this command when it detects Terminal Canvas.
@@ -173,9 +209,9 @@ The Claude Code `session-handover` skill uses this command when it detects Termi
 ## Sandboxes
 
 Each terminal's request folder is in the system temporary folder, which agent sandboxes commonly allow
-writing to. If a sandbox still blocks the write, `tc-hook` exits 1 (`unavailable`) and names the
-folder. Approve the command, or allow writes to `TC_LAUNCH_DIR` (outside the canvas, to the app data
-folder's `launch-requests`).
+writing to. If a sandbox still blocks the write, `tc-hook` exits 1 (`unavailable`), names the
+folder, and says to run the command outside the sandbox. Approve the command, or allow writes to
+`TC_LAUNCH_DIR` (outside the canvas, to the app data folder's `launch-requests`).
 
 A new terminal is an ordinary terminal: it does **not** inherit the requesting agent's sandbox,
 approval rules, or permission mode. An agent allowed to run `tc-hook new-terminal` can therefore run

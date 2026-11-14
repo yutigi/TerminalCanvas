@@ -38,6 +38,14 @@ pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 /// and the unread paste held in memory, when a program reads its input slowly.
 const CLIPBOARD_UNITS: usize = 1024 * 1024;
 
+/// Shown at startup when the `tc-hook` sidecar is missing: without it, terminals have no
+/// integration, so nothing in them can ask for a new terminal.
+pub const HELPER_MISSING: &str = "Terminal Canvas could not find its helper, tc-hook, so AI sessions will not be saved and programs in terminals cannot open new ones. Reinstall Terminal Canvas (in a development build, run cargo build -p tc-hook), then restart it.";
+
+/// Added to the answer of a program whose new terminal started without integration, since it may
+/// plan to save that terminal's AI session or open more terminals from it.
+pub const NO_INTEGRATION: &str = "The new terminal started without Terminal Canvas integration (the app shows why), so its AI session will not be saved and programs in it cannot open terminals on the canvas.";
+
 /// The file dialogs the host shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
@@ -483,11 +491,14 @@ impl Host {
             }
             "initialize" => {
                 let mut workspace = create_workspace();
-                let mut warning = None;
+                let mut warnings = Vec::new();
                 match self.read_workspace(&self.paths.recovery()).await {
                     Ok(restored) => workspace = restored,
                     Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => warning = Some(format!("Could not restore your last workspace: {error}")),
+                    Err(error) => warnings.push(format!("Could not restore your last workspace: {error}")),
+                }
+                if self.paths.hook.is_none() {
+                    warnings.push(HELPER_MISSING.to_owned());
                 }
                 let restored = workspace.clone();
                 self.with_state(move |_, state| {
@@ -498,8 +509,9 @@ impl Host {
                 let mut result = json!({
                     "workspace": workspace, "profiles": PROFILES, "home": self.home, "platform": node_platform(self.os)
                 });
-                if let Some(warning) = warning {
-                    result["warning"] = json!(warning);
+                // One line each, the workspace first: the UI shows them together.
+                if !warnings.is_empty() {
+                    result["warning"] = json!(warnings.join("\n"));
                 }
                 Ok(result)
             }
@@ -568,11 +580,17 @@ impl Host {
                 let result = crate::launches::parse_result(payload)?;
                 let answered = self
                     .with_state(move |_, state| {
+                        let warning = result
+                            .card
+                            .as_deref()
+                            .filter(|card| state.manager.integrated(card) == Some(false))
+                            .map(|_| NO_INTEGRATION);
                         state.launches.answer(
                             &result.request,
                             result.card.as_deref(),
                             result.parent.as_deref(),
                             result.error.as_deref(),
+                            warning,
                         )
                     })
                     .await;
