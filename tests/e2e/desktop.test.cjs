@@ -134,15 +134,25 @@ test('multi-message paste input keeps order, output flood pauses, and Stop kills
     const { card, pids } = await ioFixture(h);
     // Longer than one input message, with a surrogate pair across the first piece boundary.
     const paste = 'p'.repeat(65535) + '🚀' + 'q'.repeat(134463), typed = 'typed-after-paste', unicode = 'native UTF-8 ไทย 工作 🚀';
+    const started = Date.now();
     await h.page.evaluate(({ id, paste, typed, unicode }) => {
         window.terminalCanvas.input(id, paste + '\r');
         window.terminalCanvas.input(id, typed + '\r');
         window.terminalCanvas.input(id, unicode + '\r');
     }, { id: card.id, paste, typed, unicode });
-    const records = await until(async () => {
-        const records = [...(await h.output(card.id)).matchAll(/INPUT_RECORD (\d+) ([a-f0-9]{64})/g)];
-        return records.length >= 3 && records;
-    }, 'Large paste and following input did not finish.');
+    // ConPTY turns each character into an input record, so 200,000 characters take 10-15 s on a
+    // hosted runner. Allow several times that, and report what arrived if it still runs out.
+    let records = [];
+    try {
+        await until(async () => {
+            records = [...(await h.output(card.id)).matchAll(/INPUT_RECORD (\d+) ([a-f0-9]{64})/g)];
+            return records.length >= 3;
+        }, 'Large paste and following input did not finish.', 60000);
+    } catch (error) {
+        const received = records.map(match => Number(match[1]));
+        throw new Error(`${error.message}\n${JSON.stringify({ received, output: (await h.output(card.id)).slice(-1000) })}`, { cause: error });
+    }
+    t.diagnostic(`Large paste and following input finished in ${Date.now() - started} ms.`);
     assert.deepEqual(records.slice(0, 3).map(match => [Number(match[1]), match[2]]), [paste, typed, unicode]
         .map(value => [value.length, createHash('sha256').update(value).digest('hex')]));
     await h.page.evaluate(id => {
