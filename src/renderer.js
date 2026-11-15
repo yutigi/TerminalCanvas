@@ -440,7 +440,9 @@ function mount(card) {
             if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
             // Ctrl/Cmd+0 resets the text size; Ctrl+- and Ctrl+= still reach the shell (Ctrl+- is readline undo).
-            if (modified && !event.shiftKey && (key === '0' || event.code === 'Digit0' || event.code === 'Numpad0')) {
+            // Digit0 covers layouts whose 0 needs Shift. Numpad0 is matched by its key only: without
+            // NumLock it is Insert, and Ctrl+Insert must keep reaching the shell.
+            if (modified && !event.shiftKey && (key === '0' || event.code === 'Digit0')) {
                 event.preventDefault();
                 event.stopPropagation();
                 if (event.type === 'keydown') setTerminalFontSize(card, TERMINAL_FONT.DEFAULT);

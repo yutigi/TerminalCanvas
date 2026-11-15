@@ -1139,6 +1139,9 @@ test('Ctrl/Cmd+0 resets terminal text size while Ctrl+- and Ctrl+= still reach t
     vm.runInContext(`setTerminalFontSize(workspace.cards[0], 20)`, context);
     assert.equal(shortcut(terminal, 'à', { code: 'Digit0' }).allowTerminal, false, 'layouts without a plain 0 key use its position');
     vm.runInContext(`setTerminalFontSize(workspace.cards[0], 20)`, context);
+    // Without NumLock the Numpad0 key is Insert, and Ctrl+Insert is a terminal shortcut of its own.
+    assert.equal(shortcut(terminal, 'Insert', { code: 'Numpad0' }).allowTerminal, true, 'Ctrl+Insert goes to the shell');
+    assert.deepEqual(size(first), [20, 20]);
     assert.equal(shortcut(terminal, '0', { ctrlKey: false, metaKey: true, code: 'Numpad0' }).allowTerminal, false);
     assert.deepEqual(size(first), [null, 12]);
 });
