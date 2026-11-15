@@ -52,11 +52,15 @@ class Element {
     close() { this.open = false; }
 }
 class KeyboardTerminal {
-    constructor() { this.selection = ''; this.pasted = []; }
-    loadAddon() {}
+    constructor(options = {}) { this.selection = ''; this.pasted = []; this.options = { ...options }; this.cols = 80; this.rows = 24; }
+    loadAddon(addon) { addon.activate?.(this); }
     open() {}
     onData(handler) { this.dataHandler = handler; }
-    onResize() {}
+    onResize(handler) { this.resizeHandler = handler; }
+    resize(cols, rows) {
+        if (cols === this.cols && rows === this.rows) return;
+        this.cols = cols; this.rows = rows; this.resizeHandler?.({ cols, rows });
+    }
     attachCustomKeyEventHandler(handler) { this.keyHandler = handler; }
     getSelection() { return this.selection; }
     hasSelection() { return !!this.selection; }
@@ -1026,6 +1030,143 @@ test('terminal Command+C/V aliases work without taking over Alt/AltGr, IME, or w
         assert.equal(result.event.stopped, false);
     }
     assert.equal(calls.filter(c => c.action === 'clipboard-write').length, 1);
+});
+
+// Cells grow with the text size, so a 600×400 terminal body fits fewer columns and rows.
+class SizedFit {
+    activate(terminal) { this.terminal = terminal; }
+    proposeDimensions() {
+        const size = this.terminal.options.fontSize;
+        return { cols: Math.floor(600 / (size * .6)), rows: Math.floor(400 / (size * 1.3)) };
+    }
+}
+const overCard = id => ({ closest: selector => selector === '.terminal-card' ? { dataset: { id } } : null });
+// Boots terminals whose output is showing, like running or exited cards, and returns a wheel helper.
+async function bootSizedTerminals(board, options = {}) {
+    const booted = await boot(board, { terminals: true, FitAddon: { FitAddon: SizedFit }, ...options });
+    booted.resizes = [];
+    booted.bridge.resize = (...args) => booted.resizes.push(args);
+    vm.runInContext(`for (const s of sessions.values()) {
+        s.status = 'running'; s.placeholder.hidden = true; s.element.offsetWidth = 600; s.element.offsetHeight = 400;
+    }`, booted.context);
+    booted.wheel = values => {
+        let prevented = false;
+        booted.elements.get('#viewport').dispatch('wheel', { ctrlKey: true, metaKey: false, deltaY: -100, deltaMode: 0, preventDefault() { prevented = true; }, ...values });
+        return prevented;
+    };
+    booted.size = id => json(booted.context, `[workspace.cards.find(c => c.id === ${JSON.stringify(id)}).fontSize ?? null, sessions.get(${JSON.stringify(id)}).terminal.options.fontSize]`);
+    return booted;
+}
+
+test('Ctrl/Cmd + wheel over the selected terminal scales its text one pixel per notch and resizes its PTY', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    const [first, second] = board.cards.map(card => card.id);
+    const { context, wheel, size, resizes } = await bootSizedTerminals(board);
+    vm.runInContext(`select(${JSON.stringify(first)})`, context);
+    const camera = () => json(context, 'workspace.camera');
+    const before = camera();
+    assert.deepEqual(size(first), [null, 12]);
+    assert.equal(wheel({ target: overCard(first) }), true);
+    assert.deepEqual(size(first), [13, 13]);
+    assert.deepEqual(resizes.at(-1), [first, Math.floor(600 / (13 * .6)), Math.floor(400 / (13 * 1.3))], 'the PTY gets the refitted grid');
+    assert.deepEqual(camera(), before, 'scaling text leaves the canvas camera alone');
+    wheel({ target: overCard(first), metaKey: true, ctrlKey: false, deltaY: 300 });
+    assert.deepEqual(size(first), [10, 10], 'Cmd + wheel works too, and scrolling down shrinks the text');
+    // Trackpad pinches send small deltas; they add up to a step, and a change of direction drops the remainder.
+    for (const deltaY of [-40, -40]) wheel({ target: overCard(first), deltaY });
+    assert.deepEqual(size(first), [10, 10]);
+    wheel({ target: overCard(first), deltaY: -40 });
+    assert.deepEqual(size(first), [11, 11]);
+    wheel({ target: overCard(first), deltaY: 90 });
+    assert.deepEqual(size(first), [11, 11], 'the -20 carried over is dropped, not added to 90');
+    wheel({ target: overCard(first), deltaY: -1, deltaMode: 1 });
+    assert.deepEqual(size(first), [11, 11]);
+    wheel({ target: overCard(first), deltaY: -3, deltaMode: 1 });
+    assert.deepEqual(size(first), [null, 12], 'line-mode deltas count as pixels');
+    assert.equal(json(context, `'fontSize' in workspace.cards[0]`), false, 'the default size is left out of the card');
+    wheel({ target: overCard(first), deltaY: -5000 });
+    assert.deepEqual(size(first), [32, 32]);
+    wheel({ target: overCard(first), deltaY: 9000 });
+    assert.deepEqual(size(first), [8, 8]);
+    assert.deepEqual(size(second), [null, 12], 'other terminals keep their size');
+    assert.deepEqual(camera(), before);
+    // Over an unselected terminal, or without Ctrl/Cmd, the wheel keeps its canvas and scrolling behavior.
+    assert.equal(wheel({ target: overCard(second) }), true);
+    assert.deepEqual(size(second), [null, 12]);
+    assert.ok(camera().z > before.z, 'Ctrl + wheel over an unselected terminal zooms the canvas');
+    const zoomed = camera();
+    assert.equal(wheel({ target: overCard(first), ctrlKey: false }), false);
+    assert.deepEqual([size(first), camera()], [[8, 8], zoomed]);
+});
+
+test('Ctrl/Cmd + wheel scales the focused terminal anywhere in Focus mode, but never a terminal that is not showing output', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    const [first, second] = board.cards.map(card => card.id);
+    const { context, wheel, size } = await bootSizedTerminals(board);
+    vm.runInContext(`setFocus(${JSON.stringify(first)})`, context);
+    const before = json(context, 'workspace.camera');
+    assert.equal(wheel({ target: { closest: () => null } }), true, 'the margin around the focused card counts too');
+    assert.deepEqual(size(first), [13, 13]);
+    wheel({ target: overCard(second) });
+    assert.deepEqual([size(first), size(second)], [[14, 14], [null, 12]]);
+    assert.deepEqual(json(context, 'workspace.camera'), before);
+    // A card still showing its Start placeholder has nothing to scale: the canvas zooms instead.
+    vm.runInContext(`setFocus(null); select(${JSON.stringify(second)}); sessions.get(${JSON.stringify(second)}).placeholder.hidden = false`, context);
+    wheel({ target: overCard(second) });
+    assert.deepEqual(size(second), [null, 12]);
+    assert.ok(json(context, 'workspace.camera.z') > before.z);
+    vm.runInContext(`setFocus(${JSON.stringify(second)})`, context);
+    const focusedCamera = json(context, 'workspace.camera');
+    wheel({ target: overCard(second) });
+    assert.deepEqual([size(second), json(context, 'workspace.camera')], [[null, 12], focusedCamera]);
+});
+
+test('Ctrl/Cmd+0 resets terminal text size while Ctrl+- and Ctrl+= still reach the shell', async () => {
+    const board = createWorkspace(); board.cards.push({ ...createCard(), fontSize: 18 }, createCard());
+    const { context, size, resizes } = await bootSizedTerminals(board);
+    const [first, second] = board.cards.map(card => card.id);
+    assert.deepEqual([size(first), size(second)], [[18, 18], [null, 12]], 'a saved size is restored when the card mounts');
+    const terminal = vm.runInContext(`sessions.get(${JSON.stringify(first)}).terminal`, context);
+    for (const key of ['-', '=', '_', '+']) assert.equal(shortcut(terminal, key).allowTerminal, true, `Ctrl+${key} goes to the shell`);
+    assert.equal(shortcut(terminal, ')', { shiftKey: true, code: 'Digit0' }).allowTerminal, true);
+    assert.equal(shortcut(terminal, '0', { altKey: true }).allowTerminal, true);
+    assert.deepEqual(size(first), [18, 18]);
+    const reset = shortcut(terminal, '0');
+    assert.deepEqual([reset.allowTerminal, reset.event.prevented, reset.event.stopped], [false, true, true]);
+    assert.deepEqual(size(first), [null, 12]);
+    assert.deepEqual(resizes.at(-1), [first, 83, 25]);
+    for (const type of ['keypress', 'keyup']) assert.equal(shortcut(terminal, '0', { type }).allowTerminal, false);
+    vm.runInContext(`setTerminalFontSize(workspace.cards[0], 20)`, context);
+    assert.equal(shortcut(terminal, 'à', { code: 'Digit0' }).allowTerminal, false, 'layouts without a plain 0 key use its position');
+    vm.runInContext(`setTerminalFontSize(workspace.cards[0], 20)`, context);
+    assert.equal(shortcut(terminal, '0', { ctrlKey: false, metaKey: true, code: 'Numpad0' }).allowTerminal, false);
+    assert.deepEqual(size(first), [null, 12]);
+});
+
+test('Duplicate copies the source terminal\'s text size, including through folder review', async () => {
+    const board = createWorkspace(); board.cards.push({ ...createCard(), fontSize: 20 }, createCard());
+    const { context, bridge, calls, elements } = await boot(board);
+    vm.runInContext('start = async card => invoke("start", { card })', context);
+    let review = false;
+    bridge.invoke = async (action, payload) => {
+        calls.push({ action, payload });
+        if (action === 'duplicate-directory') return review ? { cwd: 'D:\\review', warning: 'Review folder.' } : { cwd: 'D:\\current' };
+        if (action === 'create-card') return { card: createCard({ cwd: payload.cwd }) };
+        return { ok: true };
+    };
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    await vm.runInContext('duplicateTerminal(workspace.cards[1])', context);
+    assert.deepEqual(json(context, 'workspace.cards.map(card => card.fontSize ?? null)'), [20, null, 20, null]);
+    assert.equal(calls.filter(c => c.action === 'start')[0].payload.card.fontSize, 20, 'the host receives the size with the card');
+    review = true;
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    assert.equal(elements.get('#launch-dialog').open, true);
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush(); await flush();
+    assert.deepEqual(json(context, 'workspace.cards.map(card => card.fontSize ?? null)'), [20, null, 20, null, 20]);
+    // An ordinary New terminal dialog afterwards starts at the default.
+    vm.runInContext('openLaunch()', context);
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush(); await flush();
+    assert.equal(json(context, 'workspace.cards.at(-1).fontSize ?? null'), null);
 });
 
 test('pending paste cannot write to a stopped or disposed terminal and clipboard errors are shown', async () => {
