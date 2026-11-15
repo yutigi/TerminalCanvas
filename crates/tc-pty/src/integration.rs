@@ -11,6 +11,16 @@ use tc_core::Platform;
 
 use crate::shell::{bash_source, claude_settings, powershell_args, powershell_source, sh_quote};
 
+/// Names `tc-hook`.
+pub const HOOK_ENV: &str = "TC_HOOK";
+/// Names the file the session-start hooks record a terminal's AI session in.
+pub const SESSION_ENV: &str = "TC_SESSION_FILE";
+/// Identifies one AI launch from an integrated terminal; the integration scripts set it.
+pub const TOKEN_ENV: &str = "TC_LAUNCH_TOKEN";
+/// Every variable a terminal's integration sets. They name one terminal's files, so a terminal never
+/// inherits them from the app, which may itself run in a Terminal Canvas terminal.
+pub const ENV_KEYS: [&str; 4] = [HOOK_ENV, SESSION_ENV, TOKEN_ENV, tc_core::launch::ENV];
+
 /// What a terminal needs to load the integration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Integration {
@@ -85,18 +95,18 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
         launch_dir.to_string_lossy().into_owned(),
     );
     if windows && is_cmd(shell) {
-        tc_core::launch::create_inbox(&launch_dir, true)?;
+        tc_core::launch::create_inbox(&launch_dir, true).map_err(at(&launch_dir))?;
         return Ok(Some(Integration {
             args: None,
             command: None,
             // Never written: cmd has no AI launch wrappers.
             session_file: folder.join(format!("{}.json", uuid::Uuid::new_v4())),
             launch_dir: Some(launch_dir),
-            env: vec![("TC_HOOK".to_owned(), hook.to_string_lossy().into_owned()), launch_env],
+            env: vec![(HOOK_ENV.to_owned(), hook.to_string_lossy().into_owned()), launch_env],
             files: Vec::new(),
         }));
     }
-    create_private_dir(folder)?;
+    create_private_dir(folder).map_err(at(folder))?;
     let stem = folder.join(uuid::Uuid::new_v4().to_string());
     let with_suffix = |suffix: &str| {
         let mut path = stem.clone().into_os_string();
@@ -106,7 +116,6 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
     let session_file = with_suffix(".json");
     let settings = with_suffix(".settings.json");
     let hook = hook.to_string_lossy();
-    write_private(&settings, claude_settings(&hook, windows).as_bytes())?;
     let settings_text = settings.to_string_lossy();
     let source = if windows {
         powershell_source(&settings_text)
@@ -115,10 +124,10 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
     };
     let script = with_suffix(if windows { ".ps1" } else { ".bash" });
     let files = vec![settings.clone(), script.clone()];
-    if let Err(error) = write_private(&script, source.as_bytes()) {
-        let _ = fs::remove_file(&settings);
-        return Err(error);
-    }
+    write_all_private(&[
+        (&settings, claude_settings(&hook, windows).as_bytes()),
+        (&script, source.as_bytes()),
+    ])?;
     let (args, command) = if windows {
         (Some(powershell_args(&source)), None)
     } else if Path::new(shell).file_name().is_some_and(|name| name == "bash") {
@@ -136,14 +145,11 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
         for file in &files {
             let _ = fs::remove_file(file);
         }
-        return Err(error);
+        return Err(at(&launch_dir)(error));
     }
     let env = vec![
-        (
-            "TC_SESSION_FILE".to_owned(),
-            session_file.to_string_lossy().into_owned(),
-        ),
-        ("TC_HOOK".to_owned(), hook.into_owned()),
+        (SESSION_ENV.to_owned(), session_file.to_string_lossy().into_owned()),
+        (HOOK_ENV.to_owned(), hook.into_owned()),
         launch_env,
     ];
     Ok(Some(Integration {
@@ -156,6 +162,11 @@ pub fn prepare(folder: &Path, hook: &Path, platform: Platform, shell: &str) -> i
     }))
 }
 
+/// Names `path` in an error, so a failed setup says which file or folder to fix.
+fn at(path: &Path) -> impl FnOnce(io::Error) -> io::Error + '_ {
+    move |error| io::Error::new(error.kind(), format!("{}: {error}", path.display()))
+}
+
 fn create_private_dir(folder: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
@@ -165,6 +176,21 @@ fn create_private_dir(folder: &Path) -> io::Result<()> {
         builder.mode(0o700);
     }
     builder.create(folder)
+}
+
+/// Writes each file, owner-only. If any write fails, every file is removed, including one written
+/// part-way, and the error names the file: a terminal then starts without integration, and repeated
+/// starts must not pile up broken files.
+fn write_all_private(files: &[(&Path, &[u8])]) -> io::Result<()> {
+    for (index, (path, bytes)) in files.iter().enumerate() {
+        if let Err(error) = write_private(path, bytes) {
+            for (written, _) in &files[..=index] {
+                let _ = fs::remove_file(written);
+            }
+            return Err(at(path)(error));
+        }
+    }
+    Ok(())
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -196,5 +222,20 @@ mod tests {
         for shell in ["powershell.exe", "cmdx.exe", "C:\\cmd\\pwsh.exe"] {
             assert!(!is_cmd(shell), "{shell}");
         }
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_integration_files() {
+        let folder = std::env::temp_dir().join(format!("tc-integration-{}", uuid::Uuid::new_v4()));
+        let blocked = folder.join("blocked.ps1");
+        fs::create_dir_all(&blocked).unwrap();
+        let settings = folder.join("a.settings.json");
+        let error = write_all_private(&[(&settings, b"{}"), (&blocked, b"script")]).unwrap_err();
+        assert!(error.to_string().starts_with(&blocked.display().to_string()), "{error}");
+        assert!(!settings.exists(), "the file written before the failure is removed");
+        assert!(blocked.is_dir(), "a folder in the way is never removed");
+        write_all_private(&[(&settings, b"{}")]).unwrap();
+        assert_eq!(fs::read_to_string(&settings).unwrap(), "{}");
+        fs::remove_dir_all(folder).unwrap();
     }
 }

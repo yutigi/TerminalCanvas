@@ -3,6 +3,10 @@ resolver = "3"
 members = ["crates/tc-core", "crates/tc-pty", "crates/tc-hook", "src-tauri", "xtask"]
 exclude = ["vendor/portable-pty"]
 
+# A separate output directory lets `cargo xtask check` rebuild every workspace binary.
+[profile.xtask]
+inherits = "dev"
+
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }
 

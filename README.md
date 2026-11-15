@@ -82,7 +82,10 @@ over to a fresh session or start a helper without you opening the New terminal d
 Terminal Canvas terminal, the new card opens beside that terminal, joined to it by an arrow, and
 starts immediately. Programs outside the canvas can ask the running app too; their card opens beside
 the card they name with `--parent`, or in view on its own. The caller gets the new card's ID, or why
-nothing opened, and with `--log` can read the new terminal's output as it runs.
+nothing opened and what to do next, including the folder and command to open by hand, and with
+`--log` can read the new terminal's output as it runs. If the app cannot find its `tc-hook` helper,
+or cannot prepare a terminal's integration, a notification says so and the terminals still start
+without it; a program whose new terminal started that way is told so.
 
 ```bash
 # Inside a terminal: Bash, zsh, or Git Bash (Claude Code's Bash tool on Windows)
@@ -94,7 +97,8 @@ nothing opened, and with `--log` can read the new terminal's output as it runs.
 & $env:TC_HOOK new-terminal --title "API tests" --cwd ..\api --command "npm test" --log --json
 ```
 
-Every terminal, including Command Prompt, has `TC_HOOK`, `TC_LAUNCH_DIR`, and `TC_CARD_ID` set. See
+Every terminal, including Command Prompt, has `TC_HOOK`, `TC_LAUNCH_DIR`, and `TC_CARD_ID` set,
+except that a terminal started without integration (see above) has only `TC_CARD_ID`. See
 [Opening terminals from agents and scripts](docs/agent-launch.md) for options, results, output logs,
 an instruction snippet for `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`, sandbox notes, and the security
 model. A new terminal does not inherit the requesting agent's sandbox.
