@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use crate::js::{has_c0_control, serialize_number, trim, truthy, utf16_len};
 use crate::session::{SessionMetadata, session_metadata};
-use crate::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES};
+use crate::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES, terminal_font_size};
 use crate::{Result, invalid};
 
 /// The current workspace format. Formats 1 and 2 are migrated on load.
@@ -130,6 +130,8 @@ pub struct Card {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// Text size in CSS pixels. `None` is the default, `terminal_font_size::DEFAULT`.
+    pub font_size: Option<u8>,
     /// Outermost first. Empty when ungrouped.
     pub groups: Vec<String>,
 }
@@ -264,6 +266,9 @@ impl Serialize for Card {
         map.serialize_entry("y", &Number(self.y))?;
         map.serialize_entry("w", &Number(self.w))?;
         map.serialize_entry("h", &Number(self.h))?;
+        if let Some(size) = self.font_size {
+            map.serialize_entry("fontSize", &size)?;
+        }
         if !self.groups.is_empty() {
             map.serialize_entry("groups", &self.groups)?;
         }
@@ -451,6 +456,17 @@ fn style(raw: &Value, item_type: &str) -> Result<(Option<Color>, Option<FontSize
     Ok((color, font_size))
 }
 
+/// A terminal's text size: whole pixels within the supported range, or `None` for the default.
+/// Like session metadata, a display preference is best effort, so an unusable value falls back to
+/// the default instead of discarding the layout. Builds without this field drop it on load.
+fn terminal_font(value: Option<&Value>) -> Option<u8> {
+    use terminal_font_size::{DEFAULT, MAX, MIN};
+    let size = value?
+        .as_f64()
+        .filter(|n| n.fract() == 0.0 && (f64::from(MIN)..=f64::from(MAX)).contains(n))? as u8;
+    (size != DEFAULT).then_some(size)
+}
+
 /* ---------- Validation ---------- */
 
 /// Validates a terminal card from a workspace in `version`'s format.
@@ -477,6 +493,7 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
     };
     let w = size("w", 400.0, 2400.0)?;
     let h = size("h", 280.0, 1800.0)?;
+    let font_size = terminal_font(field(raw, "fontSize"));
     let groups = groups(card, version)?;
     Ok(Card {
         id,
@@ -489,6 +506,7 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
         y,
         w,
         h,
+        font_size,
         groups,
     })
 }
@@ -780,6 +798,65 @@ mod tests {
             create_card(&json!({ "command": "a\nb" })).unwrap_err().to_string(),
             "Invalid command."
         );
+    }
+
+    #[test]
+    fn terminal_text_sizes_are_kept_in_range_and_dropped_otherwise() {
+        let card = |size: Value| {
+            let mut raw = json!(create_card(&json!({ "title": "Sized" })).unwrap());
+            raw["fontSize"] = size;
+            raw["groups"] = json!(["g"]);
+            validate_card(&raw, VERSION).unwrap()
+        };
+        for (size, kept) in [
+            (json!(8), Some(8)),
+            (json!(16), Some(16)),
+            (json!(32), Some(32)),
+            (json!(20.0), Some(20)),
+        ] {
+            assert_eq!(card(size).font_size, kept);
+        }
+        // The default, and anything unusable, leave the card at the default without rejecting it.
+        for size in [
+            json!(12),
+            json!(7),
+            json!(33),
+            json!(14.5),
+            json!(-16),
+            json!("16"),
+            json!(null),
+            json!([16]),
+        ] {
+            let validated = card(size.clone());
+            assert_eq!(validated.font_size, None, "{size}");
+            assert!(
+                !json!(validated).as_object().unwrap().contains_key("fontSize"),
+                "{size}"
+            );
+        }
+        assert_eq!(create_card(&json!({ "fontSize": 20 })).unwrap().font_size, None);
+        let saved = json!(card(json!(20)));
+        let keys: Vec<&str> = saved.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys[keys.len() - 3..], ["h", "fontSize", "groups"]);
+        assert_eq!(saved["fontSize"], json!(20));
+    }
+
+    #[test]
+    fn terminal_text_sizes_survive_a_workspace_roundtrip_in_every_format() {
+        for version in [1, 2, 3] {
+            let mut board = create_workspace().to_value();
+            board["version"] = json!(version);
+            let mut sized = json!(create_card(&json!({})).unwrap());
+            sized["fontSize"] = json!(18);
+            board["cards"] = json!([sized, create_card(&json!({})).unwrap()]);
+            let validated = validate_workspace(&board).unwrap();
+            assert_eq!(
+                validated.cards.iter().map(|card| card.font_size).collect::<Vec<_>>(),
+                [Some(18), None]
+            );
+            let saved: Value = serde_json::from_str(&validated.to_file_string(None)).unwrap();
+            assert_eq!(validate_workspace(&saved).unwrap(), validated);
+        }
     }
 
     #[test]

@@ -43,6 +43,8 @@ const world = $('#world');
 const minimap = $('#minimap');
 const minimapMap = $('#minimap-map');
 const sessions = new Map();
+// Whole CSS pixels; a card leaves out its `fontSize` at the default. The host validates the same range.
+const TERMINAL_FONT = window.TerminalCanvasItemStyles.TERMINAL_FONT_SIZE;
 // Terminals sit inside the zoomed world; xterm needs mouse coordinates without that scale.
 window.TerminalCanvasPointer?.install(window);
 let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, toastTimer, saveRevision = 0, confirmation;
@@ -349,6 +351,17 @@ function fitTerminal(s) {
     const size = s.fit.proposeDimensions();
     if (size && Number.isFinite(size.cols) && Number.isFinite(size.rows)) s.terminal.resize(Math.max(2, Math.min(500, size.cols)), Math.max(1, Math.min(300, size.rows)));
 }
+const terminalFontSize = card => card.fontSize ?? TERMINAL_FONT.DEFAULT;
+// xterm measures the new cell size immediately, so the refit gives a running program its new rows and columns.
+function setTerminalFontSize(card, size) {
+    const next = Math.max(TERMINAL_FONT.MIN, Math.min(TERMINAL_FONT.MAX, Math.round(size)));
+    if (next === terminalFontSize(card)) return;
+    if (next === TERMINAL_FONT.DEFAULT) delete card.fontSize;
+    else card.fontSize = next;
+    const s = sessions.get(card.id);
+    if (s?.terminal) { s.terminal.options.fontSize = next; fitTerminal(s); }
+    changed();
+}
 function confirmAction(title, description, label = 'Continue') {
     if (confirmation) return Promise.resolve(false);
     $('#confirm-title').textContent = title;
@@ -401,7 +414,7 @@ function mount(card) {
     recoveryInfo(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
-            fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: 12, lineHeight: 1.3,
+            fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: terminalFontSize(card), lineHeight: 1.3,
             cursorBlink: true, scrollback: 5000, allowProposedApi: false,
             linkHandler: {
                 allowNonHttpProtocols: false,
@@ -427,6 +440,15 @@ function mount(card) {
             if (event.altKey || event.isComposing) return true;
             if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
+            // Ctrl/Cmd+0 resets the text size; Ctrl+- and Ctrl+= still reach the shell (Ctrl+- is readline undo).
+            // Digit0 covers layouts whose 0 needs Shift. Numpad0 is matched by its key only: without
+            // NumLock it is Insert, and Ctrl+Insert must keep reaching the shell.
+            if (modified && !event.shiftKey && (key === '0' || event.code === 'Digit0')) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (event.type === 'keydown') setTerminalFontSize(card, TERMINAL_FONT.DEFAULT);
+                return false;
+            }
             const copy = modified && key === 'c' && (event.shiftKey || event.metaKey || s.terminal.hasSelection());
             const paste = modified && key === 'v';
             if (!copy && !paste) return true; // Selection-free Ctrl+C remains xterm's shell interrupt.
@@ -610,6 +632,23 @@ viewport.addEventListener('pointerdown', event => {
         else if (event.button === 0 && empty) setSelection([]);
     });
 });
+// Ctrl/Cmd + wheel scales a terminal's text anywhere in Focus mode, and over the selected terminal on
+// the canvas while its output is showing; everywhere else the listener below zooms the canvas. This
+// runs while capturing, so xterm neither scrolls nor reports the wheel to the running program.
+const WHEEL_NOTCH = 100;
+viewport.addEventListener('wheel', event => {
+    if (!ready || (!event.ctrlKey && !event.metaKey)) return;
+    const id = focused || event.target?.closest?.('.terminal-card')?.dataset.id;
+    const card = findCard(id), s = sessions.get(id);
+    if (!card || !s?.terminal || !s.placeholder.hidden || (!focused && id !== selected)) return;
+    event.preventDefault(); event.stopPropagation();
+    // A wheel notch is one pixel. Trackpads send small deltas, so the remainder carries over until the direction changes.
+    const delta = event.deltaY * (event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 800 : 1);
+    const carried = Math.sign(s.fontWheel || 0) === -Math.sign(delta) ? 0 : s.fontWheel || 0;
+    const steps = Math.trunc((carried + delta) / WHEEL_NOTCH);
+    s.fontWheel = carried + delta - steps * WHEEL_NOTCH;
+    if (steps) setTerminalFontSize(card, terminalFontSize(card) - steps);
+}, { capture: true, passive: false });
 viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
@@ -625,7 +664,7 @@ async function duplicateTerminal(source) {
         const result = await invoke('duplicate-directory', source);
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (result.warning) {
-            openLaunch('shell');
+            openLaunch('shell', { fontSize: source.fontSize });
             $('#cwd').value = result.cwd;
             $('#launch-error').textContent = result.warning;
             $('#launch-error').hidden = false;
@@ -633,6 +672,7 @@ async function duplicateTerminal(source) {
         }
         const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
+        if (source.fontSize) card.fontSize = source.fontSize;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
         await start(card);
@@ -687,8 +727,11 @@ async function openRequestedTerminal(event) {
     await start(card, undefined, event.request);
     return { card, parent };
 }
-function openLaunch(profileId = 'shell') {
+// A duplicate whose folder needs review still copies its source terminal's text size.
+let launchFontSize;
+function openLaunch(profileId = 'shell', { fontSize } = {}) {
     if (!ready || document.querySelector('dialog[open]')) return;
+    launchFontSize = fontSize;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
@@ -703,6 +746,7 @@ $('#launch-form').onsubmit = event => {
             const { x, y, z } = workspace.camera;
             const count = workspace.cards.length;
             const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
+            if (launchFontSize) result.card.fontSize = launchFontSize;
             workspace.cards.push(result.card); mount(result.card); select(result.card.id); changed(); refresh();
             $('#launch-dialog').close();
             if (focused) setFocus(result.card.id);
@@ -802,7 +846,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd></div><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;

@@ -39,7 +39,8 @@ even without command-line flags. Release builds reject the `e2e` feature.
 ## Use the workspace
 
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
-- Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom.
+- Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom the canvas; over the selected terminal, it changes that terminal's text size instead.
+- Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
 - Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
 - Use **Duplicate** in a card header or **Ctrl + Shift + D** to start a fresh plain shell in that terminal's current directory. It gets a separate process and empty output; the source launch command and AI session are not copied. Ctrl + D keeps its normal terminal behavior.
@@ -120,6 +121,8 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl + scroll over the selected terminal, or in Focus | Change that terminal's text size |
+| Ctrl + 0 in a terminal | Reset its text size |
 | Ctrl + C in a terminal | Copy selected text, or interrupt with no selection |
 | Ctrl + V / Ctrl + Shift + V in a terminal | Paste clipboard text |
 | Ctrl + Shift + C in a terminal | Copy selected text; no selection leaves clipboard intact |
@@ -144,7 +147,7 @@ On Linux and macOS, Duplicate queries the managed shell's process directory afre
 
 ## Persistence and process lifecycle
 
-Layouts autosave to `workspace.terminalcanvas` in the app's data folder: `%APPDATA%/terminal-canvas/` on Windows, `~/Library/Application Support/terminal-canvas/` on macOS, and `~/.config/terminal-canvas/` on Linux. It is the same folder the Electron build used. **Save workspace** exports a portable `.terminalcanvas` JSON file. A workspace contains names, geometry, profile IDs, project paths, launch commands, optional AI session metadata (provider, UUID, and session folder), and board items with their text, colors, text sizes, groups, and connectors. It does not save terminal output, credentials, or process IDs. Keep secrets out of launch commands because those commands are saved in plain text. Session IDs identify local conversation history; they do not transfer that history or authentication to another computer.
+Layouts autosave to `workspace.terminalcanvas` in the app's data folder: `%APPDATA%/terminal-canvas/` on Windows, `~/Library/Application Support/terminal-canvas/` on macOS, and `~/.config/terminal-canvas/` on Linux. It is the same folder the Electron build used. **Save workspace** exports a portable `.terminalcanvas` JSON file. A workspace contains names, geometry, profile IDs, project paths, launch commands, terminal text sizes, optional AI session metadata (provider, UUID, and session folder), and board items with their text, colors, text sizes, groups, and connectors. It does not save terminal output, credentials, or process IDs. Keep secrets out of launch commands because those commands are saved in plain text. Session IDs identify local conversation history; they do not transfer that history or authentication to another computer.
 
 Images are copied into `%APPDATA%/terminal-canvas/assets/` under a SHA-256 content name; workspace files store only that name, so a regular saved workspace opened on another computer shows *Image unavailable*. Choose **Export portable copy** in the sidebar to write a separate file with every referenced image embedded. Opening that file copies the images back into the local assets folder, re-hashing each one; the file must be smaller than 64 MB. Image bytes are validated by signature, never by file name, and SVG is not accepted.
 
