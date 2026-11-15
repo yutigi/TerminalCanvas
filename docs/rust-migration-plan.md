@@ -80,7 +80,7 @@ tests/                  JS UI tests (stay), tests/golden/ fixtures, tests/e2e/
 ### Design decisions
 
 1. **One host actor owns all state.** The JS host relies on Node's event loop to run everything in order: the `this.sessions.get(id) !== entry` checks, the write queue, and the `serialize()` asset tasks all depend on it. The Rust host keeps that model. One tokio task owns `TerminalManager` and `WorkspaceRecovery` and handles messages one at a time: commands (each answered through a oneshot reply), PTY output, exits, and poll ticks. The code can then be ported almost line by line, and the existing tests carry over directly. File writes and asset tasks each keep their own serial queue, as they do today.
-2. **Each terminal has three threads, outside the actor.** A blocking reader, a writer (so a stalled shell cannot block IPC), and an exit waiter. At the 24-terminal limit that is 72 threads, which is fine.
+2. **Each terminal has three threads, outside the actor.** A blocking reader, a writer (so a stalled shell cannot block IPC), and an exit waiter. Terminal count has no fixed cap; thread and process usage grow with the number of running terminals.
 3. **Backpressure works without `pause()`.** When unacknowledged output goes above 256,000, the reader thread stops reading until it drops below 32,000. The PTY's buffer then fills and the child process blocks, which is what node-pty's `pause()` achieved. Pending output is counted in UTF-16 units, so the renderer's `event.data.length` acknowledgments keep working unchanged.
 4. **Output stays text.** The reader decodes UTF-8 and carries any sequence split across two reads over to the next one. Invalid bytes become U+FFFD, matching node-pty. A raw-bytes channel can come later as an optimization.
 5. **Events go through one Tauri Channel**, registered by `initialize`. Channels deliver messages in order. `bridge.js` passes each message to the `onEvent` listeners, so `renderer.js` keeps its single handler.
@@ -151,7 +151,7 @@ Done when `cargo test -p tc-core` passes on all three CI runners, golden fixture
     - Everywhere: set `TERM`, `COLORTERM`, and `TERMINAL_CANVAS`.
     - macOS and Linux: start `$SHELL` as a login shell. For Bash, queue its `source` command.
 - **Lifecycle, ported exactly:**
-    - the `start`, `resume`, and `fresh` modes and the 24-terminal limit
+    - the `start`, `resume`, and `fresh` modes (the original 24-terminal cap has since been removed)
     - dimension checks, the 64 KB input limit, and resetting readiness on CR/LF
     - 500 ms hook polling and metadata merging
     - Stop with its 5 s fallback, and `shutdown` waiting for every exit
@@ -187,7 +187,7 @@ Done when:
 - **Image import.** `import-image` receives the image as a raw IPC body, not as a JSON number array.
 - **OS services.**
     - Dialogs use tauri-plugin-dialog.
-    - Clipboard uses arboard or tauri-plugin-clipboard-manager, with the 64,000-character paste limit and the 1 MB copy limit kept.
+    - Clipboard uses arboard or tauri-plugin-clipboard-manager, with the 64,000-character paste limit and the 1 MB copy limit kept (paste has since been raised to the 1 MB copy limit and is sent in ordered input pieces).
     - Links open through tauri-plugin-opener after the existing validation.
 - **Image protocol.** Serve `tc-asset` through `register_asynchronous_uri_scheme_protocol`, with the same name check and the `nosniff` and `no-cache` headers.
 - **Lifecycle.**
@@ -286,7 +286,7 @@ There are 182 `test()` call sites today; the README reports 189 tests run.
 
 ## Parity details that are easy to get wrong
 
-- **String lengths.** The JS limits count UTF-16 units: titles 100, text 10,000, paste 64,000, input 65,536. Use `encode_utf16().count()`, not `len()`.
+- **String lengths.** The JS limits count UTF-16 units: titles 100, text 10,000, paste 64,000 (since raised to 1,048,576), input 65,536. Use `encode_utf16().count()`, not `len()`.
 - **Trimming.** JS `trim()` also removes U+FEFF; Rust's `trim()` does not.
 - **Numbers.** serde_json writes `48.0` where JS writes `48`. Both parse to the same value, but golden tests should compare parsed values, or the serializer should write whole numbers without `.0`.
 - **Field order and omitted defaults.** Keep the order `version, name, camera, cards, items`, and keep leaving out `color`, `fontSize`, and empty `groups`.
@@ -320,7 +320,7 @@ Recorded 2026-11-09:
 
 ## Progress
 
-Updated 2026-11-11. Electron remains the default. Draft PR [#16](https://github.com/yutigi/TerminalCanvas/pull/16) contains the transitional host and validation work; the final removal/default-command patch is prepared separately and has not been applied.
+Updated 2026-11-11. The draft cutover pull request applies the validated Rust-only change (`0d692b5`) to `main`; outside the docs, its code matches the validated candidate `27e8774`. Electron remains the default on `main` until the remaining gates pass and that pull request merges. The merged PR [#16](https://github.com/yutigi/TerminalCanvas/pull/16) contains the transitional host and validation work.
 
 | Gate | Evidence and remaining work |
 | --- | --- |
@@ -330,7 +330,7 @@ Updated 2026-11-11. Electron remains the default. Draft PR [#16](https://github.
 | macOS native checks | Shell/process, files/images, provider recovery, board clipboard, terminal copy/paste/interruption, drawing, grouping and minimap checks below passed. The user verified Finder-to-canvas file drop; saved asset bytes match the synthetic PNG fixture. Native folder-picker selection/cancellation remains unverified after Computer Use could not access the candidate window. |
 | Windows 11 native/manual checks | The user has a clean machine and agreed to run the [checklist](../tests/manual/windows11-checklist.md). Results are pending. The read-only file checker passed positive and negative fixtures in native Windows PowerShell 5.1. The compiler-free [relocated desktop kit](https://github.com/yutigi/TerminalCanvas/actions/runs/42891652253) passed all 22 cases with zero skips. The corrected [PowerShell 5.1 kit run](https://github.com/yutigi/TerminalCanvas/actions/runs/42895186039) also passed all 22 cases, including a deliberately delayed startup reply. Windows 11 execution is still pending. The user reported a successful Windows `cargo run` launch, which does not establish clean-machine installation or workspace interoperability. |
 | Windows distribution | NSIS/portable builds completed, but artifact inspection found `VCRUNTIME140.dll` in the release hook. Static linking and shipping-binary import checks in `f6e47ce` (candidate `27e8774`) passed native packaging, and downloaded output was inspected independently. Clean Windows 11 installation, portable execution, runtime bootstrap behavior and Electron autosave/image compatibility remain pending. |
-| Final cutover | Prepared in an isolated copy only. It still needs final native CI/package validation and the outstanding manual gates before application. No release or merge is claimed. |
+| Final cutover | Applied to `main` in the draft cutover pull request. It needs its own CI and packaging run and the outstanding manual gates before it merges. No release or merge is claimed. |
 
 **Phase 0: safety net and baseline.** The Cargo workspace, pinned Rust 1.95 toolchain, lints, and three-platform CI are committed. `.gitattributes` keeps shell templates LF on Windows. Eighteen deterministic golden files capture validation/migrations/errors, Node decoding, directory/session parsing, assets, shell integration text, and renderer defaults. Node 22 and Node 26 generate identical captures. CI pins Node 22/npm 10 for the transitional Electron lockfile. Platform-specific JavaScript tests have explicit skip reasons.
 
@@ -383,4 +383,4 @@ The macOS compatibility sheet preserves 1×/Retina line boxes and icon centering
 
 The [review of `e58390c`](https://github.com/yutigi/TerminalCanvas/pull/16#issuecomment-6770963623) is addressed with actual five-arrowhead pixel assertions, normal/forced-color tests, and deliberate missing-fill failures (30 per engine). Plain heads are explicitly hidden and skip rotation, geometry derivation is documented, and selected color follows palette rules without a duplicate selector. Native WebView2 repeats the normal/forced-color/negative coverage in the passing suites. PNGs/reports are retained in CI artifacts and `.cache/layout-check/`.
 
-Still required before cutover: native macOS folder-picker selection/cancellation; Windows 11 full suite, normal-user installer/portable and automatic Electron-autosave/image compatibility results; then applying/reviewing the focused removal/default-command/documentation change. The final candidate's three-platform automation and Windows artifacts have already passed at `27e8774`. The existing Electron default remains in place until those gates pass.
+Still required before cutover: native macOS folder-picker selection/cancellation; Windows 11 full suite, normal-user installer/portable and automatic Electron-autosave/image compatibility results; then a final review of the cutover pull request. The final candidate's three-platform automation and Windows artifacts have already passed at `27e8774`. The Electron default remains on `main` until those gates pass.

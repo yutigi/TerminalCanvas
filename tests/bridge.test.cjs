@@ -86,3 +86,24 @@ test('input sequences are independent per terminal and errors return through the
     await Promise.resolve();
     assert.equal(events.length, 1, 'ack errors do not flood the UI');
 });
+
+test('long input goes in ordered host-sized pieces that keep surrogate pairs whole', () => {
+    const harness = bridge(), limit = 65536;
+    harness.api.input('a', 'x'.repeat(limit));
+    assert.deepEqual(harness.calls.map(call => [call.args.seq, call.args.data.length]), [[0, limit]]);
+    // A bracketed paste near the 1 MB clipboard limit, with a surrogate pair across the first
+    // piece boundary.
+    const paste = '\x1b[200~' + 'p'.repeat(limit - 7) + '🚀' + 'ไทย\r'.repeat(245000) + '\x1b[201~';
+    harness.api.input('a', paste);
+    harness.api.input('b', 'other');
+    harness.api.input('a', 'typed');
+    const a = harness.calls.filter(call => call.args.id === 'a').slice(1);
+    assert.deepEqual(a.map(call => call.args.seq), a.map((_, index) => index + 1));
+    assert.ok(a.length > 2);
+    assert.ok(a.every(call => call.args.data.length > 0 && call.args.data.length <= limit));
+    assert.equal(a[0].args.data.length, limit - 1, 'the pair moves whole into the next piece');
+    assert.ok(a.slice(0, -1).every(call => !/[\ud800-\udbff]$/.test(call.args.data) && !/^[\udc00-\udfff]/.test(call.args.data)));
+    assert.equal(a.slice(0, -1).map(call => call.args.data).join(''), paste);
+    assert.equal(a.at(-1).args.data, 'typed');
+    assert.deepEqual(harness.calls.filter(call => call.args.id === 'b').map(call => call.args.seq), [0]);
+});

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use tc_core::workspace::{create_card, create_workspace};
 use tc_pty::manager::{Backend, Config, EventSink, ExitStatus, Process, SessionEvent, SessionKey, SpawnRequest};
-use terminal_canvas::host::{BoxFuture, FileKind, Host, Paths, Platform};
+use terminal_canvas::host::{BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform};
 
 #[derive(Default)]
 struct FakePlatform {
@@ -127,7 +127,13 @@ struct Harness {
     folder: PathBuf,
 }
 impl Harness {
+    /// A host without `tc-hook`, so terminals start without integration.
     fn new() -> Self {
+        Self::with_hook(false)
+    }
+    /// With `hook`, the host is told `tc-hook` is in the test folder; nothing runs it unless a
+    /// terminal starts.
+    fn with_hook(hook: bool) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let folder = std::env::temp_dir().join(format!(
             "tc-host-{}-{}",
@@ -143,7 +149,7 @@ impl Harness {
         let host = Host::new(
             Paths {
                 data: folder.clone(),
-                hook: None,
+                hook: hook.then(|| folder.join("tc-hook")),
             },
             platform.clone(),
             Box::new(backend),
@@ -201,12 +207,16 @@ async fn clipboard_limits_count_utf16_and_os_failures_reach_the_renderer() {
         h.host.command("clipboard-read", None).await.unwrap(),
         json!({"text":"first\nsecond"})
     );
-    *h.platform.clipboard.lock().unwrap() = "😀".repeat(32000);
-    assert!(h.host.command("clipboard-read", None).await.is_ok());
+    // Copy and paste share one limit, so the largest selection the app copies can be pasted back.
+    *h.platform.clipboard.lock().unwrap() = "😀".repeat(524288);
+    assert_eq!(
+        h.host.command("clipboard-read", None).await.unwrap()["text"],
+        "😀".repeat(524288)
+    );
     h.platform.clipboard.lock().unwrap().push('x');
     assert_eq!(
         h.host.command("clipboard-read", None).await.unwrap_err(),
-        "Paste is limited to 64,000 characters."
+        "Paste exceeds 1 MB."
     );
     for text in [Value::Null, json!(123), json!("😀".repeat(524289))] {
         assert_eq!(
@@ -295,6 +305,28 @@ async fn links_are_normalized_and_unsafe_links_never_reach_the_os() {
 }
 
 #[tokio::test]
+async fn startup_reports_a_missing_hook_so_users_know_why_nothing_can_open_terminals() {
+    let h = Harness::with_hook(true);
+    let initial = h.host.command("initialize", None).await.unwrap();
+    assert!(initial.get("warning").is_none(), "{initial}");
+
+    let h = Harness::new();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    assert_eq!(initial["warning"], HELPER_MISSING);
+    // A workspace that cannot be restored is reported first, on its own line.
+    std::fs::write(h.recovery(), b"{").unwrap();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    let warning = initial["warning"].as_str().unwrap();
+    let lines: Vec<_> = warning.lines().collect();
+    assert_eq!(lines.len(), 2, "{warning}");
+    assert!(
+        lines[0].starts_with("Could not restore your last workspace: "),
+        "{warning}"
+    );
+    assert_eq!(lines[1], HELPER_MISSING);
+}
+
+#[tokio::test]
 async fn close_flushes_host_metadata_over_stale_layout_and_reopens_stopped() {
     let h = Harness::new();
     h.host.command("initialize", None).await.unwrap();
@@ -330,6 +362,32 @@ async fn close_flushes_host_metadata_over_stale_layout_and_reopens_stopped() {
     assert_eq!(h.host.running().await, 0);
     assert_eq!(h.launches.lock().unwrap().len(), 1);
     assert!(!h.host.exit_requested());
+}
+
+#[tokio::test]
+async fn more_than_24_terminals_start_save_and_restore_stopped() {
+    let h = Harness::new();
+    h.host.command("initialize", None).await.unwrap();
+    let mut board = json!(create_workspace());
+    for _ in 0..32 {
+        let card = h.start().await;
+        board["cards"].as_array_mut().unwrap().push(card);
+    }
+    assert_eq!(h.host.running().await, 32);
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    assert_eq!(h.read_saved(), board);
+    h.host.command("close", Some(&board)).await.unwrap();
+    assert_eq!(h.host.running().await, 0);
+    assert!(
+        h.launches
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, _, process)| process.lock().unwrap().killed)
+    );
+    let restored = h.host.command("initialize", None).await.unwrap();
+    assert_eq!(restored["workspace"], board);
+    assert_eq!(h.launches.lock().unwrap().len(), 32, "restoring never starts processes");
 }
 
 #[tokio::test]
@@ -372,6 +430,22 @@ async fn input_reorders_a_large_paste_and_typing_without_repeating_duplicates() 
     assert_eq!(
         h.launches.lock().unwrap()[0].2.lock().unwrap().writes.last().unwrap(),
         "after error"
+    );
+    // The bridge splits a paste longer than one message; the pieces can arrive in any order.
+    let pieces = ["a".repeat(65536), "b".repeat(65536), "c".repeat(100)];
+    h.host.input(id, "typed after".into(), 7);
+    h.host.input(id, pieces[2].clone(), 6);
+    h.host.input(id, pieces[0].clone(), 4);
+    h.host.input(id, pieces[1].clone(), 5);
+    h.host.running().await;
+    assert_eq!(
+        h.launches.lock().unwrap()[0].2.lock().unwrap().writes[3..],
+        [
+            pieces[0].clone(),
+            pieces[1].clone(),
+            pieces[2].clone(),
+            "typed after".into()
+        ]
     );
     h.host.command("close", None).await.unwrap();
 }
@@ -556,7 +630,10 @@ async fn legacy_autosave_and_portable_images_open_stopped_and_rust_files_are_rea
             }
         }
         let restored = h.host.command("initialize", None).await.unwrap();
-        assert!(restored.get("warning").is_none(), "{input}: {restored}");
+        assert_eq!(
+            restored["warning"], HELPER_MISSING,
+            "{input}: only the harness's missing hook is reported: {restored}"
+        );
         assert_eq!(validate_workspace(&restored["workspace"]).unwrap(), expected);
         assert_eq!(h.host.running().await, 0);
         assert!(
@@ -610,4 +687,101 @@ async fn legacy_autosave_and_portable_images_open_stopped_and_rust_files_are_rea
             assert_eq!(legacy["missing"], json!([]));
         }
     }
+}
+
+#[tokio::test]
+async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_app_inbox() {
+    use tc_core::launch::{app_inbox, log_path, result_path, validate_request, write_request};
+    let h = Harness::new();
+    let inbox = app_inbox(&h.folder);
+    assert!(inbox.is_dir(), "the app creates its inbox at startup");
+    let platform = tc_core::Platform::current();
+    let raw = json!({ "profile": "codex", "title": "Reviewer", "cwd": h.folder, "parent": "parent-card",
+        "reply": true, "log": true });
+    let (id, _) = write_request(&inbox, &validate_request(&raw, platform).unwrap()).unwrap();
+    let mut missing = validate_request(&json!({ "cwd": h.folder, "reply": true }), platform).unwrap();
+    missing.cwd = h.folder.join("gone").to_string_lossy().into_owned();
+    let (refused, _) = write_request(&inbox, &missing).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let seen = |kind: &str| {
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e["type"] == kind)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    while (seen("launch").is_empty() || seen("error").is_empty()) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        seen("launch"),
+        [
+            json!({ "type": "launch", "external": true, "request": id, "profile": "codex", "title": "Reviewer",
+            "cwd": h.folder.to_string_lossy(), "command": "codex", "parent": "parent-card" })
+        ]
+    );
+    assert_eq!(
+        seen("error")[0]["message"],
+        "Could not open the requested terminal: Working directory is unavailable."
+    );
+    let refusal: Value = serde_json::from_slice(&std::fs::read(result_path(&inbox, &refused)).unwrap()).unwrap();
+    assert_eq!(refusal["status"], "refused");
+
+    // The UI starts the card with the request ID, so its output is logged from the first byte.
+    let card = json!(create_card(&json!({ "cwd": h.folder, "profile": "codex" })).unwrap());
+    h.host
+        .command(
+            "start",
+            Some(&json!({ "card": card, "cols": 80, "rows": 24, "launch": id })),
+        )
+        .await
+        .unwrap();
+    let (key, events, _) = h.launches.lock().unwrap()[0].clone();
+    events(key.clone(), SessionEvent::Output("\x1b[1mworking\x1b[0m\r\n".into()));
+    let card_id = card["id"].as_str().unwrap();
+    assert_eq!(
+        h.host
+            .command(
+                "launch-result",
+                Some(&json!({ "request": id, "card": card_id, "parent": "parent-card" }))
+            )
+            .await
+            .unwrap(),
+        json!({ "ok": true })
+    );
+    let log = log_path(&inbox, &id);
+    let answer: Value = serde_json::from_slice(&std::fs::read(result_path(&inbox, &id)).unwrap()).unwrap();
+    assert_eq!(
+        answer,
+        json!({ "status": "opened", "card": card_id, "parent": "parent-card", "log": log.to_string_lossy(),
+            "warning": NO_INTEGRATION }),
+        "this harness has no tc-hook, so the requester learns the new terminal has no integration"
+    );
+    events(key, SessionEvent::Exit(ExitStatus { code: 0, signal: None }));
+    h.host.running().await;
+    let mut text = String::new();
+    for _ in 0..100 {
+        text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.contains("exited") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(text, "working\n\n[Terminal Canvas: the process exited with code 0]\n");
+    assert_eq!(
+        h.host
+            .command("launch-result", Some(&json!({ "request": id, "card": card_id })))
+            .await
+            .unwrap(),
+        json!({ "ok": false }),
+        "a request is answered once"
+    );
+    assert!(
+        h.host
+            .command("launch-result", Some(&json!({ "request": "../x", "card": "c" })))
+            .await
+            .is_err()
+    );
 }

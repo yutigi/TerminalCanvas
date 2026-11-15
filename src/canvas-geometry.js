@@ -81,9 +81,40 @@
     function topmostAt(point, elements) {
         return [...elements].filter(e => e.bounds && containsPoint(e.bounds, point)).sort((a, b) => (b.z || 0) - (a.z || 0))[0] || null;
     }
+    // A free spot of `size` beside `parent`, `gap` clear of every rectangle in `taken`. Tries the
+    // column to the right first (level with the parent, then below, then above), then the row below.
+    function placeBeside(parent, size, taken, gap = 80) {
+        const padded = b => ({ x: b.x - gap / 2, y: b.y - gap / 2, w: b.w + gap, h: b.h + gap });
+        const free = spot => !taken.some(b => intersects(padded(b), spot));
+        const right = parent.x + parent.w + gap, below = parent.y + parent.h + gap;
+        const candidates = [];
+        for (let step = 0; step < 8; step++) {
+            const offset = Math.ceil(step / 2) * (size.h + gap) * (step % 2 ? 1 : -1);
+            candidates.push({ x: right, y: parent.y + offset });
+        }
+        for (let step = 0; step < 4; step++) candidates.push({ x: parent.x + step * (size.w + gap), y: below });
+        return candidates.find(spot => free({ ...spot, ...size })) || { x: right, y: parent.y };
+    }
+    // A free spot of `size` centered on `point` if possible, else the nearest free cell of a grid
+    // around it, ring by ring. Falls back to `point` itself when nothing nearby is free.
+    function placeNear(point, size, taken, gap = 80) {
+        const padded = b => ({ x: b.x - gap / 2, y: b.y - gap / 2, w: b.w + gap, h: b.h + gap });
+        const origin = { x: point.x - size.w / 2, y: point.y - size.h / 2 };
+        for (let ring = 0; ring <= 4; ring++) {
+            for (let row = -ring; row <= ring; row++) {
+                for (let col = -ring; col <= ring; col++) {
+                    if (Math.max(Math.abs(row), Math.abs(col)) !== ring) continue;
+                    const spot = { x: origin.x + col * (size.w + gap), y: origin.y + row * (size.h + gap) };
+                    if (!taken.some(b => intersects(padded(b), { ...spot, ...size }))) return spot;
+                }
+            }
+        }
+        return origin;
+    }
     const geometry = {
         center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
-        outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt
+        outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt,
+        placeBeside, placeNear
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;
     else root.TerminalCanvasGeometry = geometry;

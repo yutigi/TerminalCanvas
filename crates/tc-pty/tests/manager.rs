@@ -327,6 +327,144 @@ fn shell_initialization_runs_before_a_saved_ai_command_or_resume() {
 }
 
 #[test]
+fn a_terminal_whose_integration_cannot_be_prepared_starts_without_it_and_says_why() {
+    // The app may itself run in a Terminal Canvas terminal; that terminal's variables must not leak.
+    // Windows matches names case-insensitively, so other spellings must not leak either.
+    let inherited = [
+        ("TC_HOOK", "C:\\outer\\tc-hook.exe"),
+        ("TC_LAUNCH_DIR", "C:\\outer\\tc-launch"),
+        ("TC_SESSION_FILE", "C:\\outer\\session.json"),
+        ("TC_LAUNCH_TOKEN", SAVED_ID),
+        ("Tc_Hook", "C:\\outer\\tc-hook.exe"),
+        ("tc_launch_dir", "C:\\outer\\tc-launch"),
+        ("TC_CARD_ID", "outer-card"),
+        ("Tc_Card_Id", "outer-card"),
+        ("terminal_canvas", "1"),
+    ];
+    let env: Vec<_> = WINDOWS_ENV.iter().copied().chain(inherited).collect();
+    // Fails twice, works once, then fails again.
+    let mut calls = 0;
+    let integrations: Integrations = Box::new(move |_, _| {
+        calls += 1;
+        if calls == 3 {
+            return Ok(Some(Integration::new(
+                None,
+                None,
+                std::env::temp_dir().join("tc-unused-session.json"),
+                Vec::new(),
+            )));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "C:\\Users\\me\\AppData\\Local\\Temp\\tc-launch-1: Access is denied.",
+        ))
+    });
+    let mut h = harness_with(config(Platform::Windows, &env), Some(integrations));
+    let [second, third, fourth] = [(); 3].map(|()| card(json!({})));
+    let card = card(json!({ "profile": "codex" }));
+    h.start(&card).expect("the terminal still starts");
+    assert_eq!(h.manager.integrated(id(&card)), Some(false));
+    let launch = h.launch(0);
+    assert_eq!(
+        launch.args[..5],
+        [
+            "-NoLogo",
+            "-NoExit",
+            "-ExecutionPolicy",
+            "RemoteSigned",
+            "-EncodedCommand"
+        ],
+        "the plain PowerShell bootstrap runs instead"
+    );
+    let ours = |env: &BTreeMap<String, String>| -> Vec<(String, String)> {
+        env.iter()
+            .filter(|(key, _)| {
+                let key = key.to_ascii_uppercase();
+                key.starts_with("TC_") || key == "TERMINAL_CANVAS"
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    };
+    assert_eq!(
+        ours(&launch.env),
+        [
+            ("TC_CARD_ID".to_owned(), id(&card).to_owned()),
+            ("TERMINAL_CANVAS".to_owned(), "1".to_owned())
+        ],
+        "only this terminal's own values remain"
+    );
+    assert_eq!(h.writes(0), ["codex\r"]);
+    let errors = h.of_type("error");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0]["id"], id(&card));
+    let message = errors[0]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("This terminal started without Terminal Canvas integration (C:\\Users\\me\\AppData\\Local\\Temp\\tc-launch-1: Access is denied.)"),
+        "{message}"
+    );
+    assert!(message.contains("cannot open terminals on the canvas"), "{message}");
+    assert!(
+        message.contains("Make that location writable, then restart the terminal."),
+        "{message}"
+    );
+
+    // A folder that stays broken fails every start; one notice covers them until a start works.
+    h.start(&second).unwrap();
+    assert_eq!(h.of_type("error").len(), 1, "no repeated notice");
+    h.start(&third).unwrap();
+    assert_eq!(h.manager.integrated(id(&third)), Some(true));
+    h.start(&fourth).unwrap();
+    let errors = h.of_type("error");
+    assert_eq!(errors.len(), 2, "a new failure after a working start is reported");
+    assert_eq!(errors[1]["id"], id(&fourth));
+    assert_eq!(h.manager.integrated("not-running"), None);
+    h.manager.stop_all();
+
+    // Without any integration (no tc-hook), inherited variables are dropped as well, silently: the
+    // app reports a missing hook once, when it starts.
+    let mut h = harness_with(config(Platform::Windows, &env), None);
+    h.start(&card).unwrap();
+    assert_eq!(ours(&h.launch(0).env).len(), 2, "{:?}", h.launch(0).env);
+    assert!(h.of_type("error").is_empty());
+    h.manager.stop_all();
+
+    // Elsewhere names are case-sensitive: `tc_hook` is another variable, and is kept.
+    let unix = [
+        ("SHELL", "/bin/bash"),
+        ("TC_HOOK", "/outer/tc-hook"),
+        ("tc_hook", "kept"),
+    ];
+    let mut h = harness_with(config(Platform::Linux, &unix), None);
+    h.start(&card).unwrap();
+    assert_eq!(h.launch(0).env.get("TC_HOOK"), None);
+    assert_eq!(h.launch(0).env["tc_hook"], "kept");
+    h.manager.stop_all();
+}
+
+#[test]
+fn integration_warnings_say_how_to_fix_the_cause() {
+    let warning = |kind: io::ErrorKind| {
+        let integrations: Integrations = Box::new(move |_, _| {
+            Err(io::Error::new(
+                kind,
+                "C:\\Users\\me\\AppData\\Local\\Temp\\tc-launch-1: failed",
+            ))
+        });
+        let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
+        h.start(&card(json!({}))).unwrap();
+        let message = h.of_type("error")[0]["message"].as_str().unwrap().to_owned();
+        h.manager.stop_all();
+        message
+    };
+    assert!(warning(io::ErrorKind::PermissionDenied).contains("Make that location writable"));
+    assert!(warning(io::ErrorKind::NotFound).contains("Make sure that folder exists"));
+    assert!(warning(io::ErrorKind::StorageFull).contains("Free some disk space"));
+    let other = warning(io::ErrorKind::InvalidData);
+    assert!(other.contains("Fix the problem with that location"), "{other}");
+    assert!(!other.contains("writable"), "{other}");
+}
+
+#[test]
 fn uses_windows_powershell_from_system_root() {
     let mut h = harness_with(
         config(
@@ -502,14 +640,22 @@ fn rejects_duplicate_starts_bad_dimensions_large_input_and_missing_folders() {
 }
 
 #[test]
-fn the_terminal_limit_is_24() {
+fn more_than_24_terminals_can_run_and_stop() {
     let mut h = harness();
-    for _ in 0..24 {
+    for _ in 0..32 {
         h.start(&card(json!({}))).unwrap();
     }
-    assert_eq!(
-        h.start(&card(json!({}))).unwrap_err().to_string(),
-        "Terminal limit reached."
+    assert_eq!(h.manager.running(), 32);
+    assert_eq!(h.launches(), 32);
+    h.manager.stop_all();
+    assert_eq!(h.manager.running(), 0);
+    assert!(
+        h.state
+            .lock()
+            .unwrap()
+            .processes
+            .iter()
+            .all(|process| process.lock().unwrap().killed)
     );
 }
 
@@ -603,29 +749,31 @@ fn manual_launches_keep_ids_and_folders_separate_and_failed_resume_keeps_metadat
 
 #[test]
 fn shutdown_snapshots_read_the_final_hook_update_and_reject_other_launches() {
-    let folder = tempdir("manager");
-    let file = folder.join("metadata.json");
-    let session_file = file.clone();
-    let integrations: Integrations =
-        Box::new(move |_, _| Ok(Some(Integration::new(None, None, session_file.clone(), Vec::new()))));
-    let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
-    let card = card(json!({}));
-    h.start(&card).unwrap();
-    h.data(
-        0,
-        &metadata_event(json!({ "type": "launch", "provider": "claude", "token": SAVED_ID, "cwd": cwd() })),
-    );
-    let mut saved = saved_session("claude");
-    saved["token"] = json!("different-launch");
-    std::fs::write(&file, saved.to_string()).unwrap();
-    assert_eq!(h.snapshot(id(&card))["session"], Value::Null);
-    saved["token"] = json!(SAVED_ID);
-    std::fs::write(&file, saved.to_string()).unwrap();
-    h.manager.stop_all();
-    assert_eq!(h.snapshot(id(&card))["session"]["provider"], "claude");
-    assert!(!file.exists(), "stopping removes the integration files");
-    assert_eq!(h.manager.running(), 0);
-    let _ = std::fs::remove_dir_all(folder);
+    for provider in ["claude", "codex"] {
+        let folder = tempdir("manager");
+        let file = folder.join("metadata.json");
+        let session_file = file.clone();
+        let integrations: Integrations =
+            Box::new(move |_, _| Ok(Some(Integration::new(None, None, session_file.clone(), Vec::new()))));
+        let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
+        let card = card(json!({}));
+        h.start(&card).unwrap();
+        h.data(
+            0,
+            &metadata_event(json!({ "type": "launch", "provider": provider, "token": SAVED_ID, "cwd": cwd() })),
+        );
+        let mut saved = saved_session(provider);
+        saved["token"] = json!("different-launch");
+        std::fs::write(&file, saved.to_string()).unwrap();
+        assert_eq!(h.snapshot(id(&card))["session"], Value::Null);
+        saved["token"] = json!(SAVED_ID);
+        std::fs::write(&file, saved.to_string()).unwrap();
+        h.manager.stop_all();
+        assert_eq!(h.snapshot(id(&card))["session"]["provider"], provider);
+        assert!(!file.exists(), "stopping removes the integration files");
+        assert_eq!(h.manager.running(), 0);
+        let _ = std::fs::remove_dir_all(folder);
+    }
 }
 
 #[test]
@@ -961,4 +1109,66 @@ fn events_serialize_like_the_javascript_host() {
         h.of_type("error"),
         [json!({ "type": "error", "id": card["id"], "message": "careful" })]
     );
+}
+
+#[test]
+fn launch_requests_open_beside_their_terminal_once_and_report_refusals() {
+    use tc_core::launch::{validate_request, write_request};
+    let folder = tempdir("launch");
+    let inbox = folder.join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    let session_file = folder.join("session.json");
+    let requests = inbox.clone();
+    let integrations: Integrations = Box::new(move |_, _| {
+        Ok(Some(
+            Integration::new(None, None, session_file.clone(), Vec::new()).with_launch_dir(requests.clone()),
+        ))
+    });
+    let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
+    let parent = card(json!({}));
+    h.start(&parent).unwrap();
+    assert_eq!(h.launch(0).env["TC_CARD_ID"], id(&parent));
+    let request = validate_request(
+        &json!({ "profile": "claude", "title": "Handover", "cwd": cwd(), "command": "claude \"go\"" }),
+        Platform::current(),
+    )
+    .unwrap();
+    let (request_id, _) = write_request(&inbox, &request).unwrap();
+    let mut missing = request.clone();
+    missing.cwd = folder.join("gone").to_string_lossy().into_owned();
+    let (refused, _) = write_request(&inbox, &missing).unwrap();
+    h.manager.poll_hooks();
+    let launches = h.of_type("launch");
+    assert_eq!(
+        launches,
+        [
+            json!({ "type": "launch", "id": id(&parent), "request": request_id, "profile": "claude", "title": "Handover", "cwd": cwd(), "command": "claude \"go\"" })
+        ]
+    );
+    // The sender of a refused request hears why.
+    let answer: Value =
+        serde_json::from_str(&std::fs::read_to_string(tc_core::launch::result_path(&inbox, &refused)).unwrap())
+            .unwrap();
+    assert_eq!(
+        answer,
+        json!({ "status": "refused", "error": "Working directory is unavailable." })
+    );
+    std::fs::remove_file(tc_core::launch::result_path(&inbox, &refused)).unwrap();
+    let errors = h.of_type("error");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["id"], id(&parent));
+    assert_eq!(
+        errors[0]["message"],
+        "Could not open the requested terminal: Working directory is unavailable."
+    );
+    h.manager.poll_hooks();
+    assert_eq!(h.of_type("launch").len(), 1, "each request opens one terminal");
+    assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 0);
+
+    // A request written just before the shell exits still opens, and exiting removes the inbox.
+    write_request(&inbox, &request).unwrap();
+    h.exit(0, 0);
+    assert_eq!(h.of_type("launch").len(), 2);
+    assert!(!inbox.exists(), "the inbox goes with the terminal");
+    let _ = std::fs::remove_dir_all(folder);
 }

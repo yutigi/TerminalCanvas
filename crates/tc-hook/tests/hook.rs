@@ -44,7 +44,11 @@ fn hook(args: &[&str], folder: &Path) -> Command {
         .args(args)
         .current_dir(folder)
         .env_remove("TC_LAUNCH_TOKEN")
-        .env_remove("TC_SESSION_FILE");
+        .env_remove("TC_SESSION_FILE")
+        .env_remove(tc_core::launch::ENV)
+        .env_remove(tc_core::launch::CARD_ENV)
+        // Never reach the real app's data folder from a test.
+        .env(tc_core::launch::DATA_ENV, folder.join("no-app-data"));
     command
 }
 
@@ -221,6 +225,68 @@ fn launches(stdout: &[u8], platform: Platform) -> (Vec<Value>, Vec<Value>) {
 
 const ID: &str = "12345678-1234-4321-9876-123456789abc";
 
+#[test]
+fn codex_start_hook_records_only_recovery_metadata_before_exit() {
+    let folder = temp_folder("codex-start");
+    let file = folder.join("session.json");
+    let config = tc_pty::shell::codex_hook_config(cfg!(windows));
+    let command = config
+        .strip_prefix("hooks.SessionStart=[{hooks=[{type='command',command='")
+        .unwrap()
+        .strip_suffix("',timeout=5}]}]")
+        .unwrap();
+    let mut shell = if cfg!(windows) {
+        let mut shell = Command::new("cmd.exe");
+        shell.args(["/d", "/s", "/c", command]);
+        shell
+    } else {
+        let mut shell = Command::new("/bin/sh");
+        shell.args(["-c", command]);
+        shell
+    };
+    let cwd = folder.join("ไทย 工作 🚀");
+    let payload = json!({ "hook_event_name": "SessionStart", "session_id": ID.to_uppercase(),
+        "cwd": cwd, "source": "startup", "transcript_path": "MUST_NOT_BE_SAVED", "model": "private" });
+    let mut child = shell
+        .env("TC_HOOK", dunce::simplified(Path::new(HOOK)))
+        .env("TC_LAUNCH_TOKEN", ID)
+        .env("TC_SESSION_FILE", &file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stdout.is_empty(), "hooks must not inject model context");
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        json!({ "provider": "codex", "sessionId": ID, "cwd": cwd, "token": ID })
+    );
+    for event in ["SessionEnd", "Stop", "SubagentStart"] {
+        let mut invalid = payload.clone();
+        invalid["hook_event_name"] = event.into();
+        invalid["session_id"] = "87654321-4321-4321-9876-123456789abc".into();
+        assert!(
+            record(&folder, &invalid.to_string(), "codex", Some(ID), Some(&file))
+                .status
+                .success()
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&std::fs::read_to_string(&file).unwrap()).unwrap(),
+            saved
+        );
+    }
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn bash_wrappers_report_manual_launches_through_tc_hook() {
@@ -387,7 +453,7 @@ mod windows {
         let settings = folder.join("settings with ' quote.json");
         let fake = tc_pty::shell::ps_quote(&folder.join("claude.cmd").to_string_lossy());
         let source = format!(
-            "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\nif ((Get-Command claude -CommandType Application -ErrorAction Stop).Source -ine {fake}) {{ throw 'The controlled Claude stand-in did not resolve.' }}\n{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nprompt\n",
+            "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\nif ((Get-Command claude -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source -ine {fake}) {{ throw 'The controlled Claude stand-in did not resolve.' }}\n{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nprompt\n",
             tc_pty::shell::powershell_source(&settings.to_string_lossy())
         );
         let output = powershell("powershell.exe", &source, &[], Some(&folder)).unwrap();
@@ -503,4 +569,414 @@ mod windows {
             );
         }
     }
+}
+
+#[test]
+fn new_terminal_queues_a_validated_request_for_the_host() {
+    use tc_core::launch::take_requests;
+    let folder = temp_folder("new-terminal");
+    let inbox = folder.join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    let project = folder.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let run = |args: &[&str]| {
+        let mut command = hook(&["new-terminal"], &folder);
+        command.args(args).env(tc_core::launch::ENV, &inbox);
+        command.output().unwrap()
+    };
+
+    let outside = hook(&["new-terminal", "--no-wait"], &folder).output().unwrap();
+    assert_eq!(outside.status.code(), Some(1), "no app has created its inbox");
+    let stderr = String::from_utf8_lossy(&outside.stderr);
+    let missing_inbox = tc_core::launch::app_inbox(&folder.join("no-app-data"));
+    assert!(
+        stderr.contains(&format!(
+            "({} does not exist): start the app first",
+            missing_inbox.display()
+        )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "To open it yourself, start a terminal in {}.",
+            folder.display()
+        )),
+        "a failure says how to continue by hand: {stderr}"
+    );
+    // A terminal's request folder disappears when its terminal ends, and a sandbox with its own
+    // temporary folder cannot see it either.
+    let ended = hook(&["new-terminal", "--command", "codex"], &folder)
+        .env(tc_core::launch::ENV, folder.join("ended terminal"))
+        .output()
+        .unwrap();
+    assert_eq!(ended.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&ended.stderr);
+    assert!(
+        stderr.contains("a sandbox may hide it (run this command outside the sandbox, or approve it)"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("pass --parent with its TC_CARD_ID to ask the app instead"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("and run: codex"), "{stderr}");
+    assert_eq!(run(&["--bogus"]).status.code(), Some(1));
+    assert_eq!(run(&["--title"]).status.code(), Some(1));
+    assert_eq!(run(&["--profile", "vim", "--no-wait"]).status.code(), Some(2));
+    assert_eq!(run(&["--cwd", "missing", "--no-wait"]).status.code(), Some(2));
+    assert_eq!(
+        std::fs::read_dir(&inbox).unwrap().count(),
+        0,
+        "refused requests write nothing"
+    );
+
+    let queued = run(&[
+        "--profile",
+        "claude",
+        "--title",
+        "Handover",
+        "--cwd",
+        "project",
+        "--command",
+        "claude \"Read it\"",
+        "--no-wait",
+    ]);
+    assert_eq!(
+        queued.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&queued.stderr)
+    );
+    let taken = take_requests(&inbox, Platform::current());
+    let request = taken[0].request.as_ref().unwrap();
+    assert!(!request.reply, "--no-wait asks for no answer");
+    assert_eq!(taken.len(), 1);
+    assert_eq!(
+        (
+            request.title.as_str(),
+            request.command.as_str(),
+            request.profile.as_str()
+        ),
+        ("Handover", "claude \"Read it\"", "claude")
+    );
+    assert_eq!(
+        Path::new(&request.cwd),
+        project,
+        "relative folders resolve from the current directory"
+    );
+
+    // A stand-in for the app: takes one request and answers it, or leaves it unanswered.
+    let app = |answer: Option<Value>| {
+        let inbox = inbox.clone();
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(taken) = take_requests(&inbox, Platform::current()).pop() {
+                    let id = taken.id.unwrap();
+                    assert!(taken.request.unwrap().reply);
+                    if let Some(answer) = &answer {
+                        tc_core::launch::write_result(&inbox, &id, answer);
+                    }
+                    return Some(id);
+                }
+            }
+            None
+        })
+    };
+    let host = app(Some(json!({
+        "status": "opened", "card": "card-7", "log": "ignored",
+        "warning": "The new terminal started without Terminal Canvas integration."
+    })));
+    let opened = run(&["--command", "ls", "--log"]);
+    let id = host.join().unwrap().unwrap();
+    assert_eq!(
+        opened.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&opened.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&opened.stdout);
+    assert!(
+        stdout.contains("opened a new terminal: Terminal (card card-7)"),
+        "{stdout}"
+    );
+    let log = tc_core::launch::log_path(&inbox, &id);
+    assert!(stdout.contains(&format!("Output log: {}", log.display())), "{stdout}");
+    assert!(
+        stdout.contains("Warning: The new terminal started without Terminal Canvas integration."),
+        "the app's warning about the new terminal is passed on: {stdout}"
+    );
+    assert!(
+        !tc_core::launch::result_path(&inbox, &id).exists(),
+        "the answer is consumed"
+    );
+
+    // Opening can still fail after the app took the request, for example if its folder disappeared.
+    let host = app(Some(
+        json!({ "status": "failed", "error": "Working directory is unavailable." }),
+    ));
+    let failed = run(&["--json"]);
+    host.join().unwrap().unwrap();
+    assert_eq!(failed.status.code(), Some(2));
+    let report: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(report["status"], "failed");
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("Working directory is unavailable.")
+    );
+    assert_eq!(
+        (report["via"].as_str(), report["request"]["profile"].as_str()),
+        (Some("terminal"), Some("shell")),
+        "a failure echoes the request, so the caller can open it another way: {report}"
+    );
+    assert!(report["id"].is_string());
+
+    // Taken but never answered: the caller learns a terminal may still open, and where its output
+    // would go.
+    let host = app(None);
+    let unconfirmed = run(&["--timeout", "2", "--log", "--json"]);
+    let id = host.join().unwrap().unwrap();
+    assert_eq!(unconfirmed.status.code(), Some(4));
+    let report: Value = serde_json::from_slice(&unconfirmed.stdout).unwrap();
+    assert_eq!(report["status"], "unconfirmed");
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("did not report the result within 2 seconds"),
+        "{report}"
+    );
+    assert_eq!(
+        report["log"],
+        tc_core::launch::log_path(&inbox, &id).to_string_lossy().as_ref(),
+        "{report}"
+    );
+    // Opening it by hand waits until the user has checked the canvas, so it never opens twice.
+    let host = app(None);
+    let unconfirmed = run(&["--timeout", "1", "--command", "npm test"]);
+    host.join().unwrap().unwrap();
+    assert_eq!(unconfirmed.status.code(), Some(4));
+    let stderr = String::from_utf8_lossy(&unconfirmed.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "If no new terminal appears on the canvas, open it yourself: start a terminal in {} and run: npm test",
+            folder.display()
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("To open it yourself"), "{stderr}");
+
+    // An unreadable answer is not reported as a slow app.
+    let unreadable = {
+        let inbox = inbox.clone();
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(taken) = take_requests(&inbox, Platform::current()).pop() {
+                    std::fs::write(tc_core::launch::result_path(&inbox, &taken.id.unwrap()), "{").unwrap();
+                    return;
+                }
+            }
+        })
+    };
+    let garbled = run(&["--json"]);
+    unreadable.join().unwrap();
+    assert_eq!(garbled.status.code(), Some(4));
+    let report: Value = serde_json::from_slice(&garbled.stdout).unwrap();
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("its answer could not be read"),
+        "{report}"
+    );
+
+    // Nor is a request folder that disappears, as when the terminal that asked ends.
+    let short_lived = folder.join("short-lived");
+    std::fs::create_dir_all(&short_lived).unwrap();
+    let ending = {
+        let inbox = short_lived.clone();
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if !take_requests(&inbox, Platform::current()).is_empty() {
+                    std::fs::remove_dir_all(&inbox).unwrap();
+                    return;
+                }
+            }
+        })
+    };
+    let started = std::time::Instant::now();
+    let orphaned = hook(&["new-terminal", "--timeout", "30", "--json"], &folder)
+        .env(tc_core::launch::ENV, &short_lived)
+        .output()
+        .unwrap();
+    ending.join().unwrap();
+    assert_eq!(orphaned.status.code(), Some(4));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "it stops waiting at once"
+    );
+    let report: Value = serde_json::from_slice(&orphaned.stdout).unwrap();
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("disappeared before Terminal Canvas answered, usually because the terminal that asked has ended"),
+        "{report}"
+    );
+
+    // Without a host, the request is withdrawn so it cannot open a terminal later.
+    let unanswered = run(&["--timeout", "1", "--command", "npm test"]);
+    assert_eq!(unanswered.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&unanswered.stderr);
+    assert!(stderr.contains("within 1 second, so it was withdrawn"), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "To open it yourself, start a terminal in {} and run: npm test",
+            folder.display()
+        )),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(folder);
+}
+
+#[test]
+fn new_terminal_outside_a_terminal_asks_the_app_and_reports_json() {
+    use tc_core::launch::{app_inbox, take_requests};
+    let folder = temp_folder("new-terminal-app");
+    let data = folder.join("app data");
+    let inbox = app_inbox(&data);
+    std::fs::create_dir_all(&inbox).unwrap();
+    let card_inbox = folder.join("card inbox");
+    std::fs::create_dir_all(&card_inbox).unwrap();
+    let run = |args: &[&str], envs: &[(&str, &Path)]| {
+        let mut command = hook(&["new-terminal"], &folder);
+        command.args(args).env(tc_core::launch::DATA_ENV, &data);
+        for (name, value) in envs {
+            command.env(name, value);
+        }
+        command.output().unwrap()
+    };
+    let json = |output: &std::process::Output| -> Value { serde_json::from_slice(&output.stdout).unwrap() };
+
+    // Outside any terminal, the app inbox takes the request; a parent may be named.
+    let queued = run(
+        &["--profile", "gemini", "--parent", "card-1", "--no-wait", "--json"],
+        &[],
+    );
+    assert_eq!(queued.status.code(), Some(0));
+    let report = json(&queued);
+    assert_eq!(
+        (report["status"].as_str(), report["via"].as_str()),
+        (Some("queued"), Some("app"))
+    );
+    assert_eq!(report["request"]["command"], "gemini");
+    let taken = take_requests(&inbox, Platform::current());
+    assert_eq!(taken[0].request.as_ref().unwrap().parent.as_deref(), Some("card-1"));
+    assert_eq!(report["request"]["parent"], "card-1");
+    assert!(
+        report.get("parent").is_none(),
+        "until the app answers, the parent it will use is unknown"
+    );
+
+    // Once it answers, the report names the parent the app actually used, if any.
+    let answered = |answer: Value, args: &[&str]| {
+        let inbox = inbox.clone();
+        let host = std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(taken) = take_requests(&inbox, Platform::current()).pop() {
+                    tc_core::launch::write_result(&inbox, &taken.id.unwrap(), &answer);
+                    return;
+                }
+            }
+        });
+        let output = run(args, &[]);
+        host.join().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        json(&output)
+    };
+    let beside = answered(
+        json!({ "status": "opened", "card": "card-2", "parent": "card-1" }),
+        &["--parent", "card-1", "--json"],
+    );
+    assert_eq!(
+        (beside["card"].as_str(), beside["parent"].as_str()),
+        (Some("card-2"), Some("card-1"))
+    );
+    let orphan = answered(
+        json!({ "status": "opened", "card": "card-3" }),
+        &["--parent", "closed-card", "--json"],
+    );
+    assert_eq!(orphan["request"]["parent"], "closed-card");
+    assert!(
+        orphan.get("parent").is_none(),
+        "a parent that no longer exists is not reported as used: {orphan}"
+    );
+    assert_eq!(report["id"], taken[0].id.clone().unwrap());
+
+    // With --no-wait --log, the log path is known before the app answers.
+    let logged = run(&["--no-wait", "--log", "--json"], &[]);
+    let report = json(&logged);
+    let id = report["id"].as_str().unwrap();
+    assert_eq!(
+        report["log"],
+        tc_core::launch::log_path(&inbox, id).to_string_lossy().as_ref()
+    );
+    assert!(
+        take_requests(&inbox, Platform::current())[0]
+            .request
+            .as_ref()
+            .unwrap()
+            .log
+    );
+
+    // Inside a terminal its own inbox wins, unless a parent or data folder is named.
+    let own = run(&["--no-wait"], &[(tc_core::launch::ENV, &card_inbox)]);
+    assert_eq!(own.status.code(), Some(0));
+    assert_eq!(take_requests(&card_inbox, Platform::current()).len(), 1);
+    let named = run(
+        &["--no-wait", "--parent", "other"],
+        &[(tc_core::launch::ENV, &card_inbox)],
+    );
+    assert_eq!(named.status.code(), Some(0));
+    assert_eq!(take_requests(&inbox, Platform::current()).len(), 1);
+
+    let refused = run(&["--parent", "../bad", "--json"], &[]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(json(&refused)["status"], "refused");
+    assert!(
+        json(&refused).get("request").is_none(),
+        "an invalid request is not echoed"
+    );
+    let timeout = run(&["--timeout", "1", "--json"], &[]);
+    assert_eq!(timeout.status.code(), Some(3));
+    assert_eq!(json(&timeout)["status"], "timeout");
+    assert_eq!(
+        std::fs::read_dir(&inbox).unwrap().count(),
+        0,
+        "a timed-out request is withdrawn"
+    );
+    let missing = run(&["--data-dir", "nowhere", "--json"], &[]);
+    assert_eq!(missing.status.code(), Some(1));
+    let report = json(&missing);
+    assert_eq!(report["status"], "unavailable");
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("does not exist): start the app first")
+    );
+    assert_eq!(report["request"]["cwd"], folder.to_string_lossy().as_ref());
+    assert!(report.get("id").is_none(), "nothing was written");
+    let _ = std::fs::remove_dir_all(folder);
 }

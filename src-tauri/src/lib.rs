@@ -6,6 +6,7 @@
 #[cfg(feature = "e2e")]
 mod e2e;
 pub mod host;
+pub mod launches;
 pub mod platform;
 pub mod protocol;
 pub mod updates;
@@ -90,6 +91,7 @@ actions! {
     open_link => "open-link",
     clipboard_read => "clipboard-read",
     clipboard_write => "clipboard-write",
+    launch_result => "launch-result",
 }
 
 /// Connects the renderer's event channel and returns the restored workspace. The renderer also
@@ -162,7 +164,7 @@ fn sidecar(name: &str) -> Option<PathBuf> {
         Some(hook)
     } else {
         eprintln!(
-            "{} was not found, so AI sessions will not be captured. Build it with: cargo build -p tc-hook",
+            "{} was not found, so AI sessions will not be captured and programs in terminals cannot open new ones. Build it with: cargo build -p tc-hook",
             hook.display()
         );
         None
@@ -295,6 +297,7 @@ pub fn run() {
             open_link,
             clipboard_read,
             clipboard_write,
+            launch_result,
             input,
             resize,
             ack,

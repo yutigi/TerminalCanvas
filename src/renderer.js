@@ -58,11 +58,12 @@ const mark = profile => {
     el.textContent = profile.initials;
     return el;
 };
+// A longer message, such as a startup warning with its fix, stays up long enough to read.
 function toast(message) {
     $('#toast').textContent = message;
     $('#toast').hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 6000);
+    toastTimer = setTimeout(() => { $('#toast').hidden = true; }, Math.max(6000, (message?.length || 0) * 60));
 }
 async function invoke(action, payload) {
     if (!bridge) throw new Error('Open Terminal Canvas with npm start.');
@@ -500,7 +501,8 @@ function showDirectory(s, cwd) {
     s.element.querySelector('.card-directory span').textContent = label;
     s.element.querySelector('.card-directory').title = label;
 }
-async function start(card, mode = card.session ? 'resume' : 'start') {
+// `launch` names the program's request that opened this card, so the host can log its output.
+async function start(card, mode = card.session ? 'resume' : 'start', launch) {
     const s = sessions.get(card.id);
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
@@ -511,7 +513,7 @@ async function start(card, mode = card.session ? 'resume' : 'start') {
         clearTimeout(autosaveTimer);
         await invoke('autosave', workspace);
         const metadataRevision = s.metadataRevision;
-        const result = await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows, mode });
+        const result = await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows, mode, ...(launch ? { launch } : {}) });
         if (sessions.get(card.id) !== s) return;
         if (s.metadataRevision === metadataRevision) {
             if (result.cwd) card.cwd = result.cwd;
@@ -618,7 +620,6 @@ viewport.addEventListener('wheel', event => {
 }, { passive: false });
 async function duplicateTerminal(source) {
     if (!ready || duplicateBusy || document.querySelector('dialog[open]')) return;
-    if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
     duplicateBusy = true;
     try {
         const result = await invoke('duplicate-directory', source);
@@ -630,18 +631,64 @@ async function duplicateTerminal(source) {
             $('#launch-error').hidden = false;
             return;
         }
-        if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
         const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
-        if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
         await start(card);
     } finally { duplicateBusy = false; }
 }
+// A program asked for a new terminal with `tc-hook new-terminal`: an agent of any kind, a harness, or
+// a script. From inside a terminal (`event.id`), it opens beside that terminal, joined to it by an
+// arrow. From outside the canvas (`event.external`), it opens beside the named `event.parent`, or in
+// view when there is none. The host validated the request; requests open one at a time, in order.
+// Every outcome is reported back as `launch-result`, so the program learns the new card's ID (and the
+// parent it actually opened beside, if any) or why nothing opened.
+let terminalRequests = Promise.resolve();
+let markAppReady;
+const appReady = new Promise(resolve => { markAppReady = resolve; });
+function requestTerminal(event) {
+    const report = outcome => { if (event.request) invoke('launch-result', { request: event.request, ...outcome }).catch(() => {}); };
+    terminalRequests = terminalRequests.then(async () => {
+        try {
+            const { card, parent } = await openRequestedTerminal(event);
+            report(parent ? { card: card.id, parent: parent.id } : { card: card.id });
+        }
+        catch (error) { report({ error: error.message }); toast(error.message); }
+    });
+}
+// Returns the started card and the card it opened beside (null when none), or throws why it could not open.
+async function openRequestedTerminal(event) {
+    await appReady;
+    let parent = findCard(event.external ? event.parent : event.id) || null;
+    const closed = 'The terminal that asked for a new terminal has closed.';
+    if (!event.external && !parent) throw new Error(closed);
+    const requester = () => parent?.title || 'A program';
+    await whenBoardIdle();
+    const size = { w: 660, h: 430 };
+    const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
+    const spot = parent ? Geometry.placeBeside(parent, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
+    const { card } = await invoke('create-card', { profile: event.profile, title: event.title, cwd: event.cwd, command: event.command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+    if (parent && !workspace.cards.includes(parent)) {
+        if (!event.external) throw new Error(closed);
+        parent = null;
+    }
+    await whenBoardIdle();
+    workspace.cards.push(card); mount(card);
+    if (parent && workspace.items.length < ITEM_LIMIT) {
+        recordHistory();
+        const arrow = { id: newId(), type: 'line', start: { id: parent.id }, end: { id: card.id }, arrow: true };
+        workspace.items.push(arrow); mountLine(arrow);
+    }
+    renderLines(); select(card.id); changed(); refresh();
+    if (focused) setFocus(card.id);
+    else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
+    toast(`${requester()} opened a new terminal: ${card.title}.`);
+    await start(card, undefined, event.request);
+    return { card, parent };
+}
 function openLaunch(profileId = 'shell') {
     if (!ready || document.querySelector('dialog[open]')) return;
-    if (workspace.cards.length >= 24) return toast('A workspace can contain up to 24 terminals.');
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
@@ -836,6 +883,7 @@ if (bridge) {
         if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); setStatus(workspace.cards.find(c => c.id === event.id), 'exited'); }
         if (event.type === 'error') toast(event.message);
         if (event.type === 'update') showUpdate(event);
+        if (event.type === 'launch') requestTerminal(event);
         if (event.type === 'closing') run(async () => {
             if (event.running && !await confirmAction('Close Terminal Canvas?', `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
             clearTimeout(autosaveTimer); await invoke('close', workspace);
@@ -852,7 +900,7 @@ if (bridge) {
             button.onclick = () => openLaunch(p.id); $('#profile-list').append(button);
         }
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
-        loadWorkspace(initial.workspace); ready = true; renderStyleToolbar();
+        loadWorkspace(initial.workspace); ready = true; markAppReady(); renderStyleToolbar();
         if (initial.warning) toast(initial.warning);
     });
-} else toast('Desktop bridge unavailable. Run npm start or npm run dev for the layout preview.');
+} else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');

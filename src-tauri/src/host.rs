@@ -32,6 +32,20 @@ use tc_pty::{SessionEvent, SessionKey, TerminalEvent, TerminalManager};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
+/// The most text one copy or paste carries, in UTF-16 units. Copy and paste share it, so any
+/// copied selection can be pasted back. The bridge sends a longer paste in ordered pieces, and
+/// input typed afterward, Ctrl+C included, follows the whole paste. The limit bounds that wait,
+/// and the unread paste held in memory, when a program reads its input slowly.
+const CLIPBOARD_UNITS: usize = 1024 * 1024;
+
+/// Shown at startup when the `tc-hook` sidecar is missing: without it, terminals have no
+/// integration, so nothing in them can ask for a new terminal.
+pub const HELPER_MISSING: &str = "Terminal Canvas could not find its helper, tc-hook, so AI sessions will not be saved and programs in terminals cannot open new ones. Reinstall Terminal Canvas (in a development build, run cargo build -p tc-hook), then restart it.";
+
+/// Added to the answer of a program whose new terminal started without integration, since it may
+/// plan to save that terminal's AI session or open more terminals from it.
+pub const NO_INTEGRATION: &str = "The new terminal started without Terminal Canvas integration (the app shows why), so its AI session will not be saved and programs in it cannot open terminals on the canvas.";
+
 /// The file dialogs the host shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
@@ -69,6 +83,10 @@ impl Paths {
     }
     pub fn integration(&self) -> PathBuf {
         self.data.join("shell-integration")
+    }
+    /// Where programs outside the canvas ask for new terminals (see [`tc_core::launch`]).
+    pub fn launch_requests(&self) -> PathBuf {
+        tc_core::launch::app_inbox(&self.data)
     }
 }
 
@@ -117,6 +135,7 @@ struct State {
     recovery: WorkspaceRecovery,
     filename: Option<PathBuf>,
     inputs: HashMap<String, InputOrder>,
+    launches: crate::launches::Launches,
 }
 
 /// Where events for the UI go.
@@ -197,11 +216,18 @@ impl Host {
                 as Integrations
         });
         let (os, home, process_cwd) = (config.platform, config.home.clone(), config.process_cwd.clone());
+        // Requests left while the app was closed are stale: their senders have given up.
+        let inbox = paths.launch_requests();
+        match tc_core::launch::create_inbox(&inbox, false) {
+            Ok(()) => tc_core::launch::discard_requests(&inbox),
+            Err(error) => eprintln!("Could not create {}: {error}", inbox.display()),
+        }
         let mut state = State {
             manager: TerminalManager::new(config, backend, integrations, sink),
             recovery: WorkspaceRecovery::new(),
             filename: None,
             inputs: HashMap::new(),
+            launches: crate::launches::Launches::new(),
         };
         let host = Arc::new(Host {
             state: sender,
@@ -231,6 +257,8 @@ impl Host {
                     Some(Message::Poll) => {
                         state.manager.poll_hooks();
                         state.manager.stopping();
+                        state.launches.idle();
+                        host.poll_launch_requests(&mut state);
                     }
                     None => break,
                 }
@@ -282,6 +310,25 @@ impl Host {
     /// saved for recovery right away.
     fn dispatch(&self, state: &mut State) {
         for event in state.manager.take_events() {
+            // Requests, and the output logs of the terminals they opened.
+            match &event {
+                TerminalEvent::Launch {
+                    request_id,
+                    inbox,
+                    request,
+                    ..
+                } => state.launches.expect(
+                    request_id.clone(),
+                    crate::launches::Pending {
+                        inbox: inbox.clone(),
+                        reply: request.reply,
+                        log: request.log,
+                    },
+                ),
+                TerminalEvent::Data { id, data } => state.launches.output(id, data),
+                TerminalEvent::Exit { id, status } => state.launches.exited(id, status.code),
+                _ => {}
+            }
             if let TerminalEvent::Metadata { id, metadata, .. } = &event {
                 let update = CardMetadata {
                     cwd: metadata.cwd.clone(),
@@ -304,6 +351,51 @@ impl Host {
                 }
             }
             self.emit(serde_json::to_value(&event).expect("events serialize"));
+        }
+    }
+
+    /// Opens terminals that programs outside the canvas asked for. Requests wait until the UI is
+    /// connected, so none is taken while nothing can open it.
+    fn poll_launch_requests(&self, state: &mut State) {
+        if self.emitter().is_none() {
+            return;
+        }
+        let inbox = self.paths.launch_requests();
+        for taken in tc_core::launch::take_requests(&inbox, self.os) {
+            let request = taken.request.and_then(|request| {
+                if tc_core::dirs::is_directory(&request.cwd) {
+                    Ok(request)
+                } else {
+                    Err(Error::Invalid("Working directory is unavailable.".into()))
+                }
+            });
+            match (request, taken.id) {
+                (Ok(request), Some(id)) => {
+                    let mut event = json!({
+                        "type": "launch", "external": true, "request": id, "profile": request.profile,
+                        "title": request.title, "cwd": request.cwd, "command": request.command,
+                    });
+                    if let Some(parent) = &request.parent {
+                        event["parent"] = json!(parent);
+                    }
+                    state.launches.expect(
+                        id,
+                        crate::launches::Pending {
+                            inbox: inbox.clone(),
+                            reply: request.reply,
+                            log: request.log,
+                        },
+                    );
+                    self.emit(event);
+                }
+                (request, id) => {
+                    let error = request.err().map_or_else(String::new, |error| error.to_string());
+                    if let Some(id) = id {
+                        crate::launches::Launches::refuse(&inbox, &id, &error);
+                    }
+                    self.emit_error(None, format!("Could not open the requested terminal: {error}"));
+                }
+            }
         }
     }
 
@@ -384,14 +476,14 @@ impl Host {
             }
             "clipboard-read" => {
                 let text = self.platform.read_clipboard().await?;
-                if utf16_len(&text) > 64_000 {
-                    return Err("Paste is limited to 64,000 characters.".into());
+                if utf16_len(&text) > CLIPBOARD_UNITS {
+                    return Err("Paste exceeds 1 MB.".into());
                 }
                 Ok(json!({ "text": text }))
             }
             "clipboard-write" => {
                 let Some(Value::String(text)) =
-                    payload.filter(|text| text.as_str().is_some_and(|t| utf16_len(t) <= 1024 * 1024))
+                    payload.filter(|text| text.as_str().is_some_and(|t| utf16_len(t) <= CLIPBOARD_UNITS))
                 else {
                     return Err("Selection exceeds 1 MB.".into());
                 };
@@ -400,11 +492,14 @@ impl Host {
             }
             "initialize" => {
                 let mut workspace = create_workspace();
-                let mut warning = None;
+                let mut warnings = Vec::new();
                 match self.read_workspace(&self.paths.recovery()).await {
                     Ok(restored) => workspace = restored,
                     Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => warning = Some(format!("Could not restore your last workspace: {error}")),
+                    Err(error) => warnings.push(format!("Could not restore your last workspace: {error}")),
+                }
+                if self.paths.hook.is_none() {
+                    warnings.push(HELPER_MISSING.to_owned());
                 }
                 let restored = workspace.clone();
                 self.with_state(move |_, state| {
@@ -415,8 +510,9 @@ impl Host {
                 let mut result = json!({
                     "workspace": workspace, "profiles": PROFILES, "home": self.home, "platform": node_platform(self.os)
                 });
-                if let Some(warning) = warning {
-                    result["warning"] = json!(warning);
+                // One line each, the workspace first: the UI shows them together.
+                if !warnings.is_empty() {
+                    result["warning"] = json!(warnings.join("\n"));
                 }
                 Ok(result)
             }
@@ -450,6 +546,16 @@ impl Host {
                             .remember_card(field(payload, "card").unwrap_or(&Value::Null))
                             .map_err(message)?;
                         let raw = serde_json::to_value(&card).expect("cards serialize");
+                        // A terminal a program asked for logs its output from the first byte.
+                        if let Some(request) = field(payload, "launch").and_then(Value::as_str) {
+                            let cols = tc_pty::manager::dimensions(
+                                field(payload, "cols").unwrap_or(&Value::Null),
+                                field(payload, "rows").unwrap_or(&Value::Null),
+                            );
+                            state
+                                .launches
+                                .begin_output(request, &card.id, cols.ok().map(|(cols, _)| cols));
+                        }
                         let started = state.manager.start(
                             &raw,
                             field(payload, "cols"),
@@ -457,6 +563,9 @@ impl Host {
                             field(payload, "mode"),
                         );
                         host.dispatch(state);
+                        if started.is_err() {
+                            state.launches.forget_output(&card.id);
+                        }
                         let started = started.map_err(message)?;
                         let board = state.recovery.persist(None).map_err(message)?;
                         Ok::<_, String>((started, card.id, host.queue_save(host.paths.recovery(), &board, None)))
@@ -467,6 +576,26 @@ impl Host {
                     return Err(error);
                 }
                 Ok(json!(started))
+            }
+            "launch-result" => {
+                let result = crate::launches::parse_result(payload)?;
+                let answered = self
+                    .with_state(move |_, state| {
+                        let warning = result
+                            .card
+                            .as_deref()
+                            .filter(|card| state.manager.integrated(card) == Some(false))
+                            .map(|_| NO_INTEGRATION);
+                        state.launches.answer(
+                            &result.request,
+                            result.card.as_deref(),
+                            result.parent.as_deref(),
+                            result.error.as_deref(),
+                            warning,
+                        )
+                    })
+                    .await;
+                Ok(json!({ "ok": answered }))
             }
             "stop" => {
                 if let Some(id) = field(payload, "id").and_then(Value::as_str) {
@@ -662,6 +791,8 @@ impl Host {
         self.post(move |host, state| {
             if let Err(error) = state.manager.resize(&id, &cols, &rows) {
                 host.emit_error(Some(&id), error.to_string());
+            } else if let Ok((cols, _)) = tc_pty::manager::dimensions(&cols, &rows) {
+                state.launches.resize(&id, cols);
             }
         });
     }

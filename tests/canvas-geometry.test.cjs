@@ -79,3 +79,27 @@ test('rectangles intersect only when they overlap', () => {
     assert.equal(G.intersects(a, { x: 10, y: 0, w: 5, h: 5 }), false, 'touching edges do not overlap');
     assert.equal(G.intersects(a, { x: -20, y: -20, w: 5, h: 5 }), false);
 });
+
+test('requested terminals open to the right of their parent, then in the next free spot', () => {
+    const parent = { x: 0, y: 0, w: 660, h: 430 }, size = { w: 660, h: 430 };
+    assert.deepEqual(G.placeBeside(parent, size, [parent]), { x: 740, y: 0 });
+    const right = { x: 740, y: 0, w: 660, h: 430 };
+    assert.deepEqual(G.placeBeside(parent, size, [parent, right]), { x: 740, y: 510 }, 'below the first sibling');
+    const below = { x: 740, y: 510, w: 660, h: 430 };
+    assert.deepEqual(G.placeBeside(parent, size, [parent, right, below]), { x: 740, y: -510 }, 'then above');
+    const wall = { x: 700, y: -100000, w: 800, h: 200000 };
+    assert.deepEqual(G.placeBeside(parent, size, [parent, wall]), { x: 0, y: 510 }, 'the row below when the column is full');
+    const everywhere = { x: -100000, y: -100000, w: 200000, h: 200000 };
+    assert.deepEqual(G.placeBeside(parent, size, [everywhere]), { x: 740, y: 0 }, 'beside the parent when nothing is free');
+});
+
+test('terminals requested from outside open centered in view, or in the nearest free grid cell', () => {
+    const size = { w: 600, h: 400 }, center = { x: 1000, y: 500 };
+    assert.deepEqual(G.placeNear(center, size, []), { x: 700, y: 300 });
+    const middle = { x: 700, y: 300, w: 600, h: 400 };
+    const spot = G.placeNear(center, size, [middle]);
+    assert.equal(G.intersects({ ...spot, ...size }, middle), false);
+    assert.equal(Math.max(Math.abs(spot.x - 700) / 680, Math.abs(spot.y - 300) / 480), 1, 'the first ring around the center');
+    const everywhere = { x: -100000, y: -100000, w: 200000, h: 200000 };
+    assert.deepEqual(G.placeNear(center, size, [everywhere]), { x: 700, y: 300 });
+});

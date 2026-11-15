@@ -20,7 +20,7 @@ const itemKind = item => (item.type === 'shape' ? item.shape : item.type);
 const clampCoordinate = n => Math.max(-100000, Math.min(100000, n));
 const clampSize = (n, min) => Math.max(min, Math.min(8000, n));
 const newId = () => crypto.randomUUID();
-// The bridge knows how this webview serves the image scheme; Electron serves tc-asset: directly.
+// The bridge supplies this webview's asset scheme.
 const assetUrl = name => `${window.terminalCanvas?.assetPrefix ?? 'tc-asset://images/'}${encodeURIComponent(name)}`;
 const findItem = id => workspace.items.find(item => item.id === id);
 const findCard = id => workspace.cards.find(card => card.id === id);

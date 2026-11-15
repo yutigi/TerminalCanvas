@@ -16,13 +16,14 @@ use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 use serde_json::Value;
 use tc_core::js::{trim, truthy, utf16_len};
+use tc_core::launch::{LaunchRequest, take_requests, write_result};
 use tc_core::osc::{DirectoryReports, Report};
 use tc_core::recovery::CardMetadata;
 use tc_core::session::{Launch, LaunchToken, MetadataEvent, MetadataParser, MetadataPatch, Provider, session_metadata};
-use tc_core::workspace::{VERSION, limits, validate_card};
+use tc_core::workspace::{VERSION, validate_card};
 use tc_core::{Error, Platform, Result};
 
-use crate::integration::Integration;
+use crate::integration::{self, Integration};
 use crate::shell::{POWERSHELL_BOOTSTRAP, powershell_args};
 
 /// The most input one write may carry, in UTF-16 units.
@@ -126,6 +127,14 @@ pub enum TerminalEvent {
         id: String,
         message: String,
     },
+    /// A program in terminal `id` asked for a new terminal; the UI creates it next to `id`. The
+    /// host answers request `request_id` in `inbox` once the UI reports the outcome.
+    Launch {
+        id: String,
+        request_id: String,
+        inbox: std::path::PathBuf,
+        request: LaunchRequest,
+    },
 }
 
 impl Serialize for TerminalEvent {
@@ -163,6 +172,20 @@ impl Serialize for TerminalEvent {
                 map.serialize_entry("type", "error")?;
                 map.serialize_entry("id", id)?;
                 map.serialize_entry("message", message)?;
+            }
+            TerminalEvent::Launch {
+                id,
+                request_id,
+                request,
+                ..
+            } => {
+                map.serialize_entry("type", "launch")?;
+                map.serialize_entry("id", id)?;
+                map.serialize_entry("request", request_id)?;
+                map.serialize_entry("profile", &request.profile)?;
+                map.serialize_entry("title", &request.title)?;
+                map.serialize_entry("cwd", &request.cwd)?;
+                map.serialize_entry("command", &request.command)?;
             }
         }
         map.end()
@@ -281,6 +304,27 @@ pub struct TerminalManager {
     stopping: Vec<Stopping>,
     generation: u64,
     outbox: Vec<TerminalEvent>,
+    /// The last terminal started without the integration it should have had. A folder that stays
+    /// broken fails every start, and one notice covers them until a start succeeds.
+    integration_failing: bool,
+}
+
+/// Set for every terminal, apart from its integration's variables.
+const CANVAS_ENV: &str = "TERMINAL_CANVAS";
+
+/// Why a terminal started without integration, what that costs, and what to do about it.
+fn integration_warning(error: &io::Error) -> String {
+    let fix = match error.kind() {
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => "Make that location writable",
+        io::ErrorKind::NotFound => {
+            "Make sure that folder exists (the temporary folder comes from TMP or TEMP on Windows, TMPDIR elsewhere)"
+        }
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => "Free some disk space",
+        _ => "Fix the problem with that location",
+    };
+    format!(
+        "This terminal started without Terminal Canvas integration ({error}): its AI session will not be saved, and programs in it cannot open terminals on the canvas. {fix}, then restart the terminal. Until then, other terminals start the same way without another notice."
+    )
 }
 
 fn invalid<T>(message: &str) -> Result<T> {
@@ -319,11 +363,27 @@ fn is_directory(path: &str) -> bool {
 
 impl TerminalManager {
     pub fn new(
-        config: Config,
+        mut config: Config,
         backend: Box<dyn Backend>,
         integrations: Option<Integrations>,
         events: EventSink,
     ) -> Self {
+        // The app may itself run in a Terminal Canvas terminal, whose variables name that terminal's
+        // files, perhaps in another app. Each terminal sets its own, so none is inherited. Windows
+        // matches names case-insensitively, so an inherited `Tc_Hook` would win over `TC_HOOK`.
+        let windows = config.platform.is_windows();
+        config.env.retain(|key, _| {
+            !integration::ENV_KEYS
+                .iter()
+                .chain(&[tc_core::launch::CARD_ENV, CANVAS_ENV])
+                .any(|ours| {
+                    if windows {
+                        key.eq_ignore_ascii_case(ours)
+                    } else {
+                        key == ours
+                    }
+                })
+        });
         TerminalManager {
             config,
             backend,
@@ -334,6 +394,7 @@ impl TerminalManager {
             stopping: Vec::new(),
             generation: 0,
             outbox: Vec::new(),
+            integration_failing: false,
         }
     }
 
@@ -362,6 +423,12 @@ impl TerminalManager {
     /// The live directory a terminal last reported (outer `None` before any report).
     pub fn live_directory(&self, id: &str) -> Option<Option<String>> {
         self.sessions.get(id).and_then(|session| session.cwd.clone())
+    }
+
+    /// Whether a running terminal started with integration; without it, its AI session is not saved
+    /// and programs in it cannot open terminals. `None` when it is not running.
+    pub fn integrated(&self, id: &str) -> Option<bool> {
+        self.sessions.get(id).map(|session| session.integration.is_some())
     }
 
     fn emit(&mut self, event: TerminalEvent) {
@@ -396,9 +463,6 @@ impl TerminalManager {
         let (cols, rows) = dimensions(cols.unwrap_or(&Value::from(80)), rows.unwrap_or(&Value::from(24)))?;
         if self.sessions.contains_key(&card.id) {
             return invalid("This terminal is already running.");
-        }
-        if self.sessions.len() >= limits::CARDS {
-            return invalid("Terminal limit reached.");
         }
         let platform = self.config.platform;
         let windows = platform.is_windows();
@@ -447,10 +511,19 @@ impl TerminalManager {
             };
             command.clear();
         }
+        // Integration adds AI session capture, folder reports, and the launch request inbox. A
+        // terminal whose integration files cannot be written still starts without them, and says so.
+        let mut failure = None;
         let integration = match &mut self.integrations {
-            Some(prepare) => prepare(&shell, platform)?,
+            Some(prepare) => prepare(&shell, platform).unwrap_or_else(|error| {
+                failure = Some(error);
+                None
+            }),
             None => None,
         };
+        if failure.is_none() {
+            self.integration_failing = false;
+        }
         let args = match integration.as_ref().and_then(|integration| integration.args.clone()) {
             Some(args) => args,
             None if windows && is_bare_cmd(&shell) => Vec::new(),
@@ -465,7 +538,9 @@ impl TerminalManager {
         );
         env.insert("TERM".into(), "xterm-256color".into());
         env.insert("COLORTERM".into(), "truecolor".into());
-        env.insert("TERMINAL_CANVAS".into(), "1".into());
+        env.insert(CANVAS_ENV.into(), "1".into());
+        // Lets a program outside this terminal name it as the parent of a new terminal.
+        env.insert(tc_core::launch::CARD_ENV.into(), card.id.clone());
         env.remove("ELECTRON_RUN_AS_NODE");
         if windows {
             let prompt = env
@@ -523,6 +598,14 @@ impl TerminalManager {
             metadata,
             initial: true,
         });
+        if let Some(error) = failure
+            && !std::mem::replace(&mut self.integration_failing, true)
+        {
+            self.emit(TerminalEvent::Error {
+                id: card.id.clone(),
+                message: integration_warning(&error),
+            });
+        }
         if !windows && let Some(pid) = pid {
             let watch = self
                 .backend
@@ -656,6 +739,8 @@ impl TerminalManager {
             return;
         }
         self.poll_metadata(&key.id);
+        // A request made just before the shell ended still opens its terminal.
+        self.poll_launches(&key.id);
         if let Some(session) = self.sessions.remove(&key.id) {
             dispose(session);
         }
@@ -683,7 +768,7 @@ impl TerminalManager {
         });
     }
 
-    /// Reads the session the Claude hook recorded for the current launch, if any.
+    /// Reads the session a provider hook recorded for the current launch, if any.
     fn poll_metadata(&mut self, id: &str) {
         let Some(session) = self.sessions.get(id) else { return };
         let (Some(integration), Some(launch)) = (&session.integration, &session.launch) else {
@@ -709,11 +794,58 @@ impl TerminalManager {
         }
     }
 
-    /// Checks every integrated terminal's session file. Call every [`HOOK_POLL_INTERVAL`].
+    /// Checks every integrated terminal's session file and launch requests. Call every
+    /// [`HOOK_POLL_INTERVAL`].
     pub fn poll_hooks(&mut self) {
         let ids: Vec<String> = self.sessions.keys().cloned().collect();
         for id in ids {
             self.poll_metadata(&id);
+            self.poll_launches(&id);
+        }
+    }
+
+    /// Takes the terminal's pending launch requests. A refused request is reported on the
+    /// requesting terminal; an accepted one becomes a [`TerminalEvent::Launch`].
+    fn poll_launches(&mut self, id: &str) {
+        let Some(inbox) = self
+            .sessions
+            .get(id)
+            .and_then(|session| session.integration.as_ref())
+            .and_then(|integration| integration.launch_dir.clone())
+        else {
+            return;
+        };
+        for taken in take_requests(&inbox, self.config.platform) {
+            let request = taken.request.and_then(|request| {
+                if is_directory(&request.cwd) {
+                    Ok(request)
+                } else {
+                    Err(Error::Invalid("Working directory is unavailable.".into()))
+                }
+            });
+            let event = match (request, taken.id) {
+                (Ok(request), Some(request_id)) => TerminalEvent::Launch {
+                    id: id.to_owned(),
+                    request_id,
+                    inbox: inbox.clone(),
+                    request,
+                },
+                (request, request_id) => {
+                    let error = request.err().map_or_else(String::new, |error| error.to_string());
+                    if let Some(request_id) = request_id {
+                        write_result(
+                            &inbox,
+                            &request_id,
+                            &serde_json::json!({ "status": "refused", "error": error }),
+                        );
+                    }
+                    TerminalEvent::Error {
+                        id: id.to_owned(),
+                        message: format!("Could not open the requested terminal: {error}"),
+                    }
+                }
+            };
+            self.emit(event);
         }
     }
 

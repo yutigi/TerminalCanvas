@@ -127,6 +127,16 @@ test('native terminal clipboard shortcuts paste once, preserve native fields, an
                     }
                 }
             }
+            if (!focus) {
+                // Far past the old 64,000-character limit and just under the 1 MB clipboard limit.
+                const large = 'ไทย 🚀 '.repeat(149795) + 'end\nline';
+                await clipboardWrite(h.page, large);
+                await h.page.evaluate(id => { window.__inputs = []; const t = sessions.get(id).terminal; t.clearSelection(); t.focus(); }, card.id);
+                await key(h.page, 'Control+v');
+                await until(async () => (await h.page.evaluate(() => window.__inputs)).length > 0, 'Large native paste did not reach xterm.');
+                await new Promise(resolve => setTimeout(resolve, 100));
+                assert.deepEqual(await h.page.evaluate(() => window.__inputs), ['\x1b[200~' + large.replace('\n', '\r') + '\x1b[201~']);
+            }
             await h.page.evaluate(() => { const field = document.querySelector('#search'); field.value = 'outside terminal'; field.focus(); field.select(); window.__inputs = []; });
             await key(h.page, 'Control+c');
             await until(async () => await clipboardRead(h.page) === 'outside terminal', 'Native text-field copy failed.');

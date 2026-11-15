@@ -1,10 +1,11 @@
 //! `tc-hook`, the sidecar the shell integration runs, from `src/session-hook.cjs`.
 //!
 //! ```text
-//! tc-hook record <provider>                  Claude's SessionStart hook: read the hook input on stdin
+//! tc-hook record <provider>                  Claude/Codex SessionStart hook: read the input on stdin
 //!                                            and record the session for the host
 //! tc-hook emit launch <provider> <session>   report an AI CLI launch to the host (OSC 633)
 //! tc-hook emit end <exit code>               report that it ended
+//! tc-hook new-terminal [options]             ask the app for a new terminal (see `new_terminal`)
 //! ```
 //!
 //! CLI hook input can contain private fields; only recovery metadata is kept. A hook never blocks
@@ -21,6 +22,8 @@ use tc_core::atomic::{self, Access};
 use tc_core::js::{is_js_whitespace, utf16_len};
 use tc_core::session::{is_session_id, session_metadata};
 
+mod new_terminal;
+
 /// The most hook input read, in UTF-16 units as the JavaScript hook counted it.
 const INPUT_UNITS: usize = 65536;
 const UTF8_PREAMBLE: &[u8] = b"\xef\xbb\xbf";
@@ -33,12 +36,15 @@ fn main() -> ExitCode {
     let arg = |index: usize| args.get(index).map(String::as_str);
     match arg(0) {
         Some("emit") => emit(arg(1), arg(2), arg(3)),
+        Some("new-terminal") => new_terminal::run(&args[1..]),
         Some("record") if arg(1).is_some() => {
             let _ = record(arg(1).unwrap_or_default());
             ExitCode::SUCCESS
         }
         _ => {
-            eprintln!("usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code>");
+            eprintln!(
+                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options]"
+            );
             ExitCode::from(2)
         }
     }
