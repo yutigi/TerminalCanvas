@@ -1,0 +1,42 @@
+{
+  "version": "9.9.9",
+  "pub_date": "2026-11-11T00:00:00Z",
+  "platforms": {
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_x64-setup.exe"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_x64-setup.exe"
+    },
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_aarch64.app.tar.gz"
+    },
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_aarch64.app.tar.gz"
+    },
+    "darwin-x86_64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_x64.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_x64.app.tar.gz"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_amd64.AppImage"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_amd64.AppImage"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRS2d5dVBVTWtsY0tteVdQYTNlNVZQN0t2ckU2Um81elJLSTBlWFY2aXcyZDk1d3lqMEZCOFBYd3lkM2pUZ29xdmdOa0JweTlFVWlmQXhvREdoQXpsRUtqMXdqdFY3UlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDE2MDk0CWZpbGU6cGFja2FnZQl2ZXJzaW9uOjkuOS45Ckx3K0J6b0NTUm1INDRmWnhRQkVEbVQreTIxUjU3STZVei91RnpQRDd4MTdCZVprcTVSa0NLVGhiQmVOaE03L2pBVmRXeXg0dlV3bXJQT3l5REN1a0RnPT0K",
+      "url": "https://github.com/o/r/releases/download/v9.9.9/Terminal-Canvas_9.9.9_amd64.deb"
+    }
+  }
+}

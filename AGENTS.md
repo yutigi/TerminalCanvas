@@ -23,6 +23,10 @@ Install with `npm ci`, build `cargo build -p tc-hook`, then `cargo run -p termin
 `cargo xtask icons [--check]` regenerates/verifies native icons. Windows E2E requires the hook,
 `cargo build -p terminal-canvas --features e2e`, PowerShell 7, then `npm run test:e2e`.
 `cargo xtask package-windows` needs MSVC/Windows SDK and the pinned Tauri CLI in the README.
+`cargo xtask package [--target <triple>] [--updater]` builds this platform's packages into `release/`;
+`--updater` signs them with `TAURI_SIGNING_PRIVATE_KEY`. `cargo xtask release` verifies every signed
+package against the committed key and writes `latest.json`. A `vX.Y.Z` tag runs both in
+`.github/workflows/publish.yml`, which creates a draft release.
 
 ## Constraints
 
@@ -35,6 +39,12 @@ The Rust actor owns mutable host state; OS operations stay behind host validatio
 limited to the local main webview and app commands; retain CSP/navigation/permission restrictions.
 Test profiles, controlled CLI substitutes, and generated output must remain separate from user data.
 The `e2e` feature defaults to an isolated profile and is forbidden in release builds.
+
+Update checks (`src-tauri/src/updates.rs`) run only in release builds; debug, test, and `e2e` builds
+must never contact the endpoint. The updater plugin's JavaScript commands stay ungranted: the renderer
+reaches updates only through `update_install` and host events. The version lives only in the root
+`Cargo.toml`. The updater private key is a repository secret, never a file; `plugins.updater.pubkey`
+is its public half, and changing it strands every installed copy.
 
 Ignore `node_modules/`, `target/`, `.cache/`, `release/`, `src/vendor/`, and generated sidecars/schemas/command permission descriptors.
 Never commit credentials or local configuration. Use concise imperative commit subjects; PRs should

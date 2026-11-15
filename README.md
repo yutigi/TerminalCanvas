@@ -220,6 +220,29 @@ Windows. It builds the release hook and runs `cargo tauri build` with `src-tauri
 writing both packages to `release/`. The manual release-artifact workflow validates the source and
 ten consecutive Windows E2E runs before uploading; it does not publish a release.
 
+## Releases and automatic updates
+
+The Rust app updates itself from this repository's GitHub releases. A release build reads `latest.json` from the latest published release 20 seconds after it starts, and again every 6 hours until it finds a newer version. Then:
+
+- **Installed copies download the update in the background and verify its signature**, then show **Restart to update** in the top bar. This covers the Windows NSIS install, the macOS app bundle, and the Linux AppImage or `.deb`. Restarting first saves the layout and stops the terminals; it asks before stopping any that are running. On Windows, the per-user installer runs without an administrator prompt and reopens the app. macOS and Linux replace the app before closing, so a failed install is reported while the app is still open; installing a `.deb` asks for an administrator password.
+- **Copies that can't replace themselves** show **Update available**, which opens the release page. This covers the portable Windows zip, binaries run from `target/`, and a macOS app opened straight from its downloaded disk image without being moved to Applications.
+
+Debug, test, and E2E builds never check for updates. To turn checks off in a release build, set `TERMINAL_CANVAS_DISABLE_UPDATES=1`. The sidebar shows the running version.
+
+Every updater package is signed with the key whose public half is `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. The app rejects any package that this key didn't sign, or that was signed for a different version than `latest.json` announces (`requireSignedVersion`). The private key must never be committed. Store it as the `TAURI_SIGNING_PRIVATE_KEY` repository secret, and add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password. If the key is lost, installed copies can't update automatically: publish a new public key in a release that users install by hand.
+
+To publish a release:
+
+1. Set `version` under `[workspace.package]` in the root `Cargo.toml`. The app and its packages read their version from there. Merge to `main`, and wait for CI to pass.
+2. Tag that commit `vX.Y.Z` and push the tag. `.github/workflows/publish.yml` then:
+   - checks that the tag matches the version, CI passed for the commit, and the signing secret exists;
+   - builds Windows x64, macOS Apple silicon and Intel, and Linux x64 packages with `cargo xtask package --updater`;
+   - runs `cargo xtask release`, which requires every package, verifies each signature against the committed public key, and writes `latest.json` and `SHA256SUMS.txt`;
+   - creates a **draft** release. Re-running the workflow refreshes the draft's files.
+3. Review the draft, then publish it as the latest release. Apps look for updates at `releases/latest/download/latest.json`, so they only see releases that are published and marked latest; the `electron-final` rollback release has no manifest.
+
+To build this platform's packages locally, run `cargo xtask package [--target <triple>] [--updater]`. Supported targets are `x86_64-pc-windows-msvc`, `aarch64-apple-darwin`, `x86_64-apple-darwin` (also built on Apple silicon), and `x86_64-unknown-linux-gnu`. Packages go to `release/`: the Windows installer and portable zip; a macOS `.dmg` (plus `.app.tar.gz` with `--updater`); or a Linux `.AppImage` and `.deb`. With `--updater`, each updatable package also gets a `.sig`. macOS packages are ad-hoc signed, not notarized. The first launch from a downloaded disk image needs Control-click → **Open**, or approval under System Settings → Privacy & Security; updates the app downloads itself are not quarantined. Windows packages are not Authenticode-signed, so SmartScreen may warn on the first install.
+
 ## Upgrading from the Electron build
 
 Version 0.2.0 replaces the Electron host (0.1.0) with Rust and Tauri. The interface and features
