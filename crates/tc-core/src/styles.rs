@@ -1,4 +1,5 @@
-//! Item style palettes and the group nesting limit, from `src/item-styles.js`.
+//! Item style palettes, the group nesting limit, and the terminal text size range, from
+//! `src/item-styles.js`.
 //!
 //! The renderer keeps using the JavaScript file. A parity test (`tests/item_styles_parity.rs`) loads it
 //! with Node and compares it with these constants, so the two can never disagree.
@@ -31,3 +32,10 @@ pub const COLORED_TYPES: [&str; 5] = ["text", "note", "shape", "frame", "line"];
 pub const TEXT_TYPES: [&str; 3] = ["text", "note", "shape"];
 /// How deeply groups may nest.
 pub const GROUP_DEPTH: usize = 8;
+
+/// A terminal card's text size, in whole CSS pixels. An absent size is the default.
+pub mod terminal_font_size {
+    pub const MIN: u8 = 8;
+    pub const DEFAULT: u8 = 12;
+    pub const MAX: u8 = 32;
+}

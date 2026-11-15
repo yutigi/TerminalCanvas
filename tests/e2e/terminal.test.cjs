@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { launch, until, hasOutputLine, sendInput, click, key, screenshot } = require('./harness.cjs');
 const { withSavedClipboard, fixtureScene, cellPoint, placeSelectionFixture, writeTerminal, clipboardRead, clipboardWrite, input, startTerminal } = require('./support.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 180000 };
@@ -67,8 +69,9 @@ test(`native terminal selection, copying, SGR reports and scrolling (display sca
         const wheel = await cellPoint(h.page, cards[0].id, 20, 5);
         await h.page.mouse.move(wheel.x, wheel.y); await h.page.mouse.wheel(0, -240);
         await until(async () => (await h.page.evaluate(id => sessions.get(id).terminal.buffer.active.viewportY, cards[0].id)) < bottom, 'Wheel did not scroll terminal scrollback.');
+        // Over a terminal that is not selected, Ctrl+wheel zooms the canvas rather than that terminal's text.
         const anchor = cards[1];
-        await h.page.evaluate(card => { workspace.camera = { x: 200 - card.x * .65, y: 100 - card.y * .65, z: .65 }; renderCamera(); }, anchor);
+        await h.page.evaluate(({ card, other }) => { select(other); workspace.camera = { x: 200 - card.x * .65, y: 100 - card.y * .65, z: .65 }; renderCamera(); }, { card: anchor, other: cards[0].id });
         const point = await cellPoint(h.page, anchor.id, 40, 9);
         assert.ok(point.visible);
         const worldPoint = () => h.page.evaluate(point => {
@@ -81,10 +84,69 @@ test(`native terminal selection, copying, SGR reports and scrolling (display sca
         await until(async () => (await h.page.evaluate(() => workspace.camera.z)) !== .65, 'Ctrl+wheel did not zoom the canvas.');
         const after = await worldPoint();
         assert.ok(Math.abs(before.x - after.x) < 1 && Math.abs(before.y - after.y) < 1, 'Canvas zoom must stay anchored at the native pointer.');
+        assert.equal(await h.page.evaluate(id => sessions.get(id).terminal.options.fontSize, anchor.id), 12);
         await screenshot(h.page, `terminal-selection-${scale}`);
     });
 });
 }
+
+test('native Ctrl+wheel and Ctrl+0 scale terminal text, resize the real PTY, and save the size', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const card = await h.page.evaluate(async () => {
+        loadWorkspace((await invoke('new')).workspace);
+        const { card } = await invoke('create-card', { title: 'Text size', x: 20, y: 20 });
+        workspace.cards.push(card); mount(card); renderCamera(); select(card.id);
+        await start(card);
+        return card;
+    });
+    await until(async () => !(await h.page.evaluate(card => invoke('duplicate-directory', card), card)).warning, 'Integrated PowerShell did not reach an idle prompt.');
+    const grid = () => h.page.evaluate(id => {
+        const terminal = sessions.get(id).terminal;
+        return { saved: workspace.cards[0].fontSize ?? null, font: terminal.options.fontSize, cols: terminal.cols, z: workspace.camera.z };
+    }, card.id);
+    // PowerShell's own window width proves the refitted grid reached ConPTY.
+    let probes = 0;
+    const shellWidth = async () => {
+        const marker = `WIDTH_${++probes}_`;
+        await input(h.page, card.id, `Write-Output ("${marker}" + $Host.UI.RawUI.WindowSize.Width)\r`);
+        const match = await until(async () => (await h.output(card.id)).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').match(new RegExp(`${marker}(\\d+)`)),
+            'PowerShell did not report its width.');
+        return Number(match[1]);
+    };
+    const ctrlWheel = async (point, deltaY) => {
+        await h.page.mouse.move(point.x, point.y); await h.page.keyboard.down('Control');
+        try { await h.page.mouse.wheel(0, deltaY); } finally { await h.page.keyboard.up('Control'); }
+    };
+    const initial = await grid();
+    assert.deepEqual([initial.saved, initial.font], [null, 12]);
+    assert.equal(await shellWidth(), initial.cols);
+    await ctrlWheel(await cellPoint(h.page, card.id, 10, 2), -200);
+    await until(async () => (await grid()).font === 14, 'Ctrl+wheel did not scale the selected terminal.');
+    const larger = await grid();
+    assert.equal(larger.saved, 14);
+    assert.ok(larger.cols < initial.cols, 'Larger text leaves fewer columns.');
+    assert.equal(larger.z, initial.z, 'Scaling text must not zoom the canvas.');
+    await until(async () => await shellWidth() === larger.cols, 'ConPTY did not receive the refitted width.');
+    await screenshot(h.page, 'terminal-text-size');
+
+    await h.page.evaluate(id => setFocus(id), card.id);
+    await h.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await ctrlWheel(await cellPoint(h.page, card.id, 10, 2), 100);
+    await until(async () => (await grid()).font === 13, 'Ctrl+wheel did not scale the terminal in Focus mode.');
+    await h.page.evaluate(id => sessions.get(id).terminal.focus(), card.id);
+    await key(h.page, 'Control+0');
+    await until(async () => (await grid()).font === 12, 'Ctrl+0 did not reset the text size.');
+    const reset = await grid();
+    assert.equal(reset.saved, null, 'The default size is left out of the card.');
+    // Ctrl+0 must not also type a 0 ahead of the next command.
+    await until(async () => await shellWidth() === reset.cols, 'ConPTY did not receive the reset width.');
+
+    await ctrlWheel(await cellPoint(h.page, card.id, 10, 2), -600);
+    await until(async () => (await grid()).font === 18, 'Ctrl+wheel did not scale the terminal to 18.');
+    await h.page.evaluate(() => setFocus(null));
+    const file = path.join(h.profile, 'workspace.terminalcanvas');
+    await until(async () => JSON.parse(await fs.readFile(file, 'utf8').catch(() => 'null'))?.cards?.[0]?.fontSize === 18, 'The text size was not autosaved.');
+});
 
 test('native terminal clipboard shortcuts paste once, preserve native fields, and interrupt real processes', windows, async t => {
     await withSavedClipboard(async () => {
