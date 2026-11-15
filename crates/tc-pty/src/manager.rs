@@ -23,7 +23,7 @@ use tc_core::session::{Launch, LaunchToken, MetadataEvent, MetadataParser, Metad
 use tc_core::workspace::{VERSION, validate_card};
 use tc_core::{Error, Platform, Result};
 
-use crate::integration::Integration;
+use crate::integration::{self, Integration};
 use crate::shell::{POWERSHELL_BOOTSTRAP, powershell_args};
 
 /// The most input one write may carry, in UTF-16 units.
@@ -304,6 +304,27 @@ pub struct TerminalManager {
     stopping: Vec<Stopping>,
     generation: u64,
     outbox: Vec<TerminalEvent>,
+    /// The last terminal started without the integration it should have had. A folder that stays
+    /// broken fails every start, and one notice covers them until a start succeeds.
+    integration_failing: bool,
+}
+
+/// Set for every terminal, apart from its integration's variables.
+const CANVAS_ENV: &str = "TERMINAL_CANVAS";
+
+/// Why a terminal started without integration, what that costs, and what to do about it.
+fn integration_warning(error: &io::Error) -> String {
+    let fix = match error.kind() {
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => "Make that location writable",
+        io::ErrorKind::NotFound => {
+            "Make sure that folder exists (the temporary folder comes from TMP or TEMP on Windows, TMPDIR elsewhere)"
+        }
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => "Free some disk space",
+        _ => "Fix the problem with that location",
+    };
+    format!(
+        "This terminal started without Terminal Canvas integration ({error}): its AI session will not be saved, and programs in it cannot open terminals on the canvas. {fix}, then restart the terminal. Until then, other terminals start the same way without another notice."
+    )
 }
 
 fn invalid<T>(message: &str) -> Result<T> {
@@ -342,11 +363,27 @@ fn is_directory(path: &str) -> bool {
 
 impl TerminalManager {
     pub fn new(
-        config: Config,
+        mut config: Config,
         backend: Box<dyn Backend>,
         integrations: Option<Integrations>,
         events: EventSink,
     ) -> Self {
+        // The app may itself run in a Terminal Canvas terminal, whose variables name that terminal's
+        // files, perhaps in another app. Each terminal sets its own, so none is inherited. Windows
+        // matches names case-insensitively, so an inherited `Tc_Hook` would win over `TC_HOOK`.
+        let windows = config.platform.is_windows();
+        config.env.retain(|key, _| {
+            !integration::ENV_KEYS
+                .iter()
+                .chain(&[tc_core::launch::CARD_ENV, CANVAS_ENV])
+                .any(|ours| {
+                    if windows {
+                        key.eq_ignore_ascii_case(ours)
+                    } else {
+                        key == ours
+                    }
+                })
+        });
         TerminalManager {
             config,
             backend,
@@ -357,6 +394,7 @@ impl TerminalManager {
             stopping: Vec::new(),
             generation: 0,
             outbox: Vec::new(),
+            integration_failing: false,
         }
     }
 
@@ -385,6 +423,12 @@ impl TerminalManager {
     /// The live directory a terminal last reported (outer `None` before any report).
     pub fn live_directory(&self, id: &str) -> Option<Option<String>> {
         self.sessions.get(id).and_then(|session| session.cwd.clone())
+    }
+
+    /// Whether a running terminal started with integration; without it, its AI session is not saved
+    /// and programs in it cannot open terminals. `None` when it is not running.
+    pub fn integrated(&self, id: &str) -> Option<bool> {
+        self.sessions.get(id).map(|session| session.integration.is_some())
     }
 
     fn emit(&mut self, event: TerminalEvent) {
@@ -467,10 +511,19 @@ impl TerminalManager {
             };
             command.clear();
         }
+        // Integration adds AI session capture, folder reports, and the launch request inbox. A
+        // terminal whose integration files cannot be written still starts without them, and says so.
+        let mut failure = None;
         let integration = match &mut self.integrations {
-            Some(prepare) => prepare(&shell, platform)?,
+            Some(prepare) => prepare(&shell, platform).unwrap_or_else(|error| {
+                failure = Some(error);
+                None
+            }),
             None => None,
         };
+        if failure.is_none() {
+            self.integration_failing = false;
+        }
         let args = match integration.as_ref().and_then(|integration| integration.args.clone()) {
             Some(args) => args,
             None if windows && is_bare_cmd(&shell) => Vec::new(),
@@ -485,7 +538,7 @@ impl TerminalManager {
         );
         env.insert("TERM".into(), "xterm-256color".into());
         env.insert("COLORTERM".into(), "truecolor".into());
-        env.insert("TERMINAL_CANVAS".into(), "1".into());
+        env.insert(CANVAS_ENV.into(), "1".into());
         // Lets a program outside this terminal name it as the parent of a new terminal.
         env.insert(tc_core::launch::CARD_ENV.into(), card.id.clone());
         env.remove("ELECTRON_RUN_AS_NODE");
@@ -545,6 +598,14 @@ impl TerminalManager {
             metadata,
             initial: true,
         });
+        if let Some(error) = failure
+            && !std::mem::replace(&mut self.integration_failing, true)
+        {
+            self.emit(TerminalEvent::Error {
+                id: card.id.clone(),
+                message: integration_warning(&error),
+            });
+        }
         if !windows && let Some(pid) = pid {
             let watch = self
                 .backend

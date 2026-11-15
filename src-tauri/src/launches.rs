@@ -186,9 +186,17 @@ impl Launches {
         }
     }
 
-    /// Answers request `id` with the card the UI opened (and the card it opened beside, if any), or
-    /// why it opened none. Returns whether the request was waiting.
-    pub fn answer(&mut self, id: &str, card: Option<&str>, parent: Option<&str>, error: Option<&str>) -> bool {
+    /// Answers request `id` with the card the UI opened (and the card it opened beside, if any, and a
+    /// `warning` about it, such as a missing integration), or why it opened none. Returns whether
+    /// the request was waiting.
+    pub fn answer(
+        &mut self,
+        id: &str,
+        card: Option<&str>,
+        parent: Option<&str>,
+        error: Option<&str>,
+        warning: Option<&str>,
+    ) -> bool {
         let Some(pending) = self.pending.remove(id) else {
             return false;
         };
@@ -202,6 +210,9 @@ impl Launches {
                     }
                     if pending.log {
                         opened["log"] = json!(log_path(&pending.inbox, id).to_string_lossy());
+                    }
+                    if let Some(warning) = warning {
+                        opened["warning"] = json!(warning);
                     }
                     opened
                 }
@@ -315,9 +326,9 @@ mod tests {
         launches.begin_output("req-1", "card-1", None);
         launches.output("card-1", "\x1b[32mhello\x1b[0m\r\n");
         launches.output("other-card", "not logged");
-        assert!(launches.answer("req-1", Some("card-1"), Some("parent-1"), None));
+        assert!(launches.answer("req-1", Some("card-1"), Some("parent-1"), None, None));
         assert!(
-            !launches.answer("req-1", Some("card-1"), None, None),
+            !launches.answer("req-1", Some("card-1"), None, None, None),
             "a request is answered once"
         );
         let result: Value =
@@ -334,16 +345,23 @@ mod tests {
 
         launches.expect("req-2".into(), pending(true, false));
         launches.begin_output("req-2", "card-2", None);
-        assert!(launches.answer("req-2", None, None, Some("Working directory is unavailable.")));
+        assert!(launches.answer(
+            "req-2",
+            None,
+            None,
+            Some("Working directory is unavailable."),
+            Some("only an opened terminal carries a warning")
+        ));
         let failed: Value =
             serde_json::from_str(&std::fs::read_to_string(inbox.join("req-2.result")).unwrap()).unwrap();
         assert_eq!(failed["status"], "failed");
+        assert!(failed.get("warning").is_none(), "{failed}");
         assert!(!inbox.join("req-2.log").exists(), "no log unless asked");
 
         launches.expect("req-3".into(), pending(false, false));
-        assert!(launches.answer("req-3", Some("card-3"), None, None));
+        assert!(launches.answer("req-3", Some("card-3"), None, None, None));
         launches.expect("req-4".into(), pending(true, false));
-        assert!(launches.answer("req-4", Some("card-4"), None, None));
+        assert!(launches.answer("req-4", Some("card-4"), None, None, None));
         let alone: Value = serde_json::from_str(&std::fs::read_to_string(inbox.join("req-4.result")).unwrap()).unwrap();
         assert_eq!(
             alone,
@@ -351,7 +369,15 @@ mod tests {
             "no parent when none was used"
         );
         assert!(!inbox.join("req-3.result").exists(), "--no-wait senders get no answer");
-        assert!(!launches.answer("unknown", Some("card"), None, None));
+        launches.expect("req-5".into(), pending(true, false));
+        assert!(launches.answer("req-5", Some("card-5"), None, None, Some("No integration.")));
+        let warned: Value =
+            serde_json::from_str(&std::fs::read_to_string(inbox.join("req-5.result")).unwrap()).unwrap();
+        assert_eq!(
+            warned,
+            json!({ "status": "opened", "card": "card-5", "warning": "No integration." })
+        );
+        assert!(!launches.answer("unknown", Some("card"), None, None, None));
         std::fs::remove_dir_all(inbox).unwrap();
     }
 
@@ -412,7 +438,7 @@ mod tests {
         }
         assert_eq!(launches.waiting(), PENDING_LIMIT);
         assert!(
-            !launches.answer("req-0", Some("card"), None, None),
+            !launches.answer("req-0", Some("card"), None, None, None),
             "the oldest are forgotten"
         );
         let last = format!("req-{}", PENDING_LIMIT + 4);

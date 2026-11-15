@@ -1,2 +1,3 @@
 [alias]
-xtask = "run --quiet --package xtask --"
+# Keep the running task out of debug/, where workspace tests rebuild xtask.exe on Windows.
+xtask = "run --quiet --profile xtask --package xtask --"
