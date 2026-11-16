@@ -87,7 +87,11 @@ function stepHistory(from, to) {
 }
 // Items are updated in place so their views and event handlers stay attached.
 function restoreBoard(snapshot) {
-    const savedItems = snapshot.items.map(json => JSON.parse(json));
+    const parsed = snapshot.items.map(json => JSON.parse(json));
+    // Arrows attached to a terminal closed since the snapshot were removed with it, so they stay removed.
+    const present = new Set([...workspace.cards, ...parsed].map(e => e.id));
+    const orphaned = item => item.type === 'line' && item.arrow && ['start', 'end'].some(end => item[end].id && !present.has(item[end].id));
+    const savedItems = parsed.filter(item => !orphaned(item));
     const remembered = new Map([...snapshot.cards, ...savedItems.filter(item => item.type !== 'line')].map(e => [e.id, e]));
     for (const saved of snapshot.cards) {
         const card = findCard(saved.id);
@@ -106,7 +110,7 @@ function restoreBoard(snapshot) {
     const kept = new Set(next.map(item => item.id));
     for (const id of current.keys()) if (!kept.has(id)) disposeItem(id);
     workspace.items = next;
-    // A terminal closed since the snapshot leaves its connectors with free ends where it was.
+    // A terminal closed since the snapshot leaves its other connectors with free ends where it was.
     const lookup = id => attachGeometry(findElement(id) || remembered.get(id));
     for (const line of next.filter(item => item.type === 'line')) {
         const lost = ['start', 'end'].filter(end => line[end].id && !findElement(line[end].id));

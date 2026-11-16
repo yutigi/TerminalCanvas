@@ -611,6 +611,31 @@ test('undo restores terminal geometry but never recreates a closed terminal', as
     vm.runInContext('undo()', context);
     assert.equal(json(context, 'workspace.cards.length'), 0);
 });
+test('closing a terminal removes every arrow attached to it, and undo does not bring them back', async () => {
+    const workspace = createWorkspace();
+    workspace.camera = { x: 0, y: 0, z: 1 };
+    const parent = createCard({ x: 0, y: 0 });
+    const child = createCard({ x: 900, y: 0 });
+    workspace.cards.push(parent, child);
+    workspace.items.push(
+        note('a', 0, 900),
+        { id: 'spawn', type: 'line', start: { id: parent.id }, end: { id: child.id }, arrow: true },
+        { id: 'back', type: 'line', start: { id: child.id }, end: { id: 'a' }, arrow: true },
+        { id: 'wire', type: 'line', start: { id: 'a' }, end: { id: child.id } },
+        { id: 'other', type: 'line', start: { id: parent.id }, end: { id: 'a' }, arrow: true }
+    );
+    const { context } = await boot(workspace);
+    vm.runInContext('select("a"); setItemColor("green")', context);
+    vm.runInContext('setSelection(["spawn", "back"])', context);
+    vm.runInContext(`removeCard(findCard(${JSON.stringify(child.id)}))`, context);
+    assert.deepEqual(json(context, 'workspace.items.map(i => i.id)'), ['a', 'wire', 'other'], 'both arrows on the closed terminal are gone');
+    assert.deepEqual(json(context, '[...selection]'), [], 'removed arrows leave the selection');
+    assert.equal(vm.runInContext('itemViews.has("spawn") || itemViews.has("back")', context), false, 'their views are disposed');
+    assert.deepEqual(Object.keys(json(context, 'workspace.items[1].end')).sort(), ['x', 'y'], 'a plain line is detached, not removed');
+    vm.runInContext('undo()', context);
+    assert.deepEqual(json(context, 'workspace.items.map(i => i.id)'), ['a', 'wire', 'other'], 'undo keeps them removed');
+    assert.equal(json(context, 'workspace.items[0].color ?? null'), null, 'while still undoing the earlier step');
+});
 test('undo waits until a drag or text edit finishes', async () => {
     const workspace = createWorkspace();
     workspace.items.push(note('a', 0, 0), note('b', 400, 0));
