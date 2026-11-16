@@ -312,6 +312,84 @@ pub struct TerminalManager {
 /// Set for every terminal, apart from its integration's variables.
 const CANVAS_ENV: &str = "TERMINAL_CANVAS";
 
+/// What rustup and `cargo run` set for the program they start, describing that one launch.
+const CARGO_LAUNCH_ENV: &[&str] = &[
+    "CARGO",
+    "CARGO_BIN_NAME",
+    "CARGO_CRATE_NAME",
+    "CARGO_MANIFEST_DIR",
+    "CARGO_MANIFEST_PATH",
+    "CARGO_PRIMARY_PACKAGE",
+    "RUSTUP_TOOLCHAIN",
+    "RUSTUP_TOOLCHAIN_SOURCE",
+    "RUST_RECURSION_COUNT",
+];
+const CARGO_PKG_PREFIX: &str = "CARGO_PKG_";
+
+/// When the app runs from source (`cargo run`), rustup and Cargo add the launch's variables and put
+/// the app's toolchain and build folders on the path. Shells must not inherit them:
+/// `RUSTUP_TOOLCHAIN` overrides `rust-toolchain.toml`, so every `cargo` in a terminal would build
+/// with the app's Rust version instead of the project's. Without a launch marker nothing changes,
+/// so a `RUSTUP_TOOLCHAIN` the user set themselves is kept.
+fn remove_cargo_launch(env: &mut BTreeMap<String, String>, windows: bool) {
+    let same = |a: &str, b: &str| if windows { a.eq_ignore_ascii_case(b) } else { a == b };
+    let value = |env: &BTreeMap<String, String>, name: &str| {
+        env.iter()
+            .find(|(key, _)| same(key, name))
+            .map(|(_, value)| value.clone())
+    };
+    let manifest_dir = value(env, "CARGO_MANIFEST_DIR");
+    if manifest_dir.is_none() && value(env, "RUST_RECURSION_COUNT").is_none() {
+        return;
+    }
+    let (separator, list) = if windows { ('\\', ';') } else { ('/', ':') };
+    let normal = |path: &str| {
+        let path = if windows {
+            path.replace('/', "\\").to_lowercase()
+        } else {
+            path.to_owned()
+        };
+        path.trim_end_matches(separator).to_owned()
+    };
+    // The toolchain's own folders, and the workspace's `target` folder wherever it is above the manifest.
+    let mut added = Vec::new();
+    if let (Some(home), Some(toolchain)) = (value(env, "RUSTUP_HOME"), value(env, "RUSTUP_TOOLCHAIN")) {
+        added.push(normal(&format!("{home}{separator}toolchains{separator}{toolchain}")));
+    }
+    if let Some(dir) = &manifest_dir {
+        let mut dir = normal(dir);
+        loop {
+            added.push(format!("{dir}{separator}target"));
+            match dir.rfind(separator) {
+                Some(end) => dir.truncate(end),
+                None => break,
+            }
+        }
+    }
+    let launched = |entry: &str| {
+        let entry = normal(entry);
+        added.iter().any(|dir| {
+            entry
+                .strip_prefix(dir.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(separator))
+        })
+    };
+    for (key, value) in env.iter_mut() {
+        if same(key, "PATH") {
+            *value = value
+                .split(list)
+                .filter(|entry| !launched(entry))
+                .collect::<Vec<_>>()
+                .join(&list.to_string());
+        }
+    }
+    env.retain(|key, _| {
+        let upper = key.to_ascii_uppercase();
+        let key = if windows { upper.as_str() } else { key.as_str() };
+        !CARGO_LAUNCH_ENV.contains(&key) && !key.starts_with(CARGO_PKG_PREFIX)
+    });
+}
+
 /// Why a terminal started without integration, what that costs, and what to do about it.
 fn integration_warning(error: &io::Error) -> String {
     let fix = match error.kind() {
@@ -384,6 +462,7 @@ impl TerminalManager {
                     }
                 })
         });
+        remove_cargo_launch(&mut config.env, windows);
         TerminalManager {
             config,
             backend,

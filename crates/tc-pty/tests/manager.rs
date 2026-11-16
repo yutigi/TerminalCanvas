@@ -1172,3 +1172,98 @@ fn launch_requests_open_beside_their_terminal_once_and_report_refusals() {
     assert!(!inbox.exists(), "the inbox goes with the terminal");
     let _ = std::fs::remove_dir_all(folder);
 }
+
+#[test]
+fn a_terminal_does_not_inherit_the_cargo_run_that_started_the_app() {
+    // `cargo run` through rustup: shells must use each project's own `rust-toolchain.toml`.
+    let path = [
+        r"D:\TerminalCanvas\target\debug\build\ring-1\out",
+        r"D:\TerminalCanvas\target\debug",
+        r"d:/terminalcanvas/target/debug/deps",
+        r"C:\Users\me\.rustup\toolchains\1.95-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib",
+        r"C:\Users\me\.cargo\bin",
+        r"C:\Users\me\.rustup\toolchains\1.95-x86_64-pc-windows-msvc\bin",
+        r"C:\Users\me\.rustup\toolchains\1.95-x86_64-pc-windows-msvc-other\bin",
+        r"D:\TerminalCanvas\targets",
+        r"C:\Windows\system32",
+    ]
+    .join(";");
+    let launched = [
+        ("RUSTUP_HOME", r"C:\Users\me\.rustup"),
+        ("CARGO_HOME", r"C:\Users\me\.cargo"),
+        ("RUSTUP_TOOLCHAIN", "1.95-x86_64-pc-windows-msvc"),
+        ("RUSTUP_TOOLCHAIN_SOURCE", "toolchain-file"),
+        ("RUST_RECURSION_COUNT", "1"),
+        (
+            "CARGO",
+            r"C:\Users\me\.rustup\toolchains\1.95-x86_64-pc-windows-msvc\bin\cargo.exe",
+        ),
+        ("CARGO_MANIFEST_DIR", r"D:\TerminalCanvas\src-tauri"),
+        ("CARGO_MANIFEST_PATH", r"D:\TerminalCanvas\src-tauri\Cargo.toml"),
+        ("CARGO_PKG_NAME", "terminal-canvas"),
+        ("Cargo_Pkg_Version", "0.2.0"),
+        ("Path", path.as_str()),
+    ];
+    let env: Vec<_> = WINDOWS_ENV.iter().copied().chain(launched).collect();
+    let mut h = harness_with(config(Platform::Windows, &env), None);
+    let card = card(json!({}));
+    h.start(&card).unwrap();
+    let env = h.launch(0).env;
+    let rust: Vec<_> = env
+        .keys()
+        .map(String::as_str)
+        .filter(|key| {
+            let key = key.to_ascii_uppercase();
+            key.starts_with("CARGO") || key.starts_with("RUST")
+        })
+        .collect();
+    assert_eq!(
+        rust,
+        ["CARGO_HOME", "RUSTUP_HOME"],
+        "the launch's variables are gone; the user's Rust folders stay"
+    );
+    assert_eq!(env["SAMPLE"], "yes");
+    assert_eq!(
+        env["Path"],
+        [
+            r"C:\Users\me\.cargo\bin",
+            r"C:\Users\me\.rustup\toolchains\1.95-x86_64-pc-windows-msvc-other\bin",
+            r"D:\TerminalCanvas\targets",
+            r"C:\Windows\system32",
+        ]
+        .join(";"),
+        "only the toolchain's and the build's folders leave the path"
+    );
+    h.manager.stop_all();
+
+    // Started some other way, a toolchain the user chose is theirs to keep.
+    let chosen = [("RUSTUP_TOOLCHAIN", "nightly"), ("Path", r"C:\Users\me\.cargo\bin")];
+    let env: Vec<_> = WINDOWS_ENV.iter().copied().chain(chosen).collect();
+    let mut h = harness_with(config(Platform::Windows, &env), None);
+    h.start(&card).unwrap();
+    assert_eq!(h.launch(0).env["RUSTUP_TOOLCHAIN"], "nightly");
+    assert_eq!(h.launch(0).env["Path"], r"C:\Users\me\.cargo\bin");
+    h.manager.stop_all();
+
+    // Elsewhere names and paths are case-sensitive.
+    let unix = [
+        ("SHELL", "/bin/bash"),
+        ("RUST_RECURSION_COUNT", "1"),
+        ("RUSTUP_HOME", "/home/me/.rustup"),
+        ("RUSTUP_TOOLCHAIN", "1.95-x86_64-unknown-linux-gnu"),
+        ("CARGO_MANIFEST_DIR", "/src/canvas/src-tauri"),
+        ("cargo_pkg_name", "kept"),
+        (
+            "PATH",
+            "/src/canvas/target/debug:/home/me/.rustup/toolchains/1.95-x86_64-unknown-linux-gnu/bin:/SRC/canvas/target:/usr/bin",
+        ),
+    ];
+    let mut h = harness_with(config(Platform::Linux, &unix), None);
+    h.start(&card).unwrap();
+    let env = h.launch(0).env;
+    assert_eq!(env.get("RUSTUP_TOOLCHAIN"), None);
+    assert_eq!(env.get("CARGO_MANIFEST_DIR"), None);
+    assert_eq!(env["cargo_pkg_name"], "kept");
+    assert_eq!(env["PATH"], "/SRC/canvas/target:/usr/bin");
+    h.manager.stop_all();
+}
