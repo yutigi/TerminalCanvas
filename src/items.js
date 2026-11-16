@@ -176,6 +176,13 @@ function detachConnectors(ids) {
         if (removed.has(line.end.id)) line.end = points.end;
     }
 }
+// Arrows with either end on one of `ids`. A closed terminal takes these with it; plain lines are only detached.
+function attachedArrows(ids) {
+    const targets = new Set(ids);
+    return workspace.items
+        .filter(item => item.type === 'line' && item.arrow && (targets.has(item.start.id) || targets.has(item.end.id)))
+        .map(item => item.id);
+}
 function removeItems(ids) {
     const targets = ids.filter(id => findItem(id));
     if (!targets.length) return;

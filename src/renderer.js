@@ -503,9 +503,11 @@ function mount(card) {
         renderGeometry(card);
     }, () => ({ w: card.w, h: card.h }));
 }
-// Closing a terminal is not undoable; undo steps that refer to it leave its connectors with free ends.
+// Closing a terminal is not undoable. Arrows attached to it are removed with it; other connectors,
+// and those in undo steps that refer to it, are left with free ends.
 function removeCard(card) {
     if (focused === card.id) setFocus(null);
+    removeItems(attachedArrows([card.id]));
     detachConnectors([card.id]);
     dispose(card.id); workspace.cards = workspace.cards.filter(c => c.id !== card.id);
     pruneGroups();
