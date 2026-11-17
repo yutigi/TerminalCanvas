@@ -234,3 +234,16 @@ test('revealing a card also clears the overlays over the canvas, moving as littl
     const huge = { x: 0, y: 0, w: 2400, h: 1800 };
     assert.deepEqual(G.revealCamera({ x: 500, y: 500, z: 1 }, huge, view, inset, [minimap, tools]), { x: 24, y: 24, z: 1 });
 });
+
+test('clearing an overlay never pushes the card past the edge of a small view', () => {
+    // The Windows CI window: going below the minimap leaves too little height, so stopping to its left wins
+    // even though it moves farther.
+    const view = { width: 786, height: 523 }, inset = { left: 24, top: 24, right: 24, bottom: 24 };
+    const tools = { x: 0, y: 94, w: 77, h: 336 }, toolbar = { x: 205, y: 439, w: 375, h: 76 }, minimap = { x: 535, y: 260, w: 252, h: 194 };
+    const card = { x: 2200, y: 0, w: 660, h: 430 };
+    const camera = G.revealCamera({ x: 120, y: 60, z: .65 }, card, view, inset, [tools, toolbar, minimap]);
+    const shown = { x: camera.x + card.x * camera.z, y: camera.y + card.y * camera.z, w: card.w * camera.z, h: card.h * camera.z };
+    assert.equal(camera.z, .65);
+    assert.ok(shown.x >= 0 && shown.y >= 0 && shown.x + shown.w <= view.width && shown.y + shown.h <= view.height, JSON.stringify(shown));
+    for (const box of [tools, toolbar, minimap]) assert.equal(G.intersects(shown, box), false);
+});

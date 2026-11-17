@@ -184,11 +184,16 @@
         });
         const shown = c => ({ x: c.x + bounds.x * z, y: c.y + bounds.y * z, w: bounds.w * z, h: bounds.h * z });
         const moved = c => Math.abs(c.x - camera.x) + Math.abs(c.y - camera.y);
+        // Widened insets must still hold the whole card; otherwise it would only clear the overlays by
+        // running off the far edge of the view.
+        const fits = ({ left = 0, top = 0, right = 0, bottom = 0 }) =>
+            bounds.w * z <= view.width - left - right && bounds.h * z <= view.height - top - bottom;
         let found = null;
         // Each overlay the card still covers is cleared from one of its four sides by widening that inset;
-        // a side that leaves no room is skipped. There are only a few overlays, so trying every
-        // combination stays cheap.
+        // a side that leaves no room for the card is skipped. There are only a few overlays, so trying
+        // every combination stays cheap.
         const search = (edges, depth) => {
+            if (depth > 0 && !fits(edges)) return;
             const next = place(edges), box = avoid.find(b => intersects(shown(next), b));
             if (!box) { if (!found || moved(next) < moved(found)) found = next; return; }
             if (depth >= avoid.length) return;
