@@ -14,7 +14,13 @@ const createCard = (options = {}) => ({ ...structuredClone(fixture.cards[options
 class Element {
     constructor() {
         this.children = []; this.queries = new Map(); this.value = ''; this.hidden = false;
-        this.style = { setProperty() {} }; this.classList = { toggle() {}, add() {}, remove() {} };
+        const classes = new Set();
+        this.style = { setProperty() {} };
+        this.classList = {
+            toggle(name, force = !classes.has(name)) { if (force) classes.add(name); else classes.delete(name); return !!force; },
+            add(...names) { names.forEach(name => classes.add(name)); }, remove(...names) { names.forEach(name => classes.delete(name)); },
+            contains: name => classes.has(name)
+        };
         this.dataset = {}; this.lastChild = { textContent: '' }; this.clientWidth = 1100; this.clientHeight = 720;
         this.listeners = new Map(); this.attributes = new Map(); this.captured = new Set();
     }
@@ -45,7 +51,7 @@ class Element {
     setAttribute(name, value) { this.attributes.set(name, value); }
     removeAttribute(name) { this.attributes.delete(name); }
     closest() { return null; }
-    focus() {}
+    focus() { this.focusCount = (this.focusCount || 0) + 1; }
     blur() { this.dispatch('blur'); }
     select() {}
     showModal() { this.open = true; }
@@ -1666,4 +1672,224 @@ test('every terminal request reports its card or why nothing opened, and starts 
     assert.deepEqual(results().at(-1), { request: 'req-beyond-24', card: beyond.id, parent: parent.id });
     assert.equal(json(context, 'workspace.cards.length'), 25);
     assert.equal(results().length, 4, 'one report per request');
+});
+
+// Directional keyboard navigation between terminals (#26).
+function navigationKey(context, key, values = {}) {
+    const event = { type: 'keydown', key, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false,
+        target: context.viewport, prevented: false, preventDefault() { this.prevented = true; }, ...values };
+    for (const handler of vm.runInContext('document', context).listeners.get('keydown')) handler(event);
+    return event;
+}
+const insideTerminal = id => ({ closest: selector => (selector.includes('.terminal-card') ? { dataset: { id } } : selector.includes('.xterm') ? {} : null) });
+async function navigationBoard({ cards, items = [], camera = { x: 48, y: 48, z: 1 }, running = true } = {}) {
+    const workspace = createWorkspace(); workspace.camera = camera;
+    workspace.cards.push(...cards.map(([title, x, y, extra = {}]) => createCard({ title, x, y, w: 660, h: 430, ...extra })));
+    workspace.items.push(...items);
+    const booted = await boot(workspace, { terminals: true });
+    const { context } = booted;
+    context.viewport = booted.elements.get('#viewport');
+    // The overlays over a 1100 x 720 view, laid out as the stylesheet places them.
+    const place = (selector, left, top, width, height) => {
+        if (!booted.elements.has(selector)) booted.elements.set(selector, new Element());
+        booted.elements.get(selector).getBoundingClientRect = () => ({ left, top, width, height });
+    };
+    place('.create-toolbar', 16, 250, 45, 220);
+    place('.canvas-toolbar', 400, 650, 300, 45);
+    place('#style-toolbar', 450, 16, 200, 40);
+    place('#minimap', 840, 525, 240, 170);
+    vm.runInContext(`for (const s of sessions.values()) { s.status = ${running ? '"running"' : '"exited"'}; s.typed = 0; s.terminal.focus = () => { s.typed++; }; }`, context);
+    const id = title => json(context, `workspace.cards.find(card => card.title === ${JSON.stringify(title)}).id`);
+    const state = () => json(context, `({ selected, selection: [...selection], camera: workspace.camera, current: keyboardCurrent,
+        highlighted: [...sessions].filter(([, s]) => s.element.classList.contains('keyboard-current')).map(([key]) => key),
+        typed: Object.fromEntries([...sessions].map(([key, s]) => [key, s.typed])), focusedTerminal: focused })`);
+    return { ...booted, id, state };
+}
+
+test('Alt+arrow keys select the nearest terminal without typing in it, highlight it, and pan to it at the same zoom', async () => {
+    const { context, elements, id, state } = await navigationBoard({
+        cards: [['A', 0, 0], ['B', 2000, 0], ['C', 0, 470], ['D', 2000, 470]], camera: { x: 100, y: 48, z: .8 }
+    });
+    const viewport = elements.get('#viewport');
+    // Nothing selected: any arrow starts at the terminal in the middle of the view.
+    const first = navigationKey(context, 'ArrowRight', { altKey: true });
+    assert.equal(first.prevented, true);
+    let now = state();
+    assert.equal(now.selected, id('A'));
+    assert.deepEqual(now.highlighted, [id('A')]);
+    assert.deepEqual(now.camera, { x: 100, y: 48, z: .8 }, 'a terminal already in view does not move the canvas');
+    assert.ok(viewport.focusCount >= 1, 'the keyboard stays on the board');
+    // B is far to the right, beyond the view: the canvas pans just enough, keeping zoom.
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    now = state();
+    assert.equal(now.selected, id('B'));
+    assert.deepEqual(now.highlighted, [id('B')]);
+    assert.equal(now.camera.z, .8);
+    assert.equal(now.camera.y, 48);
+    assert.equal(now.camera.x + (2000 + 660) * .8, 1100 - 24, 'the right edge lands just inside the view');
+    // No terminal further right: the selection stays where it is.
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    assert.equal(state().selected, id('B'));
+    // Back along the row: A, not C, which is as far across and also lower.
+    navigationKey(context, 'ArrowLeft', { altKey: true });
+    assert.equal(state().selected, id('A'));
+    navigationKey(context, 'ArrowDown', { altKey: true });
+    assert.equal(state().selected, id('C'));
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    assert.equal(state().selected, id('D'));
+    navigationKey(context, 'ArrowUp', { altKey: true });
+    now = state();
+    assert.equal(now.selected, id('B'), 'up from D reaches B, straight above it');
+    assert.deepEqual(Object.values(now.typed), [0, 0, 0, 0], 'navigation never moves typing into a terminal');
+    // Plain arrows and Shift+Alt+arrows are left alone.
+    assert.equal(navigationKey(context, 'ArrowRight').prevented, false);
+    assert.equal(navigationKey(context, 'ArrowRight', { altKey: true, shiftKey: true }).prevented, false);
+    assert.equal(state().selected, id('B'));
+});
+
+test('Alt+arrow keys inside a terminal or text field reach it, and the minimap keeps its own arrow keys', async () => {
+    const { context, elements, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 700, 0]] });
+    vm.runInContext(`select(${JSON.stringify(id('A'))})`, context);
+    const terminal = vm.runInContext(`sessions.get(${JSON.stringify(id('A'))}).terminal`, context);
+    const alt = { type: 'keydown', key: 'ArrowRight', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, preventDefault() {}, stopPropagation() {} };
+    assert.equal(terminal.keyHandler(alt), true, 'xterm sends Alt+arrow keys to the program');
+    const inTerminal = navigationKey(context, 'ArrowRight', { altKey: true, target: insideTerminal(id('A')) });
+    assert.equal(inTerminal.prevented, false);
+    const inField = navigationKey(context, 'ArrowRight', { altKey: true, target: { closest: selector => (selector.includes('input') ? {} : null) } });
+    assert.equal(inField.prevented, false);
+    assert.equal(state().selected, id('A'));
+    const camera = state().camera;
+    elements.get('#minimap-map').dispatch('keydown', { key: 'ArrowLeft', altKey: true });
+    assert.notDeepEqual(state().camera, camera, 'the focused minimap pans');
+    assert.equal(state().selected, id('A'));
+});
+
+test('Enter types in the selected terminal, Ctrl+Shift+E leaves it, and clicking still types on the first click', async () => {
+    const { context, elements, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 700, 0]] });
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    assert.equal(state().selected, id('B'));
+    const enter = navigationKey(context, 'Enter');
+    assert.equal(enter.prevented, true);
+    assert.equal(state().typed[id('B')], 1);
+    // Enter on a focused button belongs to that button.
+    assert.equal(navigationKey(context, 'Enter', { target: { closest: selector => (selector.includes('button') ? {} : null) } }).prevented, false);
+    assert.equal(state().typed[id('B')], 1);
+    // Ctrl+Shift+E inside the terminal does not reach the shell and returns the keyboard to the board.
+    const terminal = vm.runInContext(`sessions.get(${JSON.stringify(id('B'))}).terminal`, context);
+    const leave = { type: 'keydown', key: 'E', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, preventDefault() {}, stopPropagation() {} };
+    assert.equal(terminal.keyHandler(leave), false);
+    assert.equal(terminal.keyHandler({ ...leave, ctrlKey: false, metaKey: true }), false, 'Command+Shift+E on macOS');
+    assert.equal(terminal.keyHandler({ ...leave, altKey: true }), true, 'AltGr combinations still type');
+    // The terminal the keyboard is in wins over the selection.
+    vm.runInContext(`select(${JSON.stringify(id('A'))}, { type: false })`, context);
+    const focusBefore = elements.get('#viewport').focusCount || 0;
+    const event = navigationKey(context, 'E', { ctrlKey: true, shiftKey: true, target: insideTerminal(id('B')) });
+    assert.equal(event.prevented, true);
+    let now = state();
+    assert.equal(now.selected, id('B'));
+    assert.deepEqual(now.highlighted, [id('B')]);
+    assert.equal(now.typed[id('B')], 1, 'leaving does not type');
+    assert.ok(elements.get('#viewport').focusCount > focusBefore);
+    // A click clears the keyboard highlight and still types on the first click (#2).
+    vm.runInContext('document', context).listeners.get('pointerdown').forEach(handler => handler({ target: {} }));
+    const cardA = vm.runInContext(`sessions.get(${JSON.stringify(id('A'))}).element`, context);
+    cardA.dispatch('pointerdown');
+    now = state();
+    assert.deepEqual(now.highlighted, []);
+    assert.equal(now.current, null);
+    assert.equal(now.selected, id('A'));
+    assert.equal(now.typed[id('A')], 1);
+});
+
+test('Enter on a stopped terminal moves to its Start button instead of starting it', async () => {
+    const { context, calls, id, state } = await navigationBoard({ cards: [['A', 0, 0]], running: false });
+    navigationKey(context, 'ArrowUp', { altKey: true });
+    assert.equal(state().selected, id('A'));
+    navigationKey(context, 'Enter');
+    const toggle = vm.runInContext(`sessions.get(${JSON.stringify(id('A'))}).element.querySelector('[data-action="toggle"]')`, context);
+    assert.equal(toggle.focusCount, 1);
+    assert.equal(state().typed[id('A')], 0);
+    assert.equal(calls.some(call => call.action === 'start'), false);
+    // Holding Enter does not go on to press the Start button the first press moved to.
+    const onToggle = { closest: selector => (selector.includes('button') ? {} : null) };
+    assert.equal(navigationKey(context, 'Enter', { repeat: true, target: onToggle }).prevented, true);
+    assert.equal(navigationKey(context, 'Enter', { target: onToggle }).prevented, false, 'a separate press reaches the button');
+    assert.equal(calls.some(call => call.action === 'start'), false);
+    // Enter with nothing selected does nothing.
+    vm.runInContext('setSelection([])', context);
+    assert.equal(navigationKey(context, 'Enter').prevented, false);
+});
+
+test('navigation on an empty canvas explains itself, and items and groups are valid starting points', async () => {
+    const empty = await navigationBoard({ cards: [] });
+    navigationKey(empty.context, 'ArrowRight', { altKey: true });
+    assert.match(empty.elements.get('#toast').textContent, /no terminals/i);
+    assert.equal(empty.state().selected, null);
+
+    const { context, id, state } = await navigationBoard({
+        cards: [['Left', 0, 0, { groups: ['pair'] }], ['Right', 1400, 0], ['Below', 1400, 600, { groups: ['pair'] }]],
+        items: [note('n', 800, 100)]
+    });
+    // From a selected note, the nearest terminal to its right.
+    vm.runInContext('select("n")', context);
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    assert.equal(state().selected, id('Right'));
+    // From a note with nothing above it, the selection stays on the note.
+    vm.runInContext('select("n")', context);
+    navigationKey(context, 'ArrowUp', { altKey: true });
+    assert.equal(state().selected, 'n');
+    assert.deepEqual(state().highlighted, []);
+    // Reaching a grouped terminal selects its group, with that terminal highlighted and primary.
+    vm.runInContext(`select(${JSON.stringify(id('Right'))})`, context);
+    navigationKey(context, 'ArrowLeft', { altKey: true });
+    let now = state();
+    assert.equal(now.selected, id('Left'));
+    assert.deepEqual(now.selection.sort(), [id('Left'), id('Below')].sort());
+    assert.deepEqual(now.highlighted, [id('Left')]);
+    // A group moves from its primary terminal, not from the whole group's bounds.
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    assert.equal(state().selected, id('Right'));
+});
+
+test('in Focus mode Alt+arrow keys switch the focused terminal without typing, and Enter types in it', async () => {
+    const { context, elements, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 3000, 0]] });
+    vm.runInContext(`setFocus(${JSON.stringify(id('A'))})`, context);
+    assert.equal(state().typed[id('A')], 1, 'opening Focus with the button still types');
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    let now = state();
+    assert.equal(now.focusedTerminal, id('B'));
+    assert.equal(now.selected, id('B'));
+    assert.deepEqual(now.highlighted, [id('B')]);
+    assert.equal(now.typed[id('B')], 0);
+    assert.deepEqual(now.camera, { x: 48, y: 48, z: 1 }, 'the canvas waits for its toolbars before panning');
+    assert.equal(elements.get('#exit-focus').hidden, false);
+    navigationKey(context, 'ArrowRight', { altKey: true });
+    assert.equal(state().focusedTerminal, id('B'), 'no terminal further right');
+    navigationKey(context, 'Enter');
+    assert.equal(state().typed[id('B')], 1);
+    // Back on the canvas, the terminal chosen in Focus mode is in view.
+    elements.get('#exit-focus').onclick();
+    now = state();
+    assert.equal(now.focusedTerminal, null);
+    assert.ok(now.camera.x + 3000 * now.camera.z >= 72 && now.camera.x + 3660 * now.camera.z <= 1100 - 24, JSON.stringify(now.camera));
+    // Leaving Focus without having moved from the keyboard does not pan.
+    const camera = now.camera;
+    vm.runInContext(`setFocus(${JSON.stringify(id('A'))}); setFocus(null)`, context);
+    assert.deepEqual(state().camera, camera);
+});
+
+test('a terminal revealed from the keyboard clears the minimap and toolbars', async () => {
+    // B lies below A and to the right, so a plain reveal would bring it to the lower-right corner.
+    const { context, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 500, 900]] });
+    vm.runInContext(`select(${JSON.stringify(id('A'))}, { type: false })`, context);
+    navigationKey(context, 'ArrowDown', { altKey: true });
+    const { selected, camera } = state();
+    assert.equal(selected, id('B'));
+    assert.equal(camera.z, 1);
+    const shown = { x: camera.x + 500, y: camera.y + 900, w: 660, h: 430 };
+    const overlays = json(context, 'canvasOverlays()');
+    assert.equal(overlays.length, 3, 'the hidden style toolbar is left out');
+    for (const box of overlays) assert.equal(vm.runInContext('Geometry', context).intersects(shown, box), false, JSON.stringify({ shown, box }));
+    assert.ok(shown.x >= 24 && shown.y >= 24 && shown.x + shown.w <= 1100 - 24 && shown.y + shown.h <= 720 - 24, JSON.stringify(shown));
 });
