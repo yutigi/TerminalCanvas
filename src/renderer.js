@@ -53,6 +53,8 @@ let topCardZIndex = 0;
 let minimapVisible = true, minimapLayout, minimapDrag;
 // `selection` holds every selected terminal and item; `selected` is the primary one.
 let selection = new Set(), activeTool = 'select', editing = null;
+// The terminal reached with the keyboard, highlighted while the keyboard is on the board rather than in it.
+let keyboardCurrent = null;
 const mark = profile => {
     const el = document.createElement('span');
     el.className = 'profile-mark';
@@ -91,6 +93,7 @@ function renderCamera() {
     viewport.style.backgroundPosition = `${x}px ${y}px`;
     viewport.style.setProperty('--viewport-width', `${viewport.clientWidth}px`);
     viewport.style.setProperty('--viewport-height', `${viewport.clientHeight}px`);
+    viewport.style.setProperty('--camera-zoom', String(z));
     $('#zoom-reset').textContent = `${Math.round(z * 100)}%`;
     renderMinimap();
 }
@@ -212,14 +215,15 @@ function refresh() {
     }
 }
 // Selecting one element selects its whole group. Shift toggles the group in or out of the selection.
-function select(id, { additive = false } = {}) {
+// `type: false` selects a terminal without moving the keyboard into it.
+function select(id, { additive = false, type = true } = {}) {
     const ids = id ? Geometry.expandGroups(new Set([id]), elementRecords()) : new Set();
     if (additive) {
         const present = [...ids].every(key => selection.has(key));
         for (const key of ids) present ? selection.delete(key) : selection.add(key);
     } else selection = ids;
     selected = selection.has(id) ? id : [...selection].at(-1) ?? null;
-    applySelection(true, !additive);
+    applySelection(true, !additive && type);
 }
 function setSelection(ids) {
     selection = new Set(ids);
@@ -228,7 +232,11 @@ function setSelection(ids) {
 }
 // A plain click on a terminal focuses it even inside a group; Shift additions leave the keyboard to the board.
 function applySelection(raise, focusTerminal = raise) {
-    for (const [key, s] of sessions) s.element.classList.toggle('selected', selection.has(key));
+    if (keyboardCurrent !== selected) keyboardCurrent = null;
+    for (const [key, s] of sessions) {
+        s.element.classList.toggle('selected', selection.has(key));
+        s.element.classList.toggle('keyboard-current', key === keyboardCurrent);
+    }
     for (const [key, view] of itemViews) view.element.classList.toggle('selected', selection.has(key));
     viewport.classList.toggle('single-selection', selection.size === 1);
     const s = sessions.get(selected), item = findItem(selected);
@@ -317,6 +325,63 @@ function centerCard(card) {
     workspace.camera.y = Math.max(-100000, Math.min(100000, (viewport.clientHeight - card.h * z) / 2 - card.y * z));
     renderCamera(); changed();
 }
+// Keyboard navigation. The keyboard is either on the board, where Alt+Arrow moves the selection between
+// terminals, or typing in one terminal, where everything except the app's Ctrl+Shift shortcuts reaches
+// the program, Alt+Arrow included. Enter moves the keyboard into the selected terminal; Ctrl+Shift+E
+// moves it back out to the board. Both work in Focus mode, where Alt+Arrow changes the focused terminal.
+const NAV_DIRECTIONS = Object.freeze({ ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' });
+// Room for the create toolbar on the left and the canvas toolbar at the bottom.
+const REVEAL_INSET = Object.freeze({ left: 72, top: 24, right: 24, bottom: 88 });
+function revealCard(card) {
+    const camera = Geometry.revealCamera(workspace.camera, boundsOf(card), { width: viewport.clientWidth, height: viewport.clientHeight }, REVEAL_INSET);
+    if (camera.x === workspace.camera.x && camera.y === workspace.camera.y) return;
+    workspace.camera = camera; renderCamera(); changed();
+}
+function clearKeyboardCurrent() {
+    if (!keyboardCurrent) return;
+    sessions.get(keyboardCurrent)?.element.classList.remove('keyboard-current');
+    keyboardCurrent = null;
+}
+// Selects the terminal with this ID, with its group, and leaves the keyboard on the board: the terminal
+// is highlighted and panned into view at the current zoom. In Focus mode it becomes the focused terminal.
+function showTerminal(id) {
+    const card = findCard(id);
+    if (!card) return false;
+    keyboardCurrent = id;
+    if (focused && focused !== id) setFocus(id, { type: false });
+    else select(id, { type: false });
+    revealCard(card);
+    viewport.focus({ preventScroll: true });
+    return true;
+}
+// From the selected element, or with nothing selected from the middle of the view, to the nearest
+// terminal that way. When none lies that way the selection stays, and a selected terminal is shown again.
+function navigateTerminals(direction) {
+    if (boardBusy()) return;
+    if (editing) document.activeElement?.blur();
+    const candidates = workspace.cards.map(card => ({ id: card.id, bounds: boundsOf(card) }));
+    if (!candidates.length) return toast('There are no terminals on this canvas yet.');
+    const origin = findElement(focused || selected);
+    const id = origin
+        ? Geometry.nearestInDirection(boundsOf(origin), direction, candidates.filter(candidate => candidate.id !== origin.id))
+        : Geometry.nearestToPoint(viewportCenterWorld(), candidates);
+    showTerminal(id || (origin?.type === 'terminal' ? origin.id : null));
+}
+// Enter: type in the selected terminal. One that is not running gets its Start or Resume button instead,
+// so the keyboard never starts a command by itself.
+function enterTerminal(id) {
+    const s = sessions.get(id);
+    if (!findCard(id) || !s) return false;
+    if (s.status === 'running') select(id);
+    else if (s.status !== 'starting') s.element.querySelector('[data-action="toggle"]').focus();
+    return true;
+}
+// Ctrl+Shift+E: back to the board, keeping the terminal the keyboard was in selected.
+function leaveToBoard(target) {
+    if (editing) document.activeElement?.blur();
+    if (!showTerminal(target?.closest?.('.terminal-card')?.dataset.id || focused || selected)) viewport.focus({ preventScroll: true });
+}
+document.addEventListener('pointerdown', clearKeyboardCurrent, true);
 function fitCanvas() {
     if (focused) setFocus(null);
     const bounds = Geometry.unionBounds([...workspace.cards, ...workspace.items].map(boundsOf));
@@ -337,13 +402,13 @@ function zoom(factor, point = { x: viewport.clientWidth / 2, y: viewport.clientH
     cam.y = Math.max(-100000, Math.min(100000, point.y - (point.y - cam.y) * z / cam.z));
     cam.z = z; renderCamera(); changed();
 }
-function setFocus(id) {
+function setFocus(id, { type = true } = {}) {
     focused = id;
     viewport.classList.toggle('focus-mode', !!id);
     $('#exit-focus').hidden = !id;
     for (const [key, s] of sessions) s.element.classList.toggle('focused', key === id);
     renderCamera(); renderStyleToolbar();
-    if (id) select(id);
+    if (id) select(id, { type });
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
 function fitTerminal(s) {
@@ -438,7 +503,7 @@ function mount(card) {
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
             if (event.altKey || event.isComposing) return true;
-            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd'].includes(key)))) return false;
+            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
             // Ctrl/Cmd+0 resets the text size; Ctrl+- and Ctrl+= still reach the shell (Ctrl+- is readline undo).
             // Digit0 covers layouts whose 0 needs Shift. Numpad0 is matched by its key only: without
@@ -848,7 +913,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;
@@ -862,6 +927,7 @@ document.addEventListener('keydown', event => {
         }
         if (key === 'n' && event.shiftKey) { event.preventDefault(); openLaunch(); }
         if (key === 'f' && event.shiftKey) { event.preventDefault(); if (findCard(selected)) setFocus(focused ? null : selected); }
+        if (key === 'e' && event.shiftKey && !event.altKey) { event.preventDefault(); leaveToBoard(event.target); }
         const onBoard = !focused && !event.target.closest('input,textarea,select,.xterm');
         if (key === 'g' && onBoard) { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }
         if (((key === 'z' && event.shiftKey) || (key === 'y' && !event.shiftKey)) && onBoard) { event.preventDefault(); redo(); }
@@ -871,8 +937,18 @@ document.addEventListener('keydown', event => {
         if (!event.shiftKey && onBoard && key === 'd') { event.preventDefault(); duplicateSelection(); }
         return;
     }
+    // Alt+Arrow inside a terminal or text field stays there; the minimap handles its own arrow keys first.
+    const direction = NAV_DIRECTIONS[event.key];
+    if (direction && event.altKey && !event.shiftKey && !event.target.closest('input,textarea,select,.xterm,[contenteditable="true"]')) {
+        event.preventDefault(); navigateTerminals(direction); return;
+    }
     if (event.altKey || event.target.closest('input,textarea,select,.xterm')) return;
     if (event.key === '/') { event.preventDefault(); $('#search').focus(); return; }
+    // A focused button, link, or the minimap keeps Enter for itself.
+    if (event.key === 'Enter' && !event.shiftKey && !event.repeat && !event.target.closest('button,a[href],[contenteditable="true"],#minimap-map')) {
+        if (findCard(focused || selected)) { event.preventDefault(); enterTerminal(focused || selected); }
+        return;
+    }
     if (focused) return;
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }
     if (event.key === 'Escape') { if (activeTool !== 'select') setTool('select'); else setSelection([]); return; }

@@ -111,10 +111,72 @@
         }
         return origin;
     }
+    // Keyboard navigation between terminals. `candidates` are `{ id, bounds }`; the result is an ID or null.
+    // Results never depend on the order of `candidates`: every tie ends at the top-left card, then the
+    // lower ID, so the same layout always answers the same way.
+    const compareKeys = (a, b) => {
+        for (let i = 0; i < a.key.length; i++) if (a.key[i] !== b.key[i]) return a.key[i] - b.key[i];
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    };
+    const best = ranked => (ranked.length ? ranked.sort(compareKeys)[0].id : null);
+    const AXES = { left: ['x', -1], right: ['x', 1], up: ['y', -1], down: ['y', 1] };
+    const SIZE = { x: 'w', y: 'h' };
+    // How far `b` lies outside `a`'s span on `axis`: zero when the spans overlap or touch.
+    const spanGap = (a, b, axis) => Math.max(0, b[axis] - (a[axis] + a[SIZE[axis]]), a[axis] - (b[axis] + b[SIZE[axis]]));
+    // The nearest candidate in `direction` ('left', 'right', 'up', 'down') from the rectangle `from`.
+    // A candidate counts when its center lies past `from`'s center in that direction and it either
+    // overlaps `from`'s span across the direction (its "beam") or sits within 45 degrees of it, so a
+    // card one column over and far below is not "right". Candidates rank by the gap along the
+    // direction plus twice the gap across it, then by how far their centers are off the line of
+    // travel, then by how far along it they are. Overlapping and oversized cards have zero gaps, so
+    // a card partly under another is still reachable.
+    function nearestInDirection(from, direction, candidates) {
+        const axes = AXES[direction];
+        if (!from || !axes) return null;
+        const [major, sign] = axes, minor = major === 'x' ? 'y' : 'x', origin = center(from);
+        const ranked = [];
+        for (const { id, bounds: b } of candidates) {
+            const c = center(b), along = (c[major] - origin[major]) * sign, across = Math.abs(c[minor] - origin[minor]);
+            if (along <= 0) continue;
+            const offBeam = spanGap(from, b, minor);
+            if (offBeam > 0 && across > along) continue;
+            const ahead = Math.max(0, sign > 0 ? b[major] - (from[major] + from[SIZE[major]]) : from[major] - (b[major] + b[SIZE[major]]));
+            ranked.push({ id, key: [ahead + 2 * offBeam, across, along, b.y, b.x] });
+        }
+        return best(ranked);
+    }
+    // With nothing to move from, the candidate nearest `point`: zero for every card under it, then the
+    // closest center.
+    function nearestToPoint(point, candidates) {
+        return best(candidates.map(({ id, bounds: b }) => {
+            const dx = Math.max(0, b.x - point.x, point.x - (b.x + b.w)), dy = Math.max(0, b.y - point.y, point.y - (b.y + b.h));
+            const c = center(b);
+            return { id, key: [Math.hypot(dx, dy), Math.hypot(c.x - point.x, c.y - point.y), b.y, b.x] };
+        }));
+    }
+    // The camera that shows `bounds` inside the viewport, kept `inset` clear of its edges, moving as
+    // little as possible and never zooming. Something already in view stays put. Something larger
+    // than the view on an axis has its top or left edge, and so its header, brought into view.
+    function revealCamera(camera, bounds, view, inset = {}) {
+        const { z } = camera;
+        const axis = (position, start, size, length, before = 0, after = 0) => {
+            let low = before, high = length - after;
+            if (high - low < 1) { low = 0; high = length; }
+            const near = position + start * z, far = near + size * z;
+            if (far - near > high - low || near < low) return position + low - near;
+            if (far > high) return position + high - far;
+            return position;
+        };
+        const clamp = n => Math.max(-100000, Math.min(100000, n));
+        return {
+            x: clamp(axis(camera.x, bounds.x, bounds.w, view.width, inset.left, inset.right)),
+            y: clamp(axis(camera.y, bounds.y, bounds.h, view.height, inset.top, inset.bottom)), z
+        };
+    }
     const geometry = {
         center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
         outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt,
-        placeBeside, placeNear
+        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;
     else root.TerminalCanvasGeometry = geometry;

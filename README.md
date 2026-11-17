@@ -42,6 +42,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom the canvas; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
+- Move between terminals from the keyboard with **Alt + arrow keys**. See [Keyboard navigation](#keyboard-navigation).
 - Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
 - Use **Duplicate** in a card header or **Ctrl + Shift + D** to start a fresh plain shell in that terminal's current directory. It gets a separate process and empty output; the source launch command and AI session are not copied. Ctrl + D keeps its normal terminal behavior.
 - **Browse** opens at the valid folder displayed in the creation dialog. Invalid or unavailable paths fall back to home, then the app's working directory; canceling preserves the input.
@@ -121,6 +122,9 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |
+| Enter, outside a terminal | Type in the selected terminal (a stopped one gets its Start button) |
+| Ctrl + Shift + E | Leave the terminal you are typing in, keeping it selected |
 | Ctrl + scroll over the selected terminal, or in Focus | Change that terminal's text size |
 | Ctrl + 0 in a terminal | Reset its text size |
 | Ctrl + C in a terminal | Copy selected text, or interrupt with no selection |
@@ -136,6 +140,42 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Delete / Backspace | Delete selected board items |
 
 Single-key and board shortcuts apply only when focus is outside a terminal or text field, so they never reach a running shell.
+
+### Keyboard navigation
+
+The keyboard is either on the canvas or typing in one terminal. Selecting a terminal from the
+keyboard never types in it, and a terminal you type in receives every key except the app's
+Ctrl + Shift shortcuts, Alt + arrow keys included, so shells and full-screen programs keep them.
+
+- **Alt + ←/→/↑/↓** on the canvas selects the nearest terminal that way. It works from the
+  canvas itself, the sidebar, and the toolbars, but not inside a text field. With the minimap
+  focused, arrow keys still pan the view.
+- **Enter** types in the selected terminal. If the terminal is not running, Enter moves to its
+  Start or Resume button instead, so a command never starts without a second Enter.
+- **Ctrl + Shift + E** (Command + Shift + E on macOS) leaves the terminal you are typing in and
+  selects it on the canvas. Clicking a terminal still types in it straight away.
+
+Which terminal is nearest:
+
+- A terminal is a candidate when its center lies past the current one's center in that direction
+  and it either overlaps the current one's span across that direction or lies within 45 degrees of
+  it. A terminal one column over but several rows down is reached with the arrow that points down.
+- Candidates are ranked by the gap in that direction plus twice the sideways gap. Overlapping or
+  oversized cards have no gap, so a card partly under another is still reachable. Ties go to the
+  candidate whose center is closest to the line of travel, then the nearer one, then the one
+  nearest the top left, then the lower terminal ID. The same layout always gives the same answer.
+- Navigation starts from the selected element. A selected group starts from the element you
+  selected in it, and a selected note, shape, or other item starts from that item. Reaching a
+  grouped terminal selects its group, as clicking it does, and highlights that terminal.
+- With nothing selected, any arrow selects the terminal nearest the middle of the view. With no
+  terminals on the canvas, a notification says so. When no terminal lies that way, the selection
+  stays and the selected terminal is brought back into view.
+
+The selected terminal gets a bright outline while the canvas has the keyboard. The canvas pans as
+little as needed to show it clear of the toolbars and keeps its zoom; a terminal larger than the
+view is aligned by its top-left corner so its header shows. In **Focus** view, Alt + arrow keys
+switch the focused terminal using the canvas layout, and the canvas is panned so the terminal is
+in view when you return.
 
 ### Directory tracking and fallback
 

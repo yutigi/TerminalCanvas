@@ -101,3 +101,5 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .item-text.size-small{font-size:12px}.item-text.size-large{font-size:24px}.item-text.size-huge{font-size:36px}
 .item-note.size-small{font-size:11px}.item-note.size-large{font-size:20px}.item-note.size-huge{font-size:30px}
 .item-shape.size-small{font-size:11px}.item-shape.size-large{font-size:19px}.item-shape.size-huge{font-size:28px}
+/* A terminal reached with the keyboard, while the keyboard is on the board rather than typing in it. */
+.terminal-card.keyboard-current:not(:focus-within){outline:calc(2px / var(--camera-zoom,1)) solid var(--accent);outline-offset:calc(4px / var(--camera-zoom,1));border-color:var(--accent)}.viewport.focus-mode .terminal-card.keyboard-current:not(:focus-within){outline-width:2px;outline-offset:4px}

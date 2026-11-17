@@ -103,3 +103,95 @@ test('terminals requested from outside open centered in view, or in the nearest 
     const everywhere = { x: -100000, y: -100000, w: 200000, h: 200000 };
     assert.deepEqual(G.placeNear(center, size, [everywhere]), { x: 700, y: 300 });
 });
+
+// A 3 x 2 grid as Arrange lays it out: 660 x 430 cards, 40 px apart.
+const grid = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, i) => ({ id, bounds: { x: (i % 3) * 700, y: Math.floor(i / 3) * 470, w: 660, h: 430 } }));
+const from = (list, id) => list.find(c => c.id === id).bounds;
+const others = (list, id) => list.filter(c => c.id !== id);
+const go = (list, id, direction) => G.nearestInDirection(from(list, id), direction, others(list, id));
+
+test('directional navigation moves along rows and columns and stops at the edges', () => {
+    assert.equal(go(grid, 'a', 'right'), 'b');
+    assert.equal(go(grid, 'b', 'right'), 'c');
+    assert.equal(go(grid, 'c', 'right'), null);
+    assert.equal(go(grid, 'a', 'left'), null);
+    assert.equal(go(grid, 'a', 'up'), null);
+    assert.equal(go(grid, 'b', 'down'), 'e');
+    assert.equal(go(grid, 'e', 'up'), 'b');
+    assert.equal(go(grid, 'f', 'left'), 'e');
+    assert.equal(G.nearestInDirection(from(grid, 'a'), 'sideways', others(grid, 'a')), null);
+    assert.equal(G.nearestInDirection(null, 'right', grid), null);
+    assert.equal(G.nearestInDirection(from(grid, 'a'), 'right', []), null);
+});
+
+test('a missing neighbor in the beam falls back to the nearest diagonal, never to one far off-axis', () => {
+    // Only the diagonal is left to the right of `a`; it lies within 45 degrees (700 along, 470 across).
+    const sparse = grid.filter(c => ['a', 'e', 'd'].includes(c.id));
+    assert.equal(go(sparse, 'a', 'right'), 'e');
+    // From `d`, `a` is straight up; the diagonal `e` is not up at all.
+    assert.equal(go(sparse, 'd', 'up'), 'a');
+    // A column with small offsets: the card below is never "right" of the one above.
+    const column = [{ id: 'top', bounds: { x: 0, y: 0, w: 600, h: 400 } }, { id: 'below', bounds: { x: 30, y: 440, w: 600, h: 400 } }];
+    assert.equal(go(column, 'top', 'right'), null);
+    assert.equal(go(column, 'top', 'down'), 'below');
+    // A nearby diagonal beats a beam card far away; the gap across counts double.
+    const mixed = [{ id: 'o', bounds: { x: 0, y: 0, w: 100, h: 100 } }, { id: 'far', bounds: { x: 2000, y: 0, w: 100, h: 100 } }, { id: 'near', bounds: { x: 150, y: 120, w: 100, h: 100 } }];
+    assert.equal(go(mixed, 'o', 'right'), 'near');
+});
+
+test('ties break by alignment, distance, then top-left and ID, independent of input order', () => {
+    const origin = { id: 'o', bounds: { x: 0, y: 200, w: 100, h: 100 } };
+    // Two cards at the same gap overlapping the beam: the one better aligned with the line of travel wins.
+    const aligned = [origin, { id: 'high', bounds: { x: 200, y: 120, w: 100, h: 100 } }, { id: 'level', bounds: { x: 200, y: 210, w: 100, h: 100 } }];
+    assert.equal(go(aligned, 'o', 'right'), 'level');
+    // Mirror images above and below tie on every distance; the upper one wins either way round.
+    const mirrored = [origin, { id: 'z-below', bounds: { x: 200, y: 260, w: 100, h: 100 } }, { id: 'z-above', bounds: { x: 200, y: 140, w: 100, h: 100 } }];
+    assert.equal(go(mirrored, 'o', 'right'), 'z-above');
+    assert.equal(G.nearestInDirection(origin.bounds, 'right', others(mirrored, 'o').reverse()), 'z-above');
+    // Identical rectangles fall back to the ID.
+    const same = { x: 200, y: 200, w: 100, h: 100 };
+    const twins = [origin, { id: 'b', bounds: { ...same } }, { id: 'a', bounds: { ...same } }];
+    assert.equal(go(twins, 'o', 'right'), 'a');
+    assert.equal(G.nearestInDirection(origin.bounds, 'right', others(twins, 'o').reverse()), 'a');
+});
+
+test('oversized and overlapping cards stay reachable in both directions', () => {
+    const cards = [
+        { id: 'huge', bounds: { x: 0, y: 0, w: 2400, h: 1800 } },
+        { id: 'inside', bounds: { x: 1800, y: 600, w: 400, h: 300 } },
+        { id: 'beside', bounds: { x: 2500, y: 0, w: 660, h: 430 } }
+    ];
+    assert.equal(go(cards, 'huge', 'right'), 'inside');
+    assert.equal(go(cards, 'inside', 'left'), 'huge');
+    assert.equal(go(cards, 'inside', 'right'), 'beside');
+    // The oversized card's edge is 100 px away and overlaps the beam; the small one is further and lower.
+    assert.equal(go(cards, 'beside', 'left'), 'huge');
+    assert.equal(go(cards, 'huge', 'down'), null);
+});
+
+test('with nothing to move from, the card under or nearest the point is chosen deterministically', () => {
+    assert.equal(G.nearestToPoint({ x: 1000, y: 200 }, grid), 'b');
+    assert.equal(G.nearestToPoint({ x: -500, y: 2000 }, grid), 'd');
+    // A point between two cards picks the nearer edge, then the top-left one on an exact tie.
+    assert.equal(G.nearestToPoint({ x: 680, y: 200 }, grid), 'a');
+    assert.equal(G.nearestToPoint({ x: 680, y: 200 }, [...grid].reverse()), 'a');
+    assert.equal(G.nearestToPoint({ x: 0, y: 0 }, []), null);
+});
+
+test('revealing a card pans as little as possible, keeps zoom, and shows the header of oversized cards', () => {
+    const view = { width: 1000, height: 700 }, inset = { left: 72, top: 24, right: 24, bottom: 88 };
+    const card = { x: 0, y: 0, w: 400, h: 300 };
+    // Already in view: nothing moves.
+    assert.deepEqual(G.revealCamera({ x: 100, y: 100, z: 1 }, card, view, inset), { x: 100, y: 100, z: 1 });
+    // Off to the right and below: its far edges come to the insets.
+    assert.deepEqual(G.revealCamera({ x: 900, y: 600, z: 1 }, card, view, inset), { x: 1000 - 24 - 400, y: 700 - 88 - 300, z: 1 });
+    // Off to the left and above at half zoom: its near edges come to the insets.
+    assert.deepEqual(G.revealCamera({ x: -500, y: -500, z: .5 }, card, view, inset), { x: 72, y: 24, z: .5 });
+    // Larger than the view: its top-left corner, with the header, is shown.
+    const huge = { x: 1000, y: 1000, w: 2400, h: 1800 };
+    assert.deepEqual(G.revealCamera({ x: 0, y: 0, z: 1 }, huge, view, inset), { x: 72 - 1000, y: 24 - 1000, z: 1 });
+    assert.deepEqual(G.revealCamera({ x: 72 - 1000, y: 24 - 1000, z: 1 }, huge, view, inset), { x: 72 - 1000, y: 24 - 1000, z: 1 });
+    // The camera stays inside the canvas bounds, and a tiny view ignores the insets.
+    assert.deepEqual(G.revealCamera({ x: 0, y: 0, z: 1.5 }, { x: 100000, y: -100000, w: 400, h: 300 }, view, inset), { x: -100000, y: 100000, z: 1.5 });
+    assert.deepEqual(G.revealCamera({ x: 500, y: 0, z: 1 }, card, { width: 50, height: 700 }, inset), { x: 0, y: 24, z: 1 });
+});
