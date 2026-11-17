@@ -330,10 +330,25 @@ function centerCard(card) {
 // the program, Alt+Arrow included. Enter moves the keyboard into the selected terminal; Ctrl+Shift+E
 // moves it back out to the board. Both work in Focus mode, where Alt+Arrow changes the focused terminal.
 const NAV_DIRECTIONS = Object.freeze({ ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' });
-// Room for the create toolbar on the left and the canvas toolbar at the bottom.
-const REVEAL_INSET = Object.freeze({ left: 72, top: 24, right: 24, bottom: 88 });
+// A revealed terminal keeps this far from the view's edges, and this far from the toolbars and minimap.
+const REVEAL_INSET = Object.freeze({ left: 24, top: 24, right: 24, bottom: 24 });
+const REVEAL_GAP = 16;
+// The toolbars and minimap over the canvas, measured as currently laid out, in view coordinates.
+// Hidden ones measure empty and are left out.
+function canvasOverlays() {
+    const area = viewport.getBoundingClientRect();
+    return [$('.create-toolbar'), $('.canvas-toolbar'), $('#style-toolbar'), minimap].flatMap(element => {
+        if (!element || element.hidden) return [];
+        const r = element.getBoundingClientRect();
+        if (!r.width || !r.height) return [];
+        return [{ x: r.left - area.left - REVEAL_GAP, y: r.top - area.top - REVEAL_GAP, w: r.width + 2 * REVEAL_GAP, h: r.height + 2 * REVEAL_GAP }];
+    });
+}
+// The terminal chosen from the keyboard in Focus mode, revealed once the canvas and its toolbars return.
+let revealOnReturn = null;
 function revealCard(card) {
-    const camera = Geometry.revealCamera(workspace.camera, boundsOf(card), { width: viewport.clientWidth, height: viewport.clientHeight }, REVEAL_INSET);
+    const view = { width: viewport.clientWidth, height: viewport.clientHeight };
+    const camera = Geometry.revealCamera(workspace.camera, boundsOf(card), view, REVEAL_INSET, canvasOverlays());
     if (camera.x === workspace.camera.x && camera.y === workspace.camera.y) return;
     workspace.camera = camera; renderCamera(); changed();
 }
@@ -343,14 +358,16 @@ function clearKeyboardCurrent() {
     keyboardCurrent = null;
 }
 // Selects the terminal with this ID, with its group, and leaves the keyboard on the board: the terminal
-// is highlighted and panned into view at the current zoom. In Focus mode it becomes the focused terminal.
+// is highlighted and panned into view at the current zoom. In Focus mode it becomes the focused terminal,
+// and the canvas pans to it when Focus ends, once the toolbars it must clear are laid out again.
 function showTerminal(id) {
     const card = findCard(id);
     if (!card) return false;
     keyboardCurrent = id;
     if (focused && focused !== id) setFocus(id, { type: false });
     else select(id, { type: false });
-    revealCard(card);
+    if (focused) revealOnReturn = id;
+    else revealCard(card);
     viewport.focus({ preventScroll: true });
     return true;
 }
@@ -363,7 +380,7 @@ function navigateTerminals(direction) {
     if (!candidates.length) return toast('There are no terminals on this canvas yet.');
     const origin = findElement(focused || selected);
     const id = origin
-        ? Geometry.nearestInDirection(boundsOf(origin), direction, candidates.filter(candidate => candidate.id !== origin.id))
+        ? Geometry.nearestInDirection(boundsOf(origin), direction, candidates.filter(candidate => candidate.id !== origin.id), origin.id)
         : Geometry.nearestToPoint(viewportCenterWorld(), candidates);
     showTerminal(id || (origin?.type === 'terminal' ? origin.id : null));
 }
@@ -409,6 +426,11 @@ function setFocus(id, { type = true } = {}) {
     for (const [key, s] of sessions) s.element.classList.toggle('focused', key === id);
     renderCamera(); renderStyleToolbar();
     if (id) select(id, { type });
+    else if (revealOnReturn) {
+        const card = findCard(revealOnReturn);
+        revealOnReturn = null;
+        if (card) revealCard(card);
+    }
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
 function fitTerminal(s) {
@@ -571,6 +593,7 @@ function mount(card) {
 // Closing a terminal is not undoable. Arrows attached to it are removed with it; other connectors,
 // and those in undo steps that refer to it, are left with free ends.
 function removeCard(card) {
+    if (revealOnReturn === card.id) revealOnReturn = null;
     if (focused === card.id) setFocus(null);
     removeItems(attachedArrows([card.id]));
     detachConnectors([card.id]);
@@ -917,6 +940,9 @@ $('#help').onclick = () => info('A workspace that moves with you.', '<p class="i
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || document.querySelector('dialog[open]')) return;
+    // A held Enter never presses a terminal's buttons: Enter on the board moves focus to a stopped
+    // terminal's Start or Resume button, and only a separate press may start it.
+    if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
     if (event.ctrlKey || event.metaKey) {
         const key = event.key.toLowerCase();
         if (key === 's') { event.preventDefault(); run(save); }

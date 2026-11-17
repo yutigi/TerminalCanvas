@@ -1689,6 +1689,15 @@ async function navigationBoard({ cards, items = [], camera = { x: 48, y: 48, z: 
     const booted = await boot(workspace, { terminals: true });
     const { context } = booted;
     context.viewport = booted.elements.get('#viewport');
+    // The overlays over a 1100 x 720 view, laid out as the stylesheet places them.
+    const place = (selector, left, top, width, height) => {
+        if (!booted.elements.has(selector)) booted.elements.set(selector, new Element());
+        booted.elements.get(selector).getBoundingClientRect = () => ({ left, top, width, height });
+    };
+    place('.create-toolbar', 16, 250, 45, 220);
+    place('.canvas-toolbar', 400, 650, 300, 45);
+    place('#style-toolbar', 450, 16, 200, 40);
+    place('#minimap', 840, 525, 240, 170);
     vm.runInContext(`for (const s of sessions.values()) { s.status = ${running ? '"running"' : '"exited"'}; s.typed = 0; s.terminal.focus = () => { s.typed++; }; }`, context);
     const id = title => json(context, `workspace.cards.find(card => card.title === ${JSON.stringify(title)}).id`);
     const state = () => json(context, `({ selected, selection: [...selection], camera: workspace.camera, current: keyboardCurrent,
@@ -1802,6 +1811,11 @@ test('Enter on a stopped terminal moves to its Start button instead of starting 
     assert.equal(toggle.focusCount, 1);
     assert.equal(state().typed[id('A')], 0);
     assert.equal(calls.some(call => call.action === 'start'), false);
+    // Holding Enter does not go on to press the Start button the first press moved to.
+    const onToggle = { closest: selector => (selector.includes('button') ? {} : null) };
+    assert.equal(navigationKey(context, 'Enter', { repeat: true, target: onToggle }).prevented, true);
+    assert.equal(navigationKey(context, 'Enter', { target: onToggle }).prevented, false, 'a separate press reaches the button');
+    assert.equal(calls.some(call => call.action === 'start'), false);
     // Enter with nothing selected does nothing.
     vm.runInContext('setSelection([])', context);
     assert.equal(navigationKey(context, 'Enter').prevented, false);
@@ -1848,6 +1862,7 @@ test('in Focus mode Alt+arrow keys switch the focused terminal without typing, a
     assert.equal(now.selected, id('B'));
     assert.deepEqual(now.highlighted, [id('B')]);
     assert.equal(now.typed[id('B')], 0);
+    assert.deepEqual(now.camera, { x: 48, y: 48, z: 1 }, 'the canvas waits for its toolbars before panning');
     assert.equal(elements.get('#exit-focus').hidden, false);
     navigationKey(context, 'ArrowRight', { altKey: true });
     assert.equal(state().focusedTerminal, id('B'), 'no terminal further right');
@@ -1858,4 +1873,23 @@ test('in Focus mode Alt+arrow keys switch the focused terminal without typing, a
     now = state();
     assert.equal(now.focusedTerminal, null);
     assert.ok(now.camera.x + 3000 * now.camera.z >= 72 && now.camera.x + 3660 * now.camera.z <= 1100 - 24, JSON.stringify(now.camera));
+    // Leaving Focus without having moved from the keyboard does not pan.
+    const camera = now.camera;
+    vm.runInContext(`setFocus(${JSON.stringify(id('A'))}); setFocus(null)`, context);
+    assert.deepEqual(state().camera, camera);
+});
+
+test('a terminal revealed from the keyboard clears the minimap and toolbars', async () => {
+    // B lies below A and to the right, so a plain reveal would bring it to the lower-right corner.
+    const { context, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 500, 900]] });
+    vm.runInContext(`select(${JSON.stringify(id('A'))}, { type: false })`, context);
+    navigationKey(context, 'ArrowDown', { altKey: true });
+    const { selected, camera } = state();
+    assert.equal(selected, id('B'));
+    assert.equal(camera.z, 1);
+    const shown = { x: camera.x + 500, y: camera.y + 900, w: 660, h: 430 };
+    const overlays = json(context, 'canvasOverlays()');
+    assert.equal(overlays.length, 3, 'the hidden style toolbar is left out');
+    for (const box of overlays) assert.equal(vm.runInContext('Geometry', context).intersects(shown, box), false, JSON.stringify({ shown, box }));
+    assert.ok(shown.x >= 24 && shown.y >= 24 && shown.x + shown.w <= 1100 - 24 && shown.y + shown.h <= 720 - 24, JSON.stringify(shown));
 });

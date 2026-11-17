@@ -169,6 +169,24 @@ test('oversized and overlapping cards stay reachable in both directions', () => 
     assert.equal(go(cards, 'huge', 'down'), null);
 });
 
+test('cards with exactly the same center are ordered so each reaches the other', () => {
+    // Concentric: the larger card's corner is nearer the top left, so it comes first.
+    const nested = [{ id: 'outer', bounds: { x: -200, y: -200, w: 1060, h: 830 } }, { id: 'inner', bounds: { x: 0, y: 0, w: 660, h: 430 } }];
+    const reach = (list, id, direction) => G.nearestInDirection(from(list, id), direction, others(list, id), id);
+    assert.deepEqual(['left', 'up', 'right', 'down'].map(d => reach(nested, 'inner', d)), ['outer', 'outer', null, null]);
+    assert.deepEqual(['left', 'up', 'right', 'down'].map(d => reach(nested, 'outer', d)), [null, null, 'inner', 'inner']);
+    // Identical rectangles fall back to the ID of the card moved from.
+    const same = { x: 100, y: 100, w: 400, h: 300 };
+    const stacked = [{ id: 'a', bounds: { ...same } }, { id: 'b', bounds: { ...same } }];
+    assert.equal(reach(stacked, 'a', 'right'), 'b');
+    assert.equal(reach(stacked, 'a', 'left'), null);
+    assert.equal(reach(stacked, 'b', 'left'), 'a');
+    assert.equal(reach(stacked, 'b', 'down'), null);
+    // A card on the same line but off to the side is not "ahead" when the centers differ.
+    const level = [{ id: 'o', bounds: { x: 0, y: 0, w: 100, h: 100 } }, { id: 'side', bounds: { x: 0, y: 300, w: 100, h: 100 } }];
+    assert.equal(reach(level, 'o', 'right'), null);
+});
+
 test('with nothing to move from, the card under or nearest the point is chosen deterministically', () => {
     assert.equal(G.nearestToPoint({ x: 1000, y: 200 }, grid), 'b');
     assert.equal(G.nearestToPoint({ x: -500, y: 2000 }, grid), 'd');
@@ -194,4 +212,25 @@ test('revealing a card pans as little as possible, keeps zoom, and shows the hea
     // The camera stays inside the canvas bounds, and a tiny view ignores the insets.
     assert.deepEqual(G.revealCamera({ x: 0, y: 0, z: 1.5 }, { x: 100000, y: -100000, w: 400, h: 300 }, view, inset), { x: -100000, y: 100000, z: 1.5 });
     assert.deepEqual(G.revealCamera({ x: 500, y: 0, z: 1 }, card, { width: 50, height: 700 }, inset), { x: 0, y: 24, z: 1 });
+});
+
+test('revealing a card also clears the overlays over the canvas, moving as little as possible', () => {
+    const view = { width: 1000, height: 700 }, inset = { left: 24, top: 24, right: 24, bottom: 24 };
+    const minimap = { x: 740, y: 480, w: 260, h: 220 }, tools = { x: 0, y: 200, w: 70, h: 300 };
+    const card = { x: 0, y: 0, w: 400, h: 300 };
+    const onScreen = camera => ({ x: camera.x + card.x * camera.z, y: camera.y + card.y * camera.z, w: card.w * camera.z, h: card.h * camera.z });
+    // Off to the lower right, the plain reveal would put it under the minimap; it stops just above it,
+    // which moves less than stopping to its left.
+    const lowerRight = G.revealCamera({ x: 900, y: 600, z: 1 }, card, view, inset, [minimap, tools]);
+    assert.deepEqual(lowerRight, { x: 1000 - 24 - 400, y: 480 - 300, z: 1 });
+    assert.equal(G.intersects(onScreen(lowerRight), minimap), false);
+    // Already in view but partly under the minimap: it moves out from under it.
+    assert.deepEqual(G.revealCamera({ x: 500, y: 300, z: 1 }, card, view, inset, [minimap]), { x: 500, y: 180, z: 1 });
+    // Already clear: nothing moves.
+    assert.deepEqual(G.revealCamera({ x: 200, y: 100, z: 1 }, card, view, inset, [minimap, tools]), { x: 200, y: 100, z: 1 });
+    // Off to the left beside the left toolbar: it stops to the toolbar's right.
+    assert.deepEqual(G.revealCamera({ x: -900, y: 250, z: 1 }, card, view, inset, [minimap, tools]), { x: 70, y: 250, z: 1 });
+    // Too large to clear them all: it is shown within the insets alone, header first.
+    const huge = { x: 0, y: 0, w: 2400, h: 1800 };
+    assert.deepEqual(G.revealCamera({ x: 500, y: 500, z: 1 }, huge, view, inset, [minimap, tools]), { x: 24, y: 24, z: 1 });
 });
