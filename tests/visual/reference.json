@@ -6,8 +6,8 @@
     "engineTolerance": 0.5,
     "intended": {
         "common": {
-            "reason": "The 76px canvas manager follows Your canvas and moves the remaining sidebar controls down. Canvas actions and the workspace theme selector are new controls, measured identically in current Chromium and WebKit.",
-            "added": [".canvas-manager[0]", "#canvas-list[0]", "#canvas-add[0]", "#canvas-rename[0]", "#canvas-earlier[0]", "#canvas-later[0]", "#canvas-delete[0]", "#workspace-theme[0]"],
+            "reason": "The 76px canvas manager follows Your canvas and moves the remaining sidebar controls down. Canvas actions and the workspace theme selector are new controls, measured identically in current Chromium and WebKit. Find terminal adds an independent sidebar action without moving existing controls.",
+            "added": [".canvas-manager[0]", "#canvas-list[0]", "#canvas-add[0]", "#canvas-rename[0]", "#canvas-earlier[0]", "#canvas-later[0]", "#canvas-delete[0]", "#workspace-theme[0]", "#find-terminal[0]"],
             "resized": {
                 ".section-label[1]": [0, 76, 0, 0],
                 ".section-label[2]": [0, 76, 0, 0],

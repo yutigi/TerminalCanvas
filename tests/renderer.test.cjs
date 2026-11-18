@@ -22,7 +22,7 @@ function twoCanvases() {
 // A small DOM boundary substitute checks renderer boot/state without claiming visual coverage.
 class Element {
     constructor() {
-        this.children = []; this.queries = new Map(); this.value = ''; this.hidden = false;
+        this.children = []; this.queries = new Map(); this.value = ''; this.hidden = false; this.isConnected = true;
         const classes = new Set();
         this.style = { setProperty() {} };
         this.classList = {
@@ -44,7 +44,7 @@ class Element {
     replaceChildren(...children) { this.children = children; }
     get childElementCount() { return this.children.length; }
     querySelector(selector) {
-        if (!this.queries.has(selector)) this.queries.set(selector, new Element());
+        if (!this.queries.has(selector)) { const child = new Element(); child.ownerDocument = this.ownerDocument; this.queries.set(selector, child); }
         return this.queries.get(selector);
     }
     querySelectorAll() { return []; }
@@ -60,10 +60,11 @@ class Element {
         for (const handler of [...(this.listeners.get(type) || [])]) { handler(event); if (stopped) break; }
     }
     getBoundingClientRect() { return { left: 0, top: 0, width: this.clientWidth, height: this.clientHeight }; }
+    getClientRects() { return this.hidden ? [] : [this.getBoundingClientRect()]; }
     setPointerCapture(id) { this.captured.add(id); }
     hasPointerCapture(id) { return this.captured.has(id); }
     releasePointerCapture(id) { this.captured.delete(id); }
-    remove() {}
+    remove() { this.isConnected = false; }
     setAttribute(name, value) { this.attributes.set(name, value); }
     removeAttribute(name) { this.attributes.delete(name); }
     closest() { return null; }
@@ -73,7 +74,7 @@ class Element {
     blur() { this.dispatch('blur'); }
     select() {}
     showModal() { this.open = true; }
-    close() { this.open = false; }
+    close() { this.open = false; this.dispatch('close'); }
 }
 class KeyboardTerminal {
     constructor(options = {}) { this.selection = ''; this.pasted = []; this.options = { ...options }; this.cols = 80; this.rows = 24; }
@@ -369,8 +370,8 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
         querySelector: selector => selector === 'dialog[open]' ? [...elements.values()].find(e => e.open) : elements.get(selector),
         querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener(type, fn) { documentListeners.set(type, fn); Element.prototype.addEventListener.call(this, type, fn); }
     });
-    const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
     for (const element of elements.values()) element.ownerDocument = document;
+    const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
     const frames = [];
     const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame: callback => frames.push(callback) });
     // Load renderer scripts in the same order as index.html.
@@ -2774,12 +2775,278 @@ test('a terminal revealed from the keyboard clears the minimap and toolbars', as
     assert.ok(shown.x >= 24 && shown.y >= 24 && shown.x + shown.w <= 1100 - 24 && shown.y + shown.h <= 720 - 24, JSON.stringify(shown));
 });
 
+function switcherState(context) {
+    return json(context, '({ active: switcherActive, matches: switcherMatches, query: switcherQuery.value, open: terminalSwitcher.open })');
+}
+function switcherSearch(elements, value) {
+    const query = elements.get('#switcher-query'); query.value = value; query.oninput();
+}
+
+test('terminal switcher follows the active canvas and waits for canvas mutations', async () => {
+    const board = twoCanvases(), { context, elements, calls } = await boot(board, { terminals: true });
+    vm.runInContext('canvasMutation = true', context);
+    assert.equal(vm.runInContext('openTerminalSwitcher()', context), false);
+    vm.runInContext('canvasMutation = false; openTerminalSwitcher()', context);
+    assert.deepEqual(switcherState(context).matches, [board.cards[0].id]);
+    switcherSearch(elements, 'Background');
+    assert.deepEqual(switcherState(context).matches, [], 'hidden canvases keep running outside this canvas search');
+    vm.runInContext('terminalSwitcher.close(); switchCanvas("canvas-1"); openTerminalSwitcher()', context);
+    assert.deepEqual(switcherState(context).matches, [board.cards[1].id]);
+    context.oldCanvasId = board.cards[0].id;
+    vm.runInContext('confirmTerminalSwitch(oldCanvasId)', context);
+    assert.equal(switcherState(context).open, true, 'an ID from the previous canvas cannot be confirmed');
+    vm.runInContext('confirmTerminalSwitch()', context);
+    assert.equal(switcherState(context).open, false);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.equal(json(context, 'selected'), board.cards[1].id);
+    assert.equal(json(context, 'sessions.size'), 2);
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'switching and searching never launch shells');
+});
+
+test('switcher reveals a distant terminal at the wheel zoom and canvas scrolling resumes afterward', async () => {
+    const board = createWorkspace();
+    board.cards.push(createCard({ title: 'Nearby' }), createCard({ title: 'Distant', x: 2400 }));
+    const h = await boot(board), wheel = canvasWheel(h);
+    wheel();
+    const zoomed = json(h.context, 'workspace.camera.z');
+    assert.ok(zoomed > board.camera.z);
+    vm.runInContext('openTerminalSwitcher()', h.context);
+    switcherSearch(h.elements, 'Distant');
+    h.elements.get('#terminal-switcher').dispatch('keydown', { key: 'Enter' });
+    assert.equal(switcherState(h.context).open, false);
+    assert.equal(json(h.context, 'selected'), board.cards[1].id);
+    assert.equal(json(h.context, 'workspace.camera.z'), zoomed);
+    const revealed = json(h.context, 'workspace.camera');
+    assert.ok(revealed.x < 0, 'the distant terminal is brought into view');
+    assert.equal(wheel({ deltaY: 100, timeStamp: 300 }).defaultPrevented, true);
+    assert.ok(json(h.context, 'workspace.camera.z') < zoomed);
+    assert.equal(json(h.context, 'selected'), board.cards[1].id);
+    assert.deepEqual(h.calls.map(call => call.action), ['initialize'], 'navigation starts no commands');
+});
+
+test('switcher live titles and reveal preserve terminal colors, themes, and running instances', async () => {
+    const board = createWorkspace(); board.terminalTheme = 'midnight'; board.camera.z = .65;
+    board.cards.push(createCard({ title: 'Task one', color: 'purple' }), createCard({ title: 'Task two', color: 'red', theme: 'paper', x: 2400 }));
+    const { context, elements, calls } = await boot(board, { terminals: true });
+    const live = Array.from(vm.runInContext('[...sessions.values()]', context)), terminals = live.map(s => s.terminal);
+    for (const s of live) { s.status = 'running'; s.terminal.selection = 'kept output'; }
+    vm.runInContext('openTerminalSwitcher()', context);
+    switcherSearch(elements, 'task');
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'ArrowDown' });
+    const active = switcherState(context).active;
+    assert.equal(active, board.cards[1].id);
+    vm.runInContext("workspace.cards[1].title = 'Task renamed'; refresh()", context);
+    assert.equal(switcherState(context).active, active);
+    assert.equal(switcherState(context).query, 'task');
+    assert.equal(elements.get('#switcher-results').children[1].children[1].children[0].textContent, 'Task renamed');
+    const minimap = elements.get('#minimap-cards').children;
+    assert.deepEqual(minimap.map(node => node.title), ['Task one', 'Task renamed']);
+    assert.ok(minimap[0].classList.contains('color-purple'));
+    assert.ok(minimap[1].classList.contains('color-red'));
+    assert.ok(elements.get('#outline').children[1].classList.contains('color-red'));
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Enter' });
+    assert.equal(json(context, 'selected'), active);
+    assert.equal(json(context, 'workspace.camera.z'), .65);
+    assert.equal(elements.get('#terminal-theme').value, 'paper');
+    assert.ok(live[1].element.classList.contains('color-red'));
+    assert.deepEqual(live.map(s => s.terminal.options.theme.background), ['#101827', '#faf7f0']);
+    for (let i = 0; i < live.length; i++) {
+        assert.equal(live[i].terminal, terminals[i]);
+        assert.equal(terminals[i].selection, 'kept output');
+        assert.equal(live[i].status, 'running');
+    }
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('switcher shortcut works with a collapsed sidebar and restores focus without changing sidebar preferences', async () => {
+    const { context, elements, document } = await navigationBoard({ cards: [['Shell', 0, 0]] });
+    elements.get('#outline-toggle').click();
+    elements.get('#sidebar-toggle').click();
+    elements.get('#viewport').focus();
+    const preferences = json(context, 'sidebarPreferences');
+    navigationKey(context, 'P', { ctrlKey: true, shiftKey: true });
+    assert.equal(switcherState(context).open, true);
+    assert.equal(document.activeElement, elements.get('#switcher-query'));
+    assert.equal(elements.get('#sidebar').hidden, true);
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Escape' });
+    assert.equal(document.activeElement, elements.get('#viewport'));
+    assert.deepEqual(json(context, 'sidebarPreferences'), preferences);
+    assert.equal(elements.get('#outline-section').hidden, true);
+    assert.equal(elements.get('#sidebar').hidden, true);
+});
+
+test('switcher shortcut and accessible button focus the query without taking Ctrl+P, slash, or Focus shortcuts', async () => {
+    const { context, elements, id, state } = await navigationBoard({ cards: [['Shell', 0, 0], ['Codex', 2000, 0]] });
+    vm.runInContext(`select(${JSON.stringify(id('Codex'))}, { type: false })`, context);
+    assert.equal(navigationKey(context, 'p', { ctrlKey: true }).prevented, false);
+    assert.equal(navigationKey(context, 'P', { ctrlKey: true, shiftKey: true, altKey: true }).prevented, false);
+    assert.equal(navigationKey(context, 'P', { ctrlKey: true, shiftKey: true }).prevented, true);
+    assert.equal(switcherState(context).open, true);
+    assert.equal(switcherState(context).active, id('Codex'));
+    assert.equal(elements.get('#switcher-query').focusCount, 1);
+    const terminal = vm.runInContext(`sessions.get(${JSON.stringify(id('Shell'))}).terminal`, context);
+    const key = { type: 'keydown', key: 'P', ctrlKey: true, metaKey: false, shiftKey: true, altKey: false };
+    assert.equal(terminal.keyHandler(key), false);
+    assert.equal(terminal.keyHandler({ ...key, ctrlKey: false, metaKey: true }), false);
+    assert.equal(terminal.keyHandler({ ...key, shiftKey: false }), true);
+    // App shortcuts are inert while the switcher is modal.
+    navigationKey(context, 'F', { ctrlKey: true, shiftKey: true });
+    assert.equal(state().focusedTerminal, null);
+    elements.get('#switcher-close').onclick();
+    navigationKey(context, '/');
+    assert.equal(elements.get('#search').focusCount, 1);
+    elements.get('#find-terminal').onclick();
+    assert.equal(switcherState(context).open, true);
+    elements.get('#terminal-switcher').close();
+    navigationKey(context, 'P', { metaKey: true, shiftKey: true });
+    assert.equal(switcherState(context).open, true);
+});
+
+test('switcher keyboard confirmation reveals a duplicate title by ID at the same zoom and Enter separately types', async () => {
+    const { context, elements, state } = await navigationBoard({ cards: [['Shell', 0, 0], ['Shell', 2200, 0]], camera: { x: 100, y: 48, z: .65 } });
+    const ids = json(context, 'workspace.cards.map(card => card.id)');
+    vm.runInContext('openTerminalSwitcher()', context);
+    const dialog = elements.get('#terminal-switcher'), query = elements.get('#switcher-query');
+    assert.deepEqual(switcherState(context).matches, ids);
+    dialog.dispatch('keydown', { key: 'ArrowUp' });
+    assert.equal(switcherState(context).active, ids[1], 'arrows wrap in sidebar order');
+    assert.equal(query.attributes.get('aria-activedescendant'), `switcher-option-${ids[1]}`);
+    const options = elements.get('#switcher-results').children;
+    assert.equal(options[1].attributes.get('aria-selected'), 'true');
+    assert.match(options[1].title, new RegExp(ids[1]));
+    const before = state();
+    assert.equal(before.selected, null, 'browsing does not select or pan');
+    let stopped = false, prevented = false;
+    dialog.dispatch('keydown', { key: 'Enter', stopPropagation() { stopped = true; }, preventDefault() { prevented = true; } });
+    assert.equal(stopped && prevented, true);
+    assert.equal(switcherState(context).open, false);
+    const now = state();
+    assert.equal(now.selected, ids[1]);
+    assert.deepEqual(now.highlighted, [ids[1]]);
+    assert.equal(now.camera.z, .65);
+    assert.ok(now.camera.x < before.camera.x);
+    assert.deepEqual(Object.values(now.typed), [0, 0]);
+    assert.equal(query.attributes.has('aria-activedescendant'), false);
+    assert.equal(query.attributes.get('aria-expanded'), 'false');
+    navigationKey(context, 'Enter', { repeat: true });
+    assert.equal(state().typed[ids[1]], 0, 'a held confirmation never starts typing');
+    navigationKey(context, 'Enter');
+    assert.equal(state().typed[ids[1]], 1);
+});
+
+test('switcher and sidebar share case-insensitive title, live folder, and profile filtering without AI', async () => {
+    const { context, elements, id, onEvent } = await navigationBoard({ cards: [['Default shell', 0, 0, { cwd: '/one' }], ['Manual API', 700, 0, { profile: 'codex', cwd: '/repo' }]] });
+    vm.runInContext('openTerminalSwitcher()', context);
+    switcherSearch(elements, ' API   CODEX ');
+    assert.deepEqual(switcherState(context).matches, [id('Manual API')]);
+    const search = elements.get('#search'); search.value = 'api codex'; search.oninput();
+    assert.equal(elements.get('#outline').children.length, 1);
+    onEvent({ type: 'cwd', id: id('Manual API'), cwd: '/Live/Folder' });
+    switcherSearch(elements, 'live/folder');
+    assert.deepEqual(switcherState(context).matches, [id('Manual API')]);
+    switcherSearch(elements, 'default');
+    assert.deepEqual(switcherState(context).matches, [id('Default shell')]);
+    switcherSearch(elements, '<script>');
+    assert.deepEqual(switcherState(context).matches, []);
+    assert.equal(elements.get('#switcher-status').textContent, 'No matching terminals.');
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Enter' });
+    assert.equal(switcherState(context).open, true);
+    assert.equal(elements.get('#switcher-query').attributes.has('aria-activedescendant'), false);
+});
+
+test('open switcher preserves query and active ID through effective-title changes, creation, and removal', async () => {
+    const { context, elements } = await navigationBoard({ cards: [['Task one', 0, 0], ['Task two', 700, 0], ['Other', 1400, 0]] });
+    vm.runInContext('openTerminalSwitcher()', context);
+    switcherSearch(elements, 'task');
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'ArrowDown' });
+    const active = switcherState(context).active;
+    // #28's effective-title integration contract: update card.title after precedence, then refresh.
+    vm.runInContext(`findCard(${JSON.stringify(active)}).title = 'Task generated <title>'; refresh()`, context);
+    assert.equal(switcherState(context).active, active);
+    assert.equal(switcherState(context).query, 'task');
+    assert.equal(elements.get('#switcher-results').children[1].children[1].children[0].textContent, 'Task generated <title>');
+    assert.equal(vm.runInContext(`sessions.get(${JSON.stringify(active)}).element.querySelector('.card-title').textContent`, context), 'Task generated <title>');
+    const added = createCard({ title: 'Task new' }); context.newCard = added;
+    vm.runInContext('workspace.cards.push(newCard); mount(newCard); refresh()', context);
+    assert.equal(switcherState(context).active, active);
+    assert.equal(switcherState(context).matches.length, 3);
+    vm.runInContext(`removeCard(findCard(${JSON.stringify(active)}))`, context);
+    assert.equal(switcherState(context).active, added.id, 'the next surviving result keeps the same row');
+    vm.runInContext(`findCard(${JSON.stringify(added.id)}).title = 'Renamed'; refresh()`, context);
+    assert.equal(switcherState(context).matches.length, 1);
+    assert.equal(elements.get('#switcher-query').ownerDocument.activeElement, elements.get('#switcher-query'), 'live updates leave typing in the query');
+    // A stale pointer click must not jump to a removed target or close the switcher.
+    vm.runInContext(`confirmTerminalSwitch(${JSON.stringify(active)})`, context);
+    assert.equal(switcherState(context).open, true);
+    assert.equal(switcherState(context).query, 'task');
+});
+
+test('switcher cancellation restores prior focus and selection or falls back when the opener disappears', async () => {
+    const { context, elements, document, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 700, 0]] });
+    const opener = elements.get('#workspace-name'); opener.focus();
+    const before = state();
+    vm.runInContext('openTerminalSwitcher()', context);
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'ArrowDown' });
+    let interceptedButton = false;
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Enter', target: { closest: selector => selector === 'button' ? {} : null }, preventDefault() { interceptedButton = true; } });
+    assert.equal(interceptedButton, false, 'the close button keeps its native Enter activation');
+    assert.equal(switcherState(context).open, true);
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Escape' });
+    assert.equal(document.activeElement, opener);
+    assert.deepEqual(state(), before);
+    vm.runInContext('openTerminalSwitcher()', context);
+    opener.isConnected = false;
+    elements.get('#terminal-switcher').dispatch('cancel');
+    assert.equal(document.activeElement, elements.get('#viewport'));
+    assert.equal(switcherState(context).open, false);
+});
+
+test('switcher handles an empty canvas, stopped targets, pointer confirmation, and Focus mode without starting commands', async () => {
+    const empty = await navigationBoard({ cards: [] });
+    vm.runInContext('openTerminalSwitcher()', empty.context);
+    assert.match(empty.elements.get('#switcher-status').textContent, /no terminals/i);
+    empty.elements.get('#terminal-switcher').dispatch('keydown', { key: 'ArrowDown' });
+    empty.elements.get('#terminal-switcher').dispatch('keydown', { key: 'Enter' });
+    assert.equal(switcherState(empty.context).open, true);
+    const { context, elements, id, state, calls } = await navigationBoard({ cards: [['A', 0, 0], ['B', 3000, 0]], running: false });
+    vm.runInContext(`setFocus(${JSON.stringify(id('A'))}, { type: false }); openTerminalSwitcher()`, context);
+    elements.get('#switcher-results').children[1].onclick();
+    assert.equal(state().focusedTerminal, id('B'));
+    assert.equal(state().selected, id('B'));
+    navigationKey(context, 'Enter');
+    assert.equal(vm.runInContext(`sessions.get(${JSON.stringify(id('B'))}).element.querySelector('[data-action="toggle"]').focusCount`, context), 1);
+    assert.equal(calls.some(call => call.action === 'start'), false);
+    elements.get('#exit-focus').onclick();
+    assert.ok(state().camera.x < 0, 'Focus defers the reveal until returning to the canvas');
+});
+
 const AGENT_TARGETS = [
     { id: 'claude', name: 'Claude Code', folders: ['C:\Users\me\.claude\skills'], detected: ['Claude Code'], status: 'missing' },
     { id: 'agents', name: 'Codex, Gemini CLI, opencode, and other agents', folders: ['C:\Users\me\.agents\skills'], detected: [], status: 'missing' },
 ];
 const agentRows = elements => elements.get('#agent-targets').children;
 const agentBox = row => row.children[0];
+
+test('agent setup and terminal search keep each other modal and remain available after closing', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ title: 'Shell' }));
+    const { context, elements, calls } = await boot(board, { respond: action => action === 'agent-setup' ? { targets: structuredClone(AGENT_TARGETS) } : null });
+    elements.get('#agent-setup').onclick(); await flush();
+    assert.equal(elements.get('#agent-dialog').open, true);
+    navigationKey(context, 'P', { ctrlKey: true, shiftKey: true });
+    assert.equal(!!switcherState(context).open, false);
+    elements.get('#agent-dialog').close();
+    elements.get('#find-terminal').onclick();
+    assert.equal(switcherState(context).open, true);
+    const setupCalls = () => calls.filter(call => call.action === 'agent-setup').length;
+    const before = setupCalls();
+    elements.get('#agent-setup').onclick(); await flush();
+    assert.equal(setupCalls(), before, 'search blocks setup before any host request');
+    assert.equal(elements.get('#agent-dialog').open, false);
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Escape' });
+    elements.get('#agent-setup').onclick(); await flush();
+    assert.equal(elements.get('#agent-dialog').open, true);
+    assert.equal(setupCalls(), before + 1);
+});
 
 test('the first launch offers the agent setup once and declining it is remembered', async () => {
     const respond = (action, payload) => action === 'initialize'
