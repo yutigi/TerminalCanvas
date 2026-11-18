@@ -494,7 +494,7 @@ function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
     const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
@@ -860,7 +860,7 @@ function fillAccountSelect(select, value) {
     for (const name of names) select.append(accountOption(name, name));
     select.value = value || '';
 }
-// Text only, at the end of the folder row, so the card header keeps its controls and layout.
+// The header icon opens the account dialog; the folder row names the account.
 function renderAccount(card) {
     const s = sessions.get(card.id); if (!s) return;
     const button = s.element.querySelector('.card-account');
@@ -868,6 +868,10 @@ function renderAccount(card) {
     button.classList.toggle('set', !!card.claudeAccount);
     button.title = `Claude account: ${card.claudeAccount || 'Default'}. Click to change.`;
     button.setAttribute('aria-label', `Claude account: ${card.claudeAccount || 'Default'}`);
+    const header = s.element.querySelector('.card-account-icon');
+    header.title = `Claude account: ${card.claudeAccount || 'Default'}`;
+    header.setAttribute('aria-label', header.title);
+    header.classList.toggle('set', !!card.claudeAccount);
 }
 async function openAccountDialog(card) {
     if (!ready || document.querySelector('dialog[open]')) return;

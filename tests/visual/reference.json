@@ -3,5 +3,14 @@
     "viewports": [[1000, 680], [1280, 720], [1440, 840]],
     "scenes": ["empty", "launch", "card", "board", "style"],
     "legacyTolerance": 1.5,
-    "engineTolerance": 0.5
+    "engineTolerance": 0.5,
+    "intended": {
+        "card": {
+            "reason": "The Claude account icon is the first card action; the title gives up its 26px width and the 3px gap.",
+            "added": [".card-account-icon[0]"],
+            "resized": {
+                ".card-title[0]": [0, 0, -29, 0]
+            }
+        }
+    }
 }

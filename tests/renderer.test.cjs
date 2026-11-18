@@ -1398,6 +1398,9 @@ test('a terminal keeps the Claude account chosen for it and starts with it', asy
     assert.equal(json(context, 'workspace.cards[0].claudeAccount'), 'Work');
     assert.equal(control().textContent, 'Claude · Work');
     assert.equal(control().classList.contains('set'), true);
+    const headerIcon = vm.runInContext('[...sessions.values()][0].element', context);
+    assert.match(headerIcon.innerHTML, /<div class="card-actions"><button class="card-account-icon" data-action="account"/, 'the account icon leads the card actions');
+    assert.equal(headerIcon.querySelector('.card-account-icon').title, 'Claude account: Work');
     await vm.runInContext('start(workspace.cards[0])', context);
     assert.equal(calls.find(c => c.action === 'start').payload.card.claudeAccount, 'Work');
     // A running terminal keeps its account until it starts again; the default removes the field.
