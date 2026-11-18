@@ -23,6 +23,7 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
     }, folder);
     await until(async () => !(await h.page.evaluate(card => invoke('duplicate-directory', card), card)).warning,
         'The isolated PowerShell did not reach its prompt.');
+    if (!await h.page.locator('#remote-settings').isVisible()) await h.page.locator('#sidebar-toggle').click();
     await h.page.locator('#remote-settings').click();
     await h.page.locator('#remote-start-stop').click();
     const access = await until(async () => {
