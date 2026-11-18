@@ -34,7 +34,9 @@ const paths = {
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
     redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
     trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -1064,6 +1066,83 @@ async function openAccountSignIn(beside, name) {
     await start(card);
 }
 $('#account-dialog').addEventListener('close', () => { accountCard = null; });
+// The agent setup installs the Terminal Canvas skill where AI agents load skills for every session.
+// The first launch offers it once; Set up agents in the sidebar offers it again at any time.
+const AGENT_STATUS = { current: 'INSTALLED', outdated: 'UPDATE', missing: 'NOT INSTALLED' };
+let agentChoices = new Map(), agentBusy = false, agentOffer = false;
+function renderAgentTargets(targets) {
+    agentChoices = new Map();
+    const anyDetected = targets.some(target => target.detected.length);
+    const rows = targets.map(target => {
+        const row = document.createElement('label'); row.className = 'agent-target';
+        const box = document.createElement('input'); box.type = 'checkbox'; box.value = target.id;
+        // Preselect what this computer uses and does not have yet; with no agent found, everything.
+        box.checked = target.status !== 'current' && (!anyDetected || target.detected.length > 0);
+        agentChoices.set(target.id, { box, target });
+        const copy = document.createElement('span'); copy.className = 'agent-target-copy';
+        const name = document.createElement('span'); name.className = 'agent-target-name';
+        const title = document.createElement('span'); title.textContent = target.name;
+        const status = document.createElement('span'); status.className = `agent-target-status ${target.status}`; status.textContent = AGENT_STATUS[target.status] || '';
+        name.append(title, status);
+        const found = document.createElement('span'); found.className = 'agent-target-detail';
+        found.textContent = target.detected.length ? `Found on this computer: ${target.detected.join(', ')}.` : 'Not found on this computer yet.';
+        const folders = document.createElement('span'); folders.className = 'agent-target-detail';
+        target.folders.forEach((folder, index) => {
+            const code = document.createElement('code'); code.textContent = folder;
+            if (index) folders.append(document.createElement('br'));
+            folders.append(code);
+        });
+        copy.append(name, found, folders); row.append(box, copy);
+        return row;
+    });
+    $('#agent-targets').replaceChildren(...rows);
+}
+async function openAgentSetup({ offer = false } = {}) {
+    if (!ready || agentBusy || document.querySelector('dialog[open]')) return;
+    const { targets } = await invoke('agent-setup', {});
+    if (document.querySelector('dialog[open]')) return;
+    agentOffer = offer;
+    renderAgentTargets(targets);
+    $('#agent-error').hidden = true; $('#agent-install').disabled = false;
+    $('#agent-dialog').showModal();
+}
+// The footer's gear opens the Settings menu; Escape, a click elsewhere, or choosing an item closes it.
+function setSettingsMenu(open) {
+    $('#settings-menu').hidden = !open;
+    $('#settings').setAttribute('aria-expanded', String(open));
+    if (open) $('#agent-setup').focus();
+}
+$('#settings').onclick = () => setSettingsMenu($('#settings-menu').hidden);
+$('#settings-menu').addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation();
+    setSettingsMenu(false); $('#settings').focus();
+});
+document.addEventListener('pointerdown', event => {
+    if (!$('#settings-menu').hidden && !event.target.closest?.('#settings-menu,#settings')) setSettingsMenu(false);
+}, true);
+$('#agent-setup').onclick = () => { setSettingsMenu(false); run(() => openAgentSetup()); };
+$('#agent-form').onsubmit = event => {
+    event.preventDefault(); if (agentBusy) return;
+    const chosen = [...agentChoices.values()].filter(choice => choice.box.checked);
+    if (!chosen.length) { $('#agent-dialog').close(); return; }
+    agentBusy = true; $('#agent-install').disabled = true;
+    run(async () => {
+        try {
+            await invoke('agent-setup', { install: chosen.map(choice => choice.target.id) });
+            agentOffer = false; $('#agent-dialog').close();
+            toast(`Terminal Canvas skill installed for ${chosen.map(choice => choice.target.name).join(' and ')}. Agent sessions started from now on can open linked terminals and hand work over.`);
+        } catch (error) {
+            $('#agent-error').textContent = error.message; $('#agent-error').hidden = false;
+        } finally { agentBusy = false; $('#agent-install').disabled = false; }
+    });
+};
+// Closing the first-launch offer without installing declines it, so it is not offered again.
+$('#agent-dialog').addEventListener('close', () => {
+    if (!agentOffer) return;
+    agentOffer = false;
+    run(() => invoke('agent-setup', { dismiss: true }));
+});
 $('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
 $('#launch-form').onsubmit = event => {
@@ -1302,5 +1381,6 @@ if (bridge) {
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
         loadWorkspace(initial.workspace); ready = true; markAppReady(); renderStyleToolbar();
         if (initial.warning) toast(initial.warning);
+        if (initial.agentSetup) await openAgentSetup({ offer: true });
     });
 } else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');

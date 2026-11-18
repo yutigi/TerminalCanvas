@@ -11,6 +11,9 @@ passed; keep unverified Windows and manual results explicit.
 - `crates/tc-hook/`: standalone native hook shipped next to the desktop executable.
 - `src-tauri/`: commands, platform services, protocol, window/lifecycle, and one host actor.
 - `xtask/`: syntax/check/icon/Windows packaging tasks.
+- `skills/terminal-canvas/`: agent-neutral skill for linked terminals and agent handover via
+  `tc-hook new-terminal`; keep it in step with `docs/agent-launch.md`. The app embeds it
+  (`tc_core::skills`) and installs it from the agent setup; e2e builds install only inside the profile.
 - `tests/`: UI unit tests, golden fixtures, and Windows E2E tests. Frozen Node compatibility oracles
   in `tests/reference/node-host/` are dev-only and must never be imported by the app.
 - `vendor/portable-pty/`: pinned, licensed upstream source with a documented three-file Windows patch.
