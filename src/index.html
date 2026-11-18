@@ -19,6 +19,7 @@
     <script src="./items.js" defer></script>
     <script src="./history.js" defer></script>
     <script src="./clipboard.js" defer></script>
+    <script src="./canvases.js" defer></script>
     <script src="./renderer.js" defer></script>
 </head>
 <body>
@@ -28,6 +29,17 @@
         <button id="workspace-toggle" class="section-label section-disclosure workspace-disclosure" aria-expanded="true" aria-controls="workspace-section">WORKSPACE</button>
         <div id="workspace-section" class="sidebar-section">
             <button class="nav-item active" id="canvas-nav"><span data-icon="canvas"></span>Your canvas<span class="badge" id="card-count">0</span></button>
+            <div class="canvas-manager" role="group" aria-label="Manage canvases">
+                <label for="canvas-list">Canvas</label><select id="canvas-list" aria-label="Current canvas" title="Previous / next canvas: Ctrl+Shift+PageUp / PageDown"></select>
+                <div class="canvas-controls">
+                    <button id="canvas-add" class="icon-button" title="New canvas (Ctrl+Shift+K)" aria-label="New canvas" data-icon="plus"></button>
+                    <button id="canvas-rename" class="icon-button" title="Rename canvas (Ctrl+Shift+R)" aria-label="Rename canvas" data-icon="type"></button>
+                    <button id="canvas-earlier" class="icon-button" title="Move canvas earlier (Ctrl+Alt+Shift+PageUp)" aria-label="Move canvas earlier">↑</button>
+                    <button id="canvas-later" class="icon-button" title="Move canvas later (Ctrl+Alt+Shift+PageDown)" aria-label="Move canvas later">↓</button>
+                    <button id="canvas-delete" class="icon-button" title="Delete canvas (Ctrl+Shift+Delete)" aria-label="Delete canvas" data-icon="trash"></button>
+                </div>
+                <span id="canvas-activity" class="canvas-activity" role="status" hidden></span>
+            </div>
             <button class="nav-item" id="open-workspace"><span data-icon="folder"></span>Open workspace<kbd>⌃ O</kbd></button>
             <button class="nav-item" id="new-workspace"><span data-icon="plus"></span>New workspace</button>
             <button class="nav-item" id="export-workspace" title="Save a copy with images embedded so it works on another computer"><span data-icon="package"></span>Export portable copy</button>
@@ -40,7 +52,7 @@
             <button id="find-terminal" class="icon-button" aria-label="Find terminal" aria-haspopup="dialog" aria-controls="terminal-switcher" aria-keyshortcuts="Control+Shift+P Meta+Shift+P" title="Find terminal (Ctrl+Shift+P / Command+Shift+P)"><span data-icon="search"></span></button>
         </div>
         <div id="outline-section" class="sidebar-section">
-            <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find a terminal…" aria-label="Find a terminal"><kbd>/</kbd></label>
+            <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find on this canvas…" aria-label="Find a terminal on this canvas"><kbd>/</kbd></label>
             <div id="outline" class="outline"><p class="outline-empty">Your terminals will appear here.</p></div>
         </div>
         <div class="sidebar-bottom">
@@ -142,6 +154,7 @@
         </form>
     </dialog>
     <dialog id="info-dialog"><div class="dialog-heading"><span id="info-icon" class="dialog-symbol" data-icon="help"></span><button class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div><h2 id="info-title"></h2><div id="info-content"></div><div class="dialog-footer"><button class="button primary" data-close>Got it</button></div></dialog>
+    <dialog id="canvas-dialog"><form id="canvas-form"><h2>Rename canvas</h2><label class="field-label" for="canvas-name">Canvas name</label><input id="canvas-name" maxlength="100" required><div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Rename</button></div></form></dialog>
     <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-description" class="dialog-description"></p><div class="dialog-footer"><button id="confirm-cancel" class="button">Cancel</button><button id="confirm-ok" class="button danger">Continue</button></div></dialog>
     <div id="toast" class="toast" role="status" hidden></div>
 </body>

@@ -8,8 +8,8 @@ function compare(expected, actual, tolerance, { colors = true, intended = {} } =
     assert.deepEqual(Object.keys(actual.scenes).sort(), Object.keys(expected.scenes).sort(), 'Layout scenes');
     for (const [scene, before] of Object.entries(expected.scenes)) {
         const after = actual.scenes[scene];
-        const change = intended[scene.replace(/^\d+x\d+-/, '')] || {};
-        const added = change.added || [], resized = change.resized || {};
+        const change = intended[scene.replace(/^\d+x\d+-/, '')] || {}, common = intended.common || {};
+        const added = [...(common.added || []), ...(change.added || [])], resized = { ...common.resized, ...change.resized };
         assert.equal(after.width, before.width, `${scene}: viewport width`);
         assert.equal(after.height, before.height, `${scene}: viewport height`);
         for (const selector of added) assert.ok(after.elements[selector], `${scene}: intended control ${selector} is missing`);

@@ -115,6 +115,15 @@ impl WorkspaceRecovery {
         if !self.board.cards.iter().any(|existing| existing.id == card.id) {
             let mut next = self.board.clone();
             next.cards.push(card.clone());
+            // A caller starting a card before its first layout autosave assigns it to the
+            // active canvas. Normal starts already saved their explicit ownership.
+            if let Some(canvas) = next
+                .canvases
+                .iter_mut()
+                .find(|canvas| Some(&canvas.id) == next.active_canvas.as_ref())
+            {
+                canvas.card_ids.push(card.id.clone());
+            }
             self.accept(&next.to_value())?;
         }
         Ok(self

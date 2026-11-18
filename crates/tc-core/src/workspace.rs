@@ -215,6 +215,22 @@ pub struct Item {
     pub groups: Vec<String>,
 }
 
+/// Canvas ownership is optional format-3 metadata. The flat arrays remain authoritative for
+/// recovery, portable assets, and older readers; absent metadata retains the legacy serialization.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Canvas {
+    pub id: String,
+    pub name: String,
+    pub camera: Camera,
+    pub card_ids: Vec<String>,
+    pub item_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused: Option<String>,
+}
+
 /// A validated workspace in the current format.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workspace {
@@ -222,6 +238,8 @@ pub struct Workspace {
     pub camera: Camera,
     pub cards: Vec<Card>,
     pub items: Vec<Item>,
+    pub canvases: Vec<Canvas>,
+    pub active_canvas: Option<String>,
     /// `None` uses Current and omits the field when serializing.
     pub terminal_theme: Option<TerminalTheme>,
 }
@@ -258,6 +276,10 @@ impl Serialize for Workspace {
         map.serialize_entry("camera", &self.camera)?;
         map.serialize_entry("cards", &self.cards)?;
         map.serialize_entry("items", &self.items)?;
+        if !self.canvases.is_empty() {
+            map.serialize_entry("canvases", &self.canvases)?;
+            map.serialize_entry("activeCanvas", &self.active_canvas)?;
+        }
         if let Some(theme) = self.terminal_theme {
             map.serialize_entry("terminalTheme", &theme)?;
         }
@@ -760,11 +782,15 @@ pub fn validate_workspace(raw: &Value) -> Result<Workspace> {
     }
     let terminal_theme =
         terminal_theme(field(Some(raw), "terminalTheme"))?.filter(|theme| *theme != TerminalTheme::Current);
+    // Run canvas extension validation after main's checks to preserve their error precedence.
+    let (canvases, active_canvas) = validate_canvases(raw, &cards, &items)?;
     Ok(Workspace {
         name,
         camera: Camera { x, y, z },
         cards,
         items,
+        canvases,
+        active_canvas,
         terminal_theme,
     })
 }
@@ -780,8 +806,117 @@ pub fn create_workspace() -> Workspace {
         },
         cards: Vec::new(),
         items: Vec::new(),
+        canvases: Vec::new(),
+        active_canvas: None,
         terminal_theme: None,
     }
+}
+
+fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec<Canvas>, Option<String>)> {
+    let Some(list) = raw.get("canvases") else {
+        if raw.get("activeCanvas").is_some() {
+            return invalid("Invalid active canvas.");
+        }
+        return Ok((Vec::new(), None));
+    };
+    let Some(list) = list.as_array().filter(|list| !list.is_empty()) else {
+        return invalid("Invalid canvases.");
+    };
+    let mut canvas_ids = HashSet::new();
+    let mut owners = HashMap::new();
+    let card_ids: HashSet<_> = cards.iter().map(|card| card.id.as_str()).collect();
+    let item_ids: HashSet<_> = items.iter().map(|item| item.id.as_str()).collect();
+    let mut canvases = Vec::with_capacity(list.len());
+    for canvas in list {
+        let id = identifier(canvas.get("id"), "canvas ID")?;
+        if !canvas_ids.insert(id.clone()) {
+            return invalid("Duplicate canvas IDs.");
+        }
+        let mut name = text(canvas.get("name"), 100, "canvas name")?;
+        if name.is_empty() {
+            "Untitled canvas".clone_into(&mut name);
+        }
+        let camera = canvas.get("camera");
+        let coordinate = |key| finite(field(camera, key), -limits::COORDINATE, limits::COORDINATE);
+        let (Some(x), Some(y), Some(z)) = (coordinate("x"), coordinate("y"), finite(field(camera, "z"), 0.35, 1.5))
+        else {
+            return invalid("Invalid canvas camera.");
+        };
+        let mut members = |key, allowed: &HashSet<&str>| -> Result<Vec<String>> {
+            let Some(list) = canvas.get(key).and_then(Value::as_array) else {
+                return invalid("Invalid canvas ownership.");
+            };
+            list.iter()
+                .map(|value| {
+                    let member = identifier(Some(value), "canvas member ID")?;
+                    if !allowed.contains(member.as_str()) || owners.insert(member.clone(), id.clone()).is_some() {
+                        return invalid("Invalid canvas ownership.");
+                    }
+                    Ok(member)
+                })
+                .collect()
+        };
+        let card_ids = members("cardIds", &card_ids)?;
+        let item_ids = members("itemIds", &item_ids)?;
+        let preference = |key, allowed: &[String]| -> Result<Option<String>> {
+            match canvas.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(value) => {
+                    let member = identifier(Some(value), "canvas focus")?;
+                    if !allowed.contains(&member) {
+                        return invalid("Invalid canvas focus.");
+                    }
+                    Ok(Some(member))
+                }
+            }
+        };
+        let selected = preference("selected", &[card_ids.clone(), item_ids.clone()].concat())?;
+        let focused = preference("focused", &card_ids)?;
+        canvases.push(Canvas {
+            id,
+            name,
+            camera: Camera { x, y, z },
+            card_ids,
+            item_ids,
+            selected,
+            focused,
+        });
+    }
+    if owners.len() != cards.len() + items.len() {
+        return invalid("Invalid canvas ownership.");
+    }
+    // Neither connectors nor groups can cross a canvas boundary.
+    let mut group_owners = HashMap::new();
+    for (id, groups) in cards
+        .iter()
+        .map(|card| (&card.id, &card.groups))
+        .chain(items.iter().map(|item| (&item.id, &item.groups)))
+    {
+        for group in groups {
+            if group_owners
+                .insert(group, &owners[id])
+                .is_some_and(|owner| owner != &owners[id])
+            {
+                return invalid("Groups cannot span canvases.");
+            }
+        }
+    }
+    for item in items {
+        if let ItemKind::Line { start, end, .. } = &item.kind {
+            for endpoint in [start, end] {
+                if let Endpoint::Element(id) = endpoint
+                    && owners[id] != owners[&item.id]
+                {
+                    return invalid("Connectors cannot span canvases.");
+                }
+            }
+        }
+    }
+    let active = identifier(raw.get("activeCanvas"), "active canvas")?;
+    if !canvas_ids.contains(&active) {
+        return invalid("Invalid active canvas.");
+    }
+    Ok((canvases, Some(active)))
 }
 
 /// A new card from the UI's options: `profile`, `title`, `cwd`, `command`, `x`, and `y`.

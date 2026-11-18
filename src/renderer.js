@@ -70,7 +70,7 @@ function saveSidebarPreferences() {
     try { window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, JSON.stringify(sidebarPreferences)); }
     catch { /* A blocked or full store must not prevent using the sidebar. */ }
 }
-function renderSidebar() {
+function renderSidebar({ preserveCenter = true } = {}) {
     const width = viewport.clientWidth, height = viewport.clientHeight;
     const sidebar = $('#sidebar'), toggle = $('#sidebar-toggle');
     const collapsed = sidebarPreferences.collapsed || (!!focused && !focusSidebarRevealed);
@@ -93,8 +93,10 @@ function renderSidebar() {
     }
     if (!ready) return;
     // Changing the available width must preserve the world point at the viewport's center.
-    workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + (viewport.clientWidth - width) / 2));
-    workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + (viewport.clientHeight - height) / 2));
+    if (preserveCenter) {
+        workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + (viewport.clientWidth - width) / 2));
+        workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + (viewport.clientHeight - height) / 2));
+    }
     renderCamera();
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
@@ -131,6 +133,7 @@ function toast(message) {
 }
 async function invoke(action, payload) {
     if (!bridge) throw new Error('Open Terminal Canvas with npm start.');
+    if (payload === workspace && ['autosave', 'save', 'export', 'close'].includes(action)) payload = workspaceSnapshot();
     const result = await bridge.invoke(action, payload);
     if (result?.error) throw new Error(result.error);
     return result;
@@ -268,6 +271,7 @@ function refresh() {
         }
     }
     renderMinimap();
+    renderCanvases();
     const running = [...sessions.values()].filter(s => ['running', 'starting'].includes(s.status)).length;
     $('#card-count').textContent = workspace.cards.length;
     $('#outline-count').textContent = String(workspace.cards.length).padStart(2, '0');
@@ -443,6 +447,8 @@ function clearKeyboardCurrent() {
 // is highlighted and panned into view at the current zoom. In Focus mode it becomes the focused terminal,
 // and the canvas pans to it when Focus ends, once the toolbars it must clear are laid out again.
 function showTerminal(id) {
+    const canvas = canvasForCard(id);
+    if (canvas && canvas !== activeCanvas && !switchCanvas(canvas.id)) return false;
     const card = findCard(id);
     if (!card) return false;
     keyboardCurrent = id;
@@ -458,7 +464,7 @@ const switcherQuery = $('#switcher-query');
 let switcherActive = null, switcherMatches = [], switcherReturnFocus = null;
 // Shared entry point for the UI button, shortcut, and the context menu (#37).
 function openTerminalSwitcher() {
-    if (!ready || boardBusy() || document.querySelector('dialog[open]')) return false;
+    if (!ready || canvasMutation || boardBusy() || document.querySelector('dialog[open]')) return false;
     switcherReturnFocus = document.activeElement;
     switcherQuery.value = '';
     switcherActive = focused || selected;
@@ -603,7 +609,7 @@ function setFocus(id, { type = true } = {}) {
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
 function fitTerminal(s) {
-    if (!s?.fit || !s.element.offsetWidth || !s.element.offsetHeight) return;
+    if (!s?.fit || s.canvas !== activeCanvas || !s.element.offsetWidth || !s.element.offsetHeight) return;
     const size = s.fit.proposeDimensions();
     if (size && Number.isFinite(size.cols) && Number.isFinite(size.rows)) s.terminal.resize(Math.max(2, Math.min(500, size.cols)), Math.max(1, Math.min(300, size.rows)));
 }
@@ -619,15 +625,19 @@ function renderTerminalAppearance(card) {
     if (s.terminal) s.terminal.options.theme = { ...theme };
 }
 function renderThemeControls() { $('#workspace-theme').value = workspace?.terminalTheme || 'current'; }
+function setWorkspaceTerminalTheme(theme) {
+    for (const canvas of canvasStates) {
+        if (theme && theme !== 'current') canvas.board.terminalTheme = theme;
+        else delete canvas.board.terminalTheme;
+    }
+}
 function setTerminalTheme(theme, global = false) {
     if (!ready || boardBusy() || (theme !== '' && !themeIds.includes(theme))) return;
-    const cards = global ? workspace.cards : selectedItems(['terminal']);
+    const cards = global ? canvasStates.flatMap(canvas => canvas.board.cards) : selectedItems(['terminal']);
     if (!global && !cards.length) return;
     recordChange(() => {
-        if (global) {
-            if (theme && theme !== 'current') workspace.terminalTheme = theme;
-            else delete workspace.terminalTheme;
-        } else for (const card of cards) {
+        if (global) setWorkspaceTerminalTheme(theme);
+        else for (const card of cards) {
             // An explicit Current overrides a non-Current workspace default.
             if (theme) card.theme = theme;
             else delete card.theme;
@@ -697,7 +707,7 @@ function mount(card) {
     el.querySelector('.card-title').textContent = terminalDisplayTitle(card);
     el.querySelector('.card-title').setAttribute('aria-label', 'Rename terminal: ' + terminalDisplayTitle(card));
     el.querySelector('.card-title').onclick = () => openTitleDialog(card);
-    const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
+    const s = { element: el, canvas: activeCanvas, card, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
     if (window.Terminal && window.FitAddon) {
@@ -723,8 +733,10 @@ function mount(card) {
             if (s.status === 'running' || startupReply) bridge.input(card.id, data);
         });
         s.terminal.onResize(({ cols, rows }) => { if (['running', 'starting'].includes(s.status)) bridge.resize(card.id, cols, rows); });
+        s.terminal.onBell?.(() => markCanvasActivity(s, 'Bell'));
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
+            if (canvasShortcut(event, { detect: true })) return false;
             if (event.altKey || event.isComposing) return true;
             if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'p', 'b'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
@@ -767,6 +779,7 @@ function mount(card) {
         else if (selected !== card.id) { selected = card.id; applySelection(true); }
     });
     el.querySelectorAll('[data-action]').forEach(button => button.onclick = () => run(async () => {
+        if (canvasMutation) return;
         const action = button.dataset.action;
         if (action === 'duplicate') await duplicateTerminal(card);
         if (action === 'account') await openAccountDialog(card);
@@ -780,8 +793,9 @@ function mount(card) {
         }
         if (action === 'close') {
             if (['running', 'starting'].includes(s.status) && !await confirmAction('Close this terminal?', 'Its running shell and child processes will be stopped. Terminal output is not saved.', 'Close terminal')) return;
-            await invoke('stop', { id: card.id });
-            removeCard(card);
+            s.closing = true;
+            try { await invoke('stop', { id: card.id }); removeCard(card); }
+            finally { s.closing = false; }
         }
     }));
     const header = el.querySelector('.card-header');
@@ -833,7 +847,7 @@ function showTitle(card) {
     refresh();
 }
 function applyTitleEvent(event) {
-    const card = findCard(event.id);
+    const card = anyCard(event.id);
     if (event.titleEpoch === titleEpoch && card && card.titleMode === 'automatic' && event.titleMode === 'automatic'
         && Number.isSafeInteger(event.titleRevision) && event.titleRevision > (card.titleRevision || 0)
         && typeof event.title === 'string' && validTerminalTitle(event.title)) {
@@ -851,7 +865,7 @@ function openTitleDialog(card) {
     $('#rename-title').focus(); $('#rename-title').select();
 }
 async function renameTerminal(card, mode, title) {
-    if (titleBusy || findCard(card.id) !== card) return;
+    if (titleBusy || anyCard(card.id) !== card) return;
     if (mode === 'manual' && !validTerminalTitle(title)) throw new Error('Use a name of 1 to 100 characters without controls.');
     titleBusy = true;
     const s = sessions.get(card.id), previous = { title: card.title, titleMode: card.titleMode, titleRevision: card.titleRevision };
@@ -863,14 +877,14 @@ async function renameTerminal(card, mode, title) {
     try {
         // New stopped cards might not have reached the host's debounced autosave yet.
         await invoke('autosave', workspace);
-        if (findCard(card.id) !== card || sessions.get(card.id) !== s) return;
+        if (anyCard(card.id) !== card || sessions.get(card.id) !== s) return;
         const result = await invoke('rename-title', { id: card.id, mode, ...(titleEpoch === undefined ? {} : { titleEpoch }), ...(mode === 'manual' ? { title: card.title } : {}) });
-        if (findCard(card.id) !== card || sessions.get(card.id) !== s) return;
+        if (anyCard(card.id) !== card || sessions.get(card.id) !== s) return;
         Object.assign(card, { title: result.card.title, titleMode: result.card.titleMode, titleRevision: result.card.titleRevision });
         showTitle(card); changed();
         $('#title-dialog').close(); titleCard = null;
     } catch (error) {
-        if (findCard(card.id) === card) { Object.assign(card, previous); showTitle(card); }
+        if (anyCard(card.id) === card) { Object.assign(card, previous); showTitle(card); }
         throw error;
     } finally {
         if (s) {
@@ -914,7 +928,7 @@ async function start(card, mode = card.session ? 'resume' : 'start', launch) {
         }
         recoveryInfo(card); changed();
         if (s.status === 'starting') setStatus(card, 'running');
-        s.terminal.focus();
+        if (s.canvas === activeCanvas) s.terminal.focus();
     } catch (error) { showDirectory(s, card.cwd || 'Home directory'); setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
@@ -989,7 +1003,7 @@ function focusCanvasMenu(index) {
     buttons[canvasMenuIndex].focus();
 }
 function openCanvasMenu(point) {
-    if (!ready || focused || boardBusy() || document.querySelector('dialog[open]')) return false;
+    if (!ready || canvasMutation || focused || boardBusy() || document.querySelector('dialog[open]')) return false;
     const area = viewport.getBoundingClientRect();
     const local = { x: Math.max(0, Math.min(area.width, point.x - area.left)), y: Math.max(0, Math.min(area.height, point.y - area.top)) };
     const worldPoint = toWorld({ clientX: area.left + local.x, clientY: area.top + local.y });
@@ -1129,7 +1143,7 @@ viewport.addEventListener('wheel', event => {
     zoomFromWheel(event);
 }, { passive: false });
 async function duplicateTerminal(source) {
-    if (!ready || duplicateBusy || document.querySelector('dialog[open]')) return;
+    if (!ready || duplicateBusy || canvasMutation || document.querySelector('dialog[open]')) return;
     duplicateBusy = true;
     try {
         const result = await invoke('duplicate-directory', source);
@@ -1174,39 +1188,46 @@ function requestTerminal(event) {
 // Returns the started card and the card it opened beside (null when none), or throws why it could not open.
 async function openRequestedTerminal(event) {
     await appReady;
-    let parent = findCard(event.external ? event.parent : event.id) || null;
-    const closed = 'The terminal that asked for a new terminal has closed.';
-    if (!event.external && !parent) throw new Error(closed);
-    const requester = () => parent?.title || 'A program';
+    const parentCanvas = canvasForCard(event.external ? event.parent : event.id);
     await whenBoardIdle();
-    const size = { w: 660, h: 430 };
-    const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
-    const spot = parent ? Geometry.placeBeside(parent, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-    const { card } = await invoke('create-card', { profile: event.profile, title: event.title, ...(event.titleMode ? { titleMode: event.titleMode } : {}), cwd: event.cwd, command: event.command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
-    if (parent && !workspace.cards.includes(parent)) {
-        if (!event.external) throw new Error(closed);
-        parent = null;
-    }
-    await whenBoardIdle();
-    // A terminal opened beside another signs in to Claude as that terminal does.
-    if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
-    workspace.cards.push(card); mount(card);
-    if (parent && workspace.items.length < ITEM_LIMIT) {
-        recordHistory();
-        const arrow = { id: newId(), type: 'line', start: { id: parent.id }, end: { id: card.id }, arrow: true };
-        workspace.items.push(arrow); mountLine(arrow);
-    }
-    renderLines(); select(card.id); changed(); refresh();
-    if (focused) setFocus(card.id);
-    else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
-    toast(`${requester()} opened a new terminal: ${card.title}.`);
-    await start(card, undefined, event.request);
-    return { card, parent };
+    if (parentCanvas && parentCanvas !== activeCanvas && !switchCanvas(parentCanvas.id)) throw new Error('Finish the current canvas action, then request the terminal again.');
+    if (canvasLocked()) throw new Error('Finish the current canvas action, then request the terminal again.');
+    canvasMutation = true;
+    try {
+        let parent = findCard(event.external ? event.parent : event.id) || null;
+        const closed = 'The terminal that asked for a new terminal has closed.';
+        if (!event.external && !parent) throw new Error(closed);
+        const requester = () => parent?.title || 'A program';
+        await whenBoardIdle();
+        const size = { w: 660, h: 430 };
+        const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
+        const spot = parent ? Geometry.placeBeside(parent, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
+        const { card } = await invoke('create-card', { profile: event.profile, title: event.title, ...(event.titleMode ? { titleMode: event.titleMode } : {}), cwd: event.cwd, command: event.command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+        if (parent && !workspace.cards.includes(parent)) {
+            if (!event.external) throw new Error(closed);
+            parent = null;
+        }
+        await whenBoardIdle();
+        // A terminal opened beside another signs in to Claude as that terminal does.
+        if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
+        workspace.cards.push(card); mount(card);
+        if (parent && workspaceItemCount() < ITEM_LIMIT) {
+            recordHistory();
+            const arrow = { id: newId(), type: 'line', start: { id: parent.id }, end: { id: card.id }, arrow: true };
+            workspace.items.push(arrow); mountLine(arrow);
+        }
+        renderLines(); select(card.id); changed(); refresh();
+        if (focused) setFocus(card.id);
+        else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
+        toast(`${requester()} opened a new terminal: ${card.title}.`);
+        await start(card, undefined, event.request);
+        return { card, parent };
+    } finally { canvasMutation = false; }
 }
 // Folder review preserves a duplicate's text size, appearance, and account.
 let launchFontSize, launchAccount, launchColor, launchTheme, launchPoint;
 function openLaunch(profileId = 'shell', { fontSize, claudeAccount, color, theme, point } = {}) {
-    if (!ready || document.querySelector('dialog[open]')) return;
+    if (!ready || canvasMutation || document.querySelector('dialog[open]')) return;
     closeCanvasMenu();
     launchFontSize = fontSize; launchAccount = claudeAccount; launchColor = color; launchTheme = theme; launchPoint = point;
     launchTitleEdited = false;
@@ -1306,16 +1327,20 @@ $('#account-signin').onclick = () => {
 };
 async function openAccountSignIn(beside, name) {
     await whenBoardIdle();
-    const size = { w: 660, h: 430 };
-    const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
-    const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-    const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
-    card.claudeAccount = name;
-    workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
-    if (focused) setFocus(card.id);
-    else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
-    toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
-    await start(card);
+    if (canvasLocked()) throw new Error('Finish the current canvas action, then sign in again.');
+    canvasMutation = true;
+    try {
+        const size = { w: 660, h: 430 };
+        const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
+        const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
+        const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+        card.claudeAccount = name;
+        workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
+        if (focused) setFocus(card.id);
+        else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
+        toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
+        await start(card);
+    } finally { canvasMutation = false; }
 }
 $('#account-dialog').addEventListener('close', () => { accountCard = null; });
 // The agent setup installs the Terminal Canvas skill where AI agents load skills for every session.
@@ -1427,22 +1452,30 @@ function loadWorkspace(board, epoch) {
     if (editing) document.activeElement?.blur();
     workspace = board;
     workspace.items = Array.isArray(board.items) ? board.items : [];
-    clearHistory();
-    renderThemeControls();
     // The browser preview stores unvalidated layouts, which may still use format 2's single group.
     for (const e of [...workspace.cards, ...workspace.items]) {
         if (e.group && !e.groups) e.groups = [e.group];
         delete e.group;
     }
-    setFocus(null);
     for (const id of sessions.keys()) dispose(id);
     for (const id of [...itemViews.keys()]) disposeItem(id);
     topCardZIndex = 0;
-    selected = null; selection = new Set(); $('#workspace-name').value = board.name;
-    board.cards.forEach(mount); workspace.items.forEach(mountItem); renderCamera(); applySelection(false);
+    selected = null; focused = null; selection = new Set(); $('#workspace-name').value = board.name;
+    canvasExtended = Array.isArray(board.canvases) && board.canvases.length > 0;
+    const cards = new Map(board.cards.map(card => [card.id, card])), items = new Map(board.items.map(item => [item.id, item]));
+    canvasStates = canvasExtended ? board.canvases.map(canvas => canvasState({ ...canvas,
+        cards: canvas.cardIds.map(id => cards.get(id)), items: canvas.itemIds.map(id => items.get(id)) }))
+        : [canvasState({ camera: board.camera, cards: board.cards, items: board.items })];
+    setWorkspaceTerminalTheme(board.terminalTheme);
+    for (const canvas of canvasStates) {
+        activeCanvas = canvas; workspace = canvas.board; workspace.name = board.name;
+        workspace.cards.forEach(mount); workspace.items.forEach(mountItem);
+    }
+    revealCanvas(canvasStates.find(canvas => canvas.id === board.activeCanvas) || canvasStates[0], { restoreKeyboard: false });
 }
 async function canReplace() {
-    if (!workspace.cards.length && !workspace.items.length) return true;
+    if (canvasMutation || boardBusy() || imageImports || formBusy || duplicateBusy) return false;
+    if (canvasStates.length === 1 && !workspace.cards.length && !workspace.items.length) return true;
     return confirmAction('Replace this workspace?', 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
 }
 async function save() { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.'); }
@@ -1450,6 +1483,22 @@ $('#save').onclick = () => run(save);
 $('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); } });
 $('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('new'); loadWorkspace(result.workspace, result.titleEpoch); changed(); });
 $('#workspace-name').oninput = () => { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; changed(); };
+$('#canvas-list').onchange = () => { if (!switchCanvas($('#canvas-list').value)) renderCanvases(); };
+$('#canvas-add').onclick = () => createCanvas();
+$('#canvas-rename').onclick = renameCanvas;
+$('#canvas-earlier').onclick = () => reorderCanvas(-1);
+$('#canvas-later').onclick = () => reorderCanvas(1);
+$('#canvas-delete').onclick = () => run(deleteCanvas);
+document.addEventListener('focusin', event => {
+    if (activeCanvas && !event.target.closest('.canvas-manager')) activeCanvas.typing = !!event.target.closest('.xterm');
+});
+$('#canvas-form').onsubmit = event => {
+    event.preventDefault();
+    const name = $('#canvas-name').value.trim() || 'Untitled canvas';
+    if (name.length > 100 || /[\x00-\x1f]/.test(name)) return toast('Invalid canvas name.');
+    activeCanvas.name = name; canvasExtended = true;
+    $('#canvas-dialog').close(); renderCanvases(); changed();
+};
 $('#search').oninput = () => { if (ready) refresh(); };
 $('#canvas-nav').onclick = () => { if (ready) fitCanvas(); };
 $('#add-terminal').onclick = $('#empty-add').onclick = () => openLaunch();
@@ -1512,7 +1561,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
@@ -1531,6 +1580,7 @@ document.addEventListener('keydown', event => {
         if (openCanvasMenu(canvasKeyboardPoint())) event.preventDefault();
         return;
     }
+    if (canvasShortcut(event)) return;
     // A held Enter never presses a terminal's buttons: Enter on the board moves focus to a stopped
     // terminal's Start or Resume button, and only a separate press may start it.
     if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
@@ -1618,7 +1668,7 @@ if (bridge) {
             } else applyTitleEvent(event);
         }
         if (event.type === 'metadata') {
-            const card = workspace?.cards.find(c => c.id === event.id);
+            const card = anyCard(event.id);
             if (card) {
                 if (s) s.metadataRevision++;
                 if (s && !event.initial && event.cwd !== card.cwd) s.cwd = event.cwd;
@@ -1628,6 +1678,7 @@ if (bridge) {
             }
         }
         if (event.type === 'data') {
+            markCanvasActivity(s, 'New output');
             if (s?.status === 'starting') {
                 const output = (s.startupQueryTail || '') + event.data;
                 s.startupCursorQueries += [...output.matchAll(/\x1b\[6n/g)].length;
@@ -1637,7 +1688,7 @@ if (bridge) {
             else bridge.acknowledge(event.id, event.data.length);
         }
         if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
-        if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); setStatus(workspace.cards.find(c => c.id === event.id), 'exited'); }
+        if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); markCanvasActivity(s, 'Exited'); setStatus(s.card, 'exited'); }
         if (event.type === 'error') toast(event.message);
         if (event.type === 'update') showUpdate(event);
         if (event.type === 'launch') requestTerminal(event);
