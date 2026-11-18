@@ -62,6 +62,7 @@ function markCanvasActivity(s, activity) {
     renderCanvases();
 }
 function revealCanvas(canvas, { restoreKeyboard = true } = {}) {
+    closeCanvasMenu();
     const typing = canvas.typing;
     activeCanvas = canvas; workspace = canvas.board; canvas.activity = '';
     selected = canvas.selected || null; selection = canvas.selection; keyboardCurrent = canvas.keyboardCurrent || null;

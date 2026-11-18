@@ -349,6 +349,7 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
+    elements.get('#canvas-menu').hidden = true;
     elements.get('#minimap-map').clientWidth = 198;
     elements.get('#minimap-map').clientHeight = 120;
     const calls = [];
@@ -379,6 +380,248 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     await new Promise(resolve => setImmediate(resolve));
     return { elements, calls, context, onEvent, document, window, bridge, documentListeners, frames, event: payload => bridge.event(payload) };
 }
+
+const canvasTarget = selector => ({ closest: query => query.split(',').map(part => part.trim()).includes(selector) ? {} : null });
+function openMenu(elements, values = {}) {
+    let prevented = false;
+    elements.get('#viewport').dispatch('contextmenu', { button: 2, clientX: 400, clientY: 300, preventDefault() { prevented = true; }, ...values });
+    return prevented;
+}
+
+test('canvas menu opens only on empty background and uses the sidebar launch profiles', async () => {
+    const { elements, calls } = await boot(createWorkspace());
+    const menu = elements.get('#canvas-menu'), profiles = elements.get('#canvas-menu-profiles').children;
+    assert.equal(menu.hidden, true);
+    assert.deepEqual(profiles.map(button => button.children[1].textContent), PROFILES.map(profile => profile.name));
+    for (const button of profiles) assert.equal(button.attributes.get('role'), 'menuitem');
+    for (const selector of ['.terminal-card', '.canvas-item', '.canvas-line', '.minimap', '.canvas-toolbar', '.create-toolbar', '.style-toolbar', '.exit-focus', 'button', 'input', '[contenteditable="true"]']) {
+        assert.equal(openMenu(elements, { target: canvasTarget(selector) }), false, selector);
+        assert.equal(menu.hidden, true, selector);
+    }
+    assert.equal(openMenu(elements), true);
+    assert.equal(menu.hidden, false);
+    assert.equal(profiles[0].focusCount, 1);
+    assert.equal(profiles[0].tabIndex, 0);
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('canvas menu clears old launch points on a canvas switch and creates only on the active canvas', async () => {
+    const board = twoCanvases();
+    const { elements, context, calls } = await boot(board, { respond: (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null });
+    vm.runInContext('start = async () => {}; canvasMutation = true', context);
+    assert.equal(openMenu(elements), false, 'an asynchronous canvas mutation cannot open a menu');
+    vm.runInContext('canvasMutation = false', context);
+    assert.equal(openMenu(elements), true);
+    assert.ok(json(context, 'canvasMenuPoint'));
+    vm.runInContext('switchCanvas("canvas-1")', context);
+    assert.equal(elements.get('#canvas-menu').hidden, true);
+    assert.equal(json(context, 'canvasMenuPoint'), null);
+    assert.equal(openMenu(elements), true);
+    const point = json(context, 'canvasMenuPoint');
+    elements.get('#canvas-menu-profiles').children[0].click();
+    assert.equal(vm.runInContext('switchCanvas("canvas-0")', context), false, 'the launch dialog keeps its owning canvas active');
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    const request = calls.find(call => call.action === 'create-card').payload;
+    assert.deepEqual({ x: request.x, y: request.y }, point);
+    assert.deepEqual(json(context, 'canvasStates.map(canvas => canvas.board.cards.length)'), [1, 2]);
+    assert.equal(json(context, 'sessions.get(workspace.cards.at(-1).id).canvas.id'), 'canvas-1');
+});
+
+test('canvas menu is unavailable before initialization, during drags, in Focus, or behind a dialog', async () => {
+    const loading = await boot(createWorkspace(), { initialized: false });
+    assert.equal(openMenu(loading.elements), false);
+    const board = createWorkspace(); board.cards.push(createCard());
+    const { elements, context } = await boot(board);
+    vm.runInContext('activeDrags = 1', context);
+    assert.equal(openMenu(elements), false);
+    vm.runInContext('activeDrags = 0; setFocus(workspace.cards[0].id)', context);
+    assert.equal(openMenu(elements), false);
+    vm.runInContext('setFocus(null); openLaunch()', context);
+    assert.equal(openMenu(elements), false);
+});
+
+test('hand tool hit testing keeps cards and shapes out of the background menu', async () => {
+    const board = createWorkspace(); board.camera = { x: 0, y: 0, z: 1 };
+    board.cards.push(createCard({ x: 100, y: 100 }));
+    board.items.push({ id: 'shape', type: 'shape', shape: 'rect', x: 800, y: 100, w: 150, h: 100, text: '' });
+    const { elements, context } = await boot(board);
+    vm.runInContext('setTool("hand")', context);
+    // In hand mode the browser targets the viewport even above an existing item.
+    assert.equal(openMenu(elements, { clientX: 200, clientY: 200 }), false);
+    assert.equal(openMenu(elements, { clientX: 850, clientY: 150 }), false);
+    assert.equal(openMenu(elements, { clientX: 1000, clientY: 200 }), true);
+});
+
+test('menu creation retains the clicked world point through the launch form at different zooms', async () => {
+    for (const z of [.35, 1, 1.5]) {
+        const board = createWorkspace(); board.camera = { x: -160, y: 85, z };
+        const { elements, context, calls } = await boot(board, { respond: (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null });
+        const viewport = elements.get('#viewport');
+        viewport.getBoundingClientRect = () => ({ left: 250, top: 140, width: 1100, height: 720 });
+        vm.runInContext('start = async card => invoke("start", { card })', context);
+        assert.equal(openMenu(elements, { clientX: 683, clientY: 465 }), true);
+        const expected = { x: (683 - 250 + 160) / z, y: (465 - 140 - 85) / z };
+        elements.get('#canvas-menu-profiles').children[1].click();
+        assert.equal(elements.get('#canvas-menu').hidden, true);
+        assert.equal(elements.get('#launch-dialog').open, true);
+        assert.equal(elements.get('#profile').value, PROFILES[1].id);
+        assert.equal(elements.get('#command').value, PROFILES[1].command);
+        assert.equal(calls.length, 1, 'choosing a profile does not start anything');
+        // A camera change while the form is open must not move the requested world point.
+        vm.runInContext('workspace.camera = { x: 12, y: 34, z: 1.2 }', context);
+        elements.get('#terminal-title').value = 'Reviewed name'; elements.get('#cwd').value = '/project';
+        elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+        const request = calls.find(call => call.action === 'create-card').payload;
+        assert.deepEqual({ x: request.x, y: request.y }, expected);
+        assert.equal(request.title, 'Reviewed name'); assert.equal(request.cwd, '/project');
+        assert.equal(calls.filter(call => call.action === 'start').length, 1);
+    }
+});
+
+test('canceling a menu launch does not create a card or change the next normal launch position', async () => {
+    const { elements, calls, context } = await boot(createWorkspace(), { respond: (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null });
+    vm.runInContext('start = async () => {}', context);
+    openMenu(elements); elements.get('#canvas-menu-profiles').children[0].click();
+    elements.get('#launch-dialog').close();
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+    elements.get('#add-terminal').click();
+    const expected = json(context, '({ x: Math.round((60 - workspace.camera.x) / workspace.camera.z), y: Math.round((40 - workspace.camera.y) / workspace.camera.z) })');
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    const request = calls.find(call => call.action === 'create-card').payload;
+    assert.deepEqual({ x: request.x, y: request.y }, expected);
+});
+
+test('menu launches reset reviewed duplicate appearance and duplicate review resets menu placement', async () => {
+    const board = createWorkspace(); board.terminalTheme = 'midnight';
+    board.cards.push(createCard({ fontSize: 20, color: 'red', theme: 'paper', claudeAccount: 'Work' }));
+    const { elements, calls, context } = await boot(board, { terminals: true, respond: (action, payload) =>
+        action === 'create-card' ? { card: createCard(payload) }
+            : action === 'duplicate-directory' ? { cwd: '/review', warning: 'Review folder.' } : null });
+    vm.runInContext('start = async () => {}', context);
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    elements.get('#launch-dialog').close();
+    assert.equal(openMenu(elements), true);
+    const point = json(context, 'canvasMenuPoint');
+    elements.get('#canvas-menu-profiles').children[0].click();
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    const request = calls.find(call => call.action === 'create-card').payload;
+    assert.deepEqual({ x: request.x, y: request.y }, point);
+    assert.deepEqual(json(context, '[workspace.cards.at(-1).fontSize ?? null, workspace.cards.at(-1).color ?? null, workspace.cards.at(-1).theme ?? null, workspace.cards.at(-1).claudeAccount ?? null]'), [null, null, null, null]);
+    assert.equal(json(context, 'sessions.get(workspace.cards.at(-1).id).terminal.options.theme.background'), vm.runInContext('window.TerminalCanvasThemes.midnight.background', context));
+
+    // A cancelled menu launch must not supply the position for a reviewed duplicate.
+    openMenu(elements); elements.get('#canvas-menu-profiles').children[0].click();
+    elements.get('#launch-dialog').close();
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    const expected = json(context, '({ x: Math.round((60 - workspace.camera.x) / workspace.camera.z + (workspace.cards.length % 4) * 35), y: Math.round((40 - workspace.camera.y) / workspace.camera.z + (workspace.cards.length % 4) * 35) })');
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    const duplicate = calls.filter(call => call.action === 'create-card').at(-1).payload;
+    assert.deepEqual({ x: duplicate.x, y: duplicate.y }, expected);
+    assert.deepEqual(json(context, '[workspace.cards.at(-1).fontSize, workspace.cards.at(-1).color, workspace.cards.at(-1).theme, workspace.cards.at(-1).claudeAccount]'), [20, 'red', 'paper', 'Work']);
+    assert.equal(json(context, 'sessions.get(workspace.cards.at(-1).id).terminal.options.theme.background'), vm.runInContext('window.TerminalCanvasThemes.paper.background', context));
+});
+
+test('canvas Find opens the shared switcher; a result reveals and highlights without typing', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ x: 5000, y: -3000, title: 'Far away' }));
+    const { elements, calls, context } = await boot(board);
+    const query = elements.get('#switcher-query');
+    const before = json(context, 'workspace.camera');
+    openMenu(elements); elements.get('#canvas-menu-find').click();
+    assert.equal(elements.get('#canvas-menu').hidden, true);
+    assert.equal(elements.get('#terminal-switcher').open, true);
+    assert.equal(query.focusCount, 1);
+    query.value = 'Far away'; query.oninput(); elements.get('#switcher-results').children[0].click();
+    assert.equal(elements.get('#terminal-switcher').open, false);
+    assert.equal(json(context, 'keyboardCurrent'), board.cards[0].id);
+    assert.equal(json(context, 'selected'), board.cards[0].id);
+    assert.equal(json(context, 'workspace.camera.z'), before.z);
+    assert.notDeepEqual(json(context, 'workspace.camera'), before);
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).element.classList.contains("keyboard-current")', context), true);
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('canvas Find preserves collapsed sidebar preferences and cancellation restores canvas focus', async () => {
+    const { elements, document, context } = await boot(createWorkspace(), { localStorage: sidebarStorage() });
+    for (const selector of ['#workspace-toggle', '#profiles-toggle', '#outline-toggle', '#sidebar-toggle']) elements.get(selector).click();
+    const before = json(context, 'workspace.camera');
+    assert.equal(openMenu(elements), true);
+    elements.get('#canvas-menu-find').click();
+    assert.equal(elements.get('#canvas-menu').hidden, true);
+    assert.equal(document.activeElement, elements.get('#switcher-query'));
+    assert.equal(elements.get('#terminal-switcher').open, true);
+    assert.equal(elements.get('#sidebar').hidden, true);
+    assert.equal(elements.get('#outline-toggle').attributes.get('aria-expanded'), 'false');
+    assert.equal(elements.get('#workspace-section').hidden, true);
+    assert.equal(elements.get('#profile-list').hidden, true);
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Escape' });
+    assert.equal(document.activeElement, elements.get('#viewport'));
+    assert.deepEqual(json(context, 'workspace.camera'), before);
+});
+
+test('Menu key and Shift+F10 open at the last background point or view center and keep terminal keys alone', async () => {
+    const { elements, document, context } = await boot(createWorkspace());
+    const viewport = elements.get('#viewport'), menu = elements.get('#canvas-menu');
+    const point = (x, y) => json(context, `toWorld({ clientX: ${x}, clientY: ${y} })`);
+    document.dispatch('keydown', { key: 'F10', shiftKey: true, isComposing: true, target: viewport });
+    assert.equal(menu.hidden, true, 'text composition keeps its keys');
+    for (const values of [{ key: 'ContextMenu' }, { key: 'F10', shiftKey: true }]) {
+        document.dispatch('keydown', { ...values, target: viewport });
+        assert.equal(menu.hidden, false);
+        assert.deepEqual(json(context, 'canvasMenuPoint'), point(550, 360));
+        document.dispatch('keydown', { key: 'Escape', target: viewport });
+    }
+    viewport.dispatch('pointermove', { clientX: 380, clientY: 220 });
+    document.dispatch('keydown', { key: 'ContextMenu', target: viewport });
+    assert.deepEqual(json(context, 'canvasMenuPoint'), point(380, 220));
+    document.dispatch('keydown', { key: 'Escape', target: viewport });
+    for (const selector of ['.terminal-card', '.canvas-item', '.minimap', 'input', 'button']) {
+        document.dispatch('keydown', { key: 'F10', shiftKey: true, target: canvasTarget(selector) });
+        assert.equal(menu.hidden, true, selector);
+    }
+});
+
+test('menu keyboard navigation wraps, activates once, isolates canvas shortcuts, and dismisses', async () => {
+    const { elements, document, context } = await boot(createWorkspace());
+    const viewport = elements.get('#viewport'), menu = elements.get('#canvas-menu');
+    const buttons = [...elements.get('#canvas-menu-profiles').children, elements.get('#canvas-menu-find')];
+    const key = (key, values = {}) => document.dispatch('keydown', { key, target: viewport, ...values });
+    openMenu(elements);
+    key('ArrowUp', { isComposing: true }); assert.equal(buttons[0].tabIndex, 0);
+    key('ArrowUp'); assert.equal(buttons.at(-1).tabIndex, 0);
+    key('ArrowDown'); assert.equal(buttons[0].tabIndex, 0);
+    key('ArrowDown'); assert.equal(buttons[1].tabIndex, 0);
+    key('Home'); assert.equal(buttons[0].tabIndex, 0);
+    key('End'); assert.equal(buttons.at(-1).tabIndex, 0);
+    key('n'); assert.equal(json(context, 'activeTool'), 'select');
+    key('Delete'); assert.equal(menu.hidden, false);
+    key('Enter', { repeat: true }); assert.equal(menu.hidden, false);
+    key('Enter'); assert.equal(menu.hidden, true); assert.equal(elements.get('#switcher-query').focusCount, 1);
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Escape' });
+    openMenu(elements); key('Escape'); assert.equal(menu.hidden, true); assert.ok(viewport.focusCount);
+    openMenu(elements); key('Tab'); assert.equal(menu.hidden, true);
+    openMenu(elements); key(' '); assert.equal(menu.hidden, true); assert.equal(elements.get('#launch-dialog').open, true);
+});
+
+test('menu clamps its displayed bounds without moving the launch point and closes on outside actions', async () => {
+    const { elements, document, window, context } = await boot(createWorkspace());
+    const menu = elements.get('#canvas-menu');
+    menu.getBoundingClientRect = () => ({ width: 230, height: 280 });
+    openMenu(elements, { clientX: 1098, clientY: 719 });
+    assert.equal(menu.style.left, '870px'); assert.equal(menu.style.top, '440px');
+    assert.deepEqual(json(context, 'canvasMenuPoint'), json(context, 'toWorld({ clientX: 1098, clientY: 719 })'));
+    document.dispatch('pointerdown', { target: canvasTarget('#canvas-menu') });
+    assert.equal(menu.hidden, false, 'menu clicks are not outside clicks');
+    document.dispatch('scroll', { target: canvasTarget('#canvas-menu') });
+    document.dispatch('wheel', { target: canvasTarget('#canvas-menu') });
+    assert.equal(menu.hidden, false, 'a profile list taller than the window can still scroll');
+    const dismissals = [
+        () => document.dispatch('pointerdown'), () => document.dispatch('wheel'), () => document.dispatch('scroll'),
+        () => window.dispatch('blur'), () => window.dispatch('resize'), () => vm.runInContext('zoom(1.1)', context)
+    ];
+    for (const dismiss of dismissals) { openMenu(elements); dismiss(); assert.equal(menu.hidden, true); }
+    elements.get('#viewport').clientWidth = 150; elements.get('#viewport').clientHeight = 100;
+    openMenu(elements); assert.equal(menu.style.left, '0px'); assert.equal(menu.style.top, '0px');
+});
 
 test('restored AI sessions offer Resume and a fresh shell without launching anything', async () => {
     const workspace = createWorkspace();
@@ -1465,9 +1708,9 @@ async function bootSizedTerminals(board, options = {}) {
     return booted;
 }
 
-// Model viewport capture -> native target -> viewport bubble, so a target that stops propagation
+// Model document/viewport capture -> native target -> viewport bubble, so a target that stops propagation
 // (xterm and the minimap both can) cannot hide an incorrectly registered canvas gesture listener.
-function canvasWheel({ elements }) {
+function canvasWheel({ elements, document }) {
     const viewport = elements.get('#viewport');
     let time = 0;
     return (values = {}) => {
@@ -1476,6 +1719,8 @@ function canvasWheel({ elements }) {
         const event = { target: viewport, deltaX: 0, deltaY: -100, deltaMode: 0, clientX: 400, clientY: 300,
             ctrlKey: false, metaKey: false, timeStamp: time, defaultPrevented: false,
             preventDefault() { this.defaultPrevented = true; }, stopPropagation() { stopped = true; }, ...values };
+        document.dispatch('wheel', event);
+        if (stopped) return event;
         const handlers = [...viewport.listeners.get('wheel')];
         for (const handler of handlers.filter(fn => viewport.listenerOptions.get(fn)?.capture)) {
             handler(event); if (stopped) return event;
@@ -1512,6 +1757,27 @@ function wheelSurface(selector, root = new Element()) {
     target.closest = selectors => selectors.split(',').some(value => value.trim() === selector) ? root : null;
     return target;
 }
+
+test('plain wheel dismisses the canvas menu before zoom while its profile list keeps native scrolling', async () => {
+    const h = await boot(createWorkspace()), wheel = canvasWheel(h);
+    const menu = h.elements.get('#canvas-menu');
+    const before = json(h.context, 'workspace.camera');
+    openMenu(h.elements);
+    const profile = wheelSurface('button');
+    const closest = profile.closest;
+    profile.closest = selectors => selectors === '#canvas-menu' ? menu : closest(selectors);
+    assert.equal(wheel({ target: profile }).defaultPrevented, false);
+    assert.equal(menu.hidden, false, 'scrolling menu profiles leaves the menu open');
+    assert.deepEqual(json(h.context, 'workspace.camera'), before);
+    wheel({ deltaY: -1, timeStamp: 300 });
+    assert.equal(menu.hidden, true, 'document capture dismisses even below the zoom threshold');
+    assert.deepEqual(json(h.context, 'workspace.camera'), before);
+    openMenu(h.elements);
+    wheel({ timeStamp: 600 });
+    assert.equal(menu.hidden, true);
+    assert.equal(json(h.context, 'canvasMenuPoint'), null, 'zoom cannot leave a stale launch point');
+    assert.ok(json(h.context, 'workspace.camera.z') > before.z);
+});
 
 test('plain wheel zooms empty canvas through the modifier path around the real pointer, with bounds', async () => {
     const plain = await boot(createWorkspace()), modified = await boot(createWorkspace());
