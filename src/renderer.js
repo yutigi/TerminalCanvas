@@ -834,11 +834,20 @@ function openLaunch(profileId = 'shell', { fontSize, claudeAccount } = {}) {
 /* ---------- Claude accounts ---------- */
 // Each account is a separate Claude Code configuration folder the host sets as CLAUDE_CONFIG_DIR
 // when the card's shell starts. A card without `claudeAccount` uses the shell's usual sign-in.
-let claudeAccounts = [], accountCard = null, accountBusy = false;
+// `claudeSignedIn` maps an account to the email it signed in with, for display only.
+let claudeAccounts = [], claudeSignedIn = {}, accountCard = null, accountBusy = false;
 async function loadClaudeAccounts(create) {
     const result = await invoke('claude-accounts', create === undefined ? {} : { create });
     claudeAccounts = Array.isArray(result?.accounts) ? result.accounts.filter(name => typeof name === 'string') : [];
+    claudeSignedIn = result?.signedIn && typeof result.signedIn === 'object' ? result.signedIn : {};
     return result || {};
+}
+function renderAccountStatus() {
+    const name = $('#account-select').value, email = name && typeof claudeSignedIn[name] === 'string' ? claudeSignedIn[name] : '';
+    $('#account-status').textContent = !name ? 'Uses the sign-in your shell already has.'
+        : email ? `Signed in as ${email}.` : 'Not signed in yet. Sign in once with your browser; the sign-in is kept for this account.';
+    $('#account-signin').innerHTML = icon('user') + (email ? 'Sign in again' : 'Sign in with browser');
+    $('#account-signin').disabled = !name || accountBusy;
 }
 function accountOption(label, value) {
     const option = document.createElement('option'); option.value = value; option.textContent = label;
@@ -866,14 +875,14 @@ async function openAccountDialog(card) {
     if (findCard(card.id) !== card || document.querySelector('dialog[open]')) return;
     accountCard = card;
     $('#account-description').textContent = `Choose the Claude Code sign-in “${card.title}” uses.`;
-    fillAccountSelect($('#account-select'), card.claudeAccount);
+    fillAccountSelect($('#account-select'), card.claudeAccount); renderAccountStatus();
     $('#account-name').value = ''; $('#account-error').hidden = true;
     $('#account-dialog').showModal();
 }
 function addAccount() {
     const name = $('#account-name').value.trim();
     if (!name || accountBusy) return;
-    accountBusy = true; $('#account-add').disabled = true;
+    accountBusy = true; $('#account-add').disabled = true; renderAccountStatus();
     run(async () => {
         try {
             const result = await loadClaudeAccounts(name);
@@ -881,21 +890,46 @@ function addAccount() {
             $('#account-name').value = ''; $('#account-error').hidden = true;
         } catch (error) {
             $('#account-error').textContent = error.message; $('#account-error').hidden = false;
-        } finally { accountBusy = false; $('#account-add').disabled = false; }
+        } finally { accountBusy = false; $('#account-add').disabled = false; renderAccountStatus(); }
     });
 }
 $('#account-add').onclick = addAccount;
 $('#account-name').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addAccount(); } });
-$('#account-form').onsubmit = event => {
-    event.preventDefault();
+$('#account-select').onchange = renderAccountStatus;
+// Saves the dialog's choice on its card. Returns the card, or null when it was closed meanwhile.
+function applyAccountChoice() {
     const card = accountCard, value = $('#account-select').value;
     accountCard = null; $('#account-dialog').close();
-    if (!card || findCard(card.id) !== card || (card.claudeAccount || '') === value) return;
+    if (!card || findCard(card.id) !== card) return null;
+    if ((card.claudeAccount || '') === value) return card;
     if (value) card.claudeAccount = value; else delete card.claudeAccount;
     renderAccount(card); changed();
     const s = sessions.get(card.id);
     if (['running', 'starting'].includes(s?.status)) toast(`“${card.title}” will use ${value ? `the Claude account “${value}”` : 'the default Claude sign-in'} the next time it starts.`);
+    return card;
+}
+$('#account-form').onsubmit = event => { event.preventDefault(); applyAccountChoice(); };
+// Browser sign-in, as Claude Code's own `claude auth login` does it, in a terminal beside the card
+// that runs as the account: the sign-in lands in that account's folder and stays there.
+$('#account-signin').onclick = () => {
+    const name = $('#account-select').value;
+    if (!name || accountBusy) return;
+    const card = applyAccountChoice();
+    run(() => openAccountSignIn(card, name));
 };
+async function openAccountSignIn(beside, name) {
+    await whenBoardIdle();
+    const size = { w: 660, h: 430 };
+    const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
+    const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
+    const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+    card.claudeAccount = name;
+    workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
+    if (focused) setFocus(card.id);
+    else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
+    toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
+    await start(card);
+}
 $('#account-dialog').addEventListener('close', () => { accountCard = null; });
 $('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });

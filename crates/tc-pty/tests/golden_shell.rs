@@ -60,8 +60,32 @@ fn bash_text_adds_the_codex_start_hook_and_runs_native_hooks() {
     }
 }
 
+/// Claude's management commands run unwrapped: they start no session and reject `--settings`.
+const POWERSHELL_CLAUDE_COMMANDS: &str = "    # Claude's management commands, such as `claude auth login`, start no session and reject --settings.\n    if ($provider -eq 'claude' -and $arguments.Count -gt 0 -and $arguments[0] -cin @('agents', 'attach', 'auth', 'auto-mode', 'doctor', 'gateway', 'import', 'install', 'logs', 'mcp', 'plugin', 'plugins', 'purge', 'respawn', 'rm', 'setup-token', 'stop', 'kill', 'ultrareview', 'update', 'upgrade')) { & $executable @arguments; return }\n";
+const BASH_CLAUDE_COMMANDS: &str = "    # Claude's management commands, such as `claude auth login`, start no session and reject --settings.\n    if [ \"$provider\" = claude ]; then case \"$1\" in agents|attach|auth|auto-mode|doctor|gateway|import|install|logs|mcp|plugin|plugins|purge|respawn|rm|setup-token|stop|kill|ultrareview|update|upgrade) \"$executable\" \"$@\"; return;; esac; fi\n";
+
 /// Keep the frozen Node oracle intact and make the new launch-only behavior explicit.
 fn with_codex_hook(source: String, windows: bool) -> String {
+    with_claude_commands(with_codex_start_hook(source, windows), windows)
+}
+
+fn with_claude_commands(source: String, windows: bool) -> String {
+    if windows {
+        source.replacen(
+            "    $env:TC_LAUNCH_TOKEN = [guid]",
+            &format!("{POWERSHELL_CLAUDE_COMMANDS}    $env:TC_LAUNCH_TOKEN = [guid]"),
+            1,
+        )
+    } else {
+        source.replacen(
+            "    token=$(cat /proc",
+            &format!("{BASH_CLAUDE_COMMANDS}    token=$(cat /proc"),
+            1,
+        )
+    }
+}
+
+fn with_codex_start_hook(source: String, windows: bool) -> String {
     if windows {
         source
             .replace("    $extra = @()", "    $prefix = @()\n    $extra = @()")

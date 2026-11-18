@@ -88,8 +88,9 @@
             <div class="dialog-heading"><span class="dialog-symbol" data-icon="user"></span><button type="button" class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div>
             <h2>Claude account</h2><p id="account-description" class="dialog-description">Choose the Claude Code sign-in this terminal uses.</p>
             <label class="field-label" for="account-select">Account</label><select id="account-select"></select>
+            <div class="account-signin"><p id="account-status" class="field-hint" role="status"></p><button class="button" type="button" id="account-signin"></button></div>
             <label class="field-label" for="account-name">Add an account <span>optional</span></label><div class="folder-field"><input id="account-name" maxlength="40" placeholder="e.g. Work" spellcheck="false" autocomplete="off"><button class="button" type="button" id="account-add"><span data-icon="plus"></span>Add</button></div>
-            <p class="field-hint">Each account keeps its own sign-in, settings, and session history. Run <code>/login</code> once in a terminal that uses a new account. A change takes effect the next time the terminal starts.</p>
+            <p class="field-hint">Each account keeps its own browser sign-in, settings, and session history, so you sign in once per account. A change takes effect the next time the terminal starts.</p>
             <p id="account-error" class="form-error" role="alert" hidden></p>
             <div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Save</button></div>
         </form>

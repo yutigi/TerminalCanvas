@@ -74,6 +74,18 @@ pub fn list(root: &Path) -> io::Result<Vec<String>> {
     Ok(names)
 }
 
+/// The email address an account is signed in to Claude with, as Claude Code records it in the
+/// account folder's `.claude.json`. `None` when not signed in or unreadable: this is display only.
+pub fn signed_in(root: &Path, name: &str) -> Option<String> {
+    let file = folder(root, name).join(".claude.json");
+    if fs::metadata(&file).ok()?.len() > 16 * 1024 * 1024 {
+        return None;
+    }
+    let config: serde_json::Value = serde_json::from_slice(&fs::read(file).ok()?).ok()?;
+    let email = config.get("oauthAccount")?.get("emailAddress")?.as_str()?.trim();
+    (!email.is_empty() && utf16_len(email) <= 320 && !crate::js::has_c0_control(email)).then(|| email.to_owned())
+}
+
 /// Creates an account's folder unless an account with that name, in any case, already exists.
 /// Returns the account's name as stored.
 pub fn create(root: &Path, name: &str) -> Result<String> {
@@ -129,6 +141,15 @@ mod tests {
         fs::create_dir_all(root.join("bad.name")).unwrap();
         assert_eq!(list(&root).unwrap(), ["Personal", "work"]);
         assert!(folder(&root, "work").is_dir());
+        assert_eq!(signed_in(&root, "work"), None);
+        fs::write(
+            folder(&root, "work").join(".claude.json"),
+            r#"{"oauthAccount":{"emailAddress":"me@example.com"}}"#,
+        )
+        .unwrap();
+        assert_eq!(signed_in(&root, "work").as_deref(), Some("me@example.com"));
+        fs::write(folder(&root, "Personal").join(".claude.json"), "not json").unwrap();
+        assert_eq!(signed_in(&root, "Personal"), None);
         fs::remove_dir_all(&root).unwrap();
     }
 }

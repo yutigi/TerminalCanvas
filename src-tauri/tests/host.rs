@@ -373,14 +373,14 @@ async fn claude_accounts_are_listed_added_and_kept_by_the_cards_that_use_them() 
         let host = h.host.clone();
         async move { host.command("claude-accounts", Some(&payload)).await }
     };
-    assert_eq!(list(None).await.unwrap(), json!({ "accounts": [] }));
+    assert_eq!(list(None).await.unwrap(), json!({ "accounts": [], "signedIn": {} }));
     assert_eq!(
         list(Some(" Work ")).await.unwrap(),
-        json!({ "accounts": ["Work"], "created": "Work" })
+        json!({ "accounts": ["Work"], "signedIn": {}, "created": "Work" })
     );
     assert_eq!(
         list(Some("work")).await.unwrap(),
-        json!({ "accounts": ["Work"], "created": "Work" }),
+        json!({ "accounts": ["Work"], "signedIn": {}, "created": "Work" }),
         "names differing only in case are one account"
     );
     assert_eq!(
@@ -401,7 +401,16 @@ async fn claude_accounts_are_listed_added_and_kept_by_the_cards_that_use_them() 
     board["cards"] = json!([card]);
     h.host.command("autosave", Some(&board)).await.unwrap();
     assert_eq!(h.read_saved()["cards"][0]["claudeAccount"], "Personal");
-    assert_eq!(list(None).await.unwrap(), json!({ "accounts": ["Personal", "Work"] }));
+    // An account reports the email Claude Code recorded when it signed in.
+    std::fs::write(
+        accounts.join("Work").join(".claude.json"),
+        r#"{"oauthAccount":{"emailAddress":"work@example.com"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        list(None).await.unwrap(),
+        json!({ "accounts": ["Personal", "Work"], "signedIn": { "Work": "work@example.com" } })
+    );
 }
 
 #[tokio::test]

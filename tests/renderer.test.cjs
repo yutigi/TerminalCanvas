@@ -1412,6 +1412,29 @@ test('a terminal keeps the Claude account chosen for it and starts with it', asy
     assert.match(elements.get('#toast').textContent, /default Claude sign-in the next time it starts/);
 });
 
+test('an account shows who it is signed in as and signs in with the browser in its own terminal', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ profile: 'claude', title: 'Backend' }));
+    const respond = (action, payload) => action === 'claude-accounts' ? { accounts: ['Personal', 'Work'], signedIn: { Work: 'work@example.com' } }
+        : action === 'create-card' ? { card: createCard(payload) } : null;
+    const { context, calls, elements } = await boot(board, { respond, terminals: true });
+    await vm.runInContext('openAccountDialog(workspace.cards[0])', context);
+    assert.match(elements.get('#account-status').textContent, /usual|already has/);
+    assert.equal(elements.get('#account-signin').disabled, true, 'the default uses the shell sign-in');
+    elements.get('#account-select').value = 'Work'; elements.get('#account-select').onchange();
+    assert.equal(elements.get('#account-status').textContent, 'Signed in as work@example.com.');
+    assert.match(elements.get('#account-signin').innerHTML, /Sign in again/);
+    elements.get('#account-select').value = 'Personal'; elements.get('#account-select').onchange();
+    assert.match(elements.get('#account-status').textContent, /Not signed in yet/);
+    assert.equal(elements.get('#account-signin').disabled, false);
+    elements.get('#account-signin').onclick(); await flush();
+    assert.equal(elements.get('#account-dialog').open, false);
+    assert.equal(json(context, 'workspace.cards[0].claudeAccount'), 'Personal', 'signing in also chooses the account');
+    const login = json(context, 'workspace.cards[1]');
+    assert.deepEqual([login.title, login.command, login.profile, login.claudeAccount], ['Sign in · Personal', 'claude auth login', 'shell', 'Personal']);
+    assert.equal(calls.filter(c => c.action === 'start').at(-1).payload.card.id, login.id);
+    assert.match(elements.get('#toast').textContent, /browser/);
+});
+
 test('duplicated, reviewed, and requested terminals carry a Claude account; new ones use the default', async () => {
     const board = createWorkspace(); board.cards.push(createCard({ claudeAccount: 'Work' }));
     let warning = null;

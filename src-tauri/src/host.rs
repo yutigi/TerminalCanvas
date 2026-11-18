@@ -536,7 +536,11 @@ impl Host {
                         .map_err(|error| format!("Could not add the Claude account: {error}"))?;
                     let accounts = tc_core::accounts::list(&root)
                         .map_err(|error| format!("Could not list Claude accounts: {error}"))?;
-                    let mut result = json!({ "accounts": accounts });
+                    let signed_in: Map<String, Value> = accounts
+                        .iter()
+                        .filter_map(|name| Some((name.clone(), json!(tc_core::accounts::signed_in(&root, name)?))))
+                        .collect();
+                    let mut result = json!({ "accounts": accounts, "signedIn": signed_in });
                     if let Some(created) = created {
                         result["created"] = json!(created);
                     }
