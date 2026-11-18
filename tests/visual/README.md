@@ -27,7 +27,9 @@ Current controls must remain within 1.5 CSS pixels of the previous JavaScript UI
 allowing its fractional line boxes to become whole pixel boxes. Deliberate changes
 since that UI are listed under `intended` in `reference.json`, each with its reason:
 controls added in a scene, and the exact bounds change of a control they move or
-resize. Only the comparison with the previous UI applies them. Missing controls
+resize. The `common` entry applies to all scenes; translated controls move their
+icons by the same amount. Canvas actions use their stable IDs so they cannot
+renumber the historical card/dialog icons. Only the comparison with the previous UI applies them. Missing controls
 and viewport mismatches fail the check. `--verify-regression` additionally renders
 the unmodified reference in WebKit and requires the strict parity check to fail.
 For current Chromium and WebKit, it also hides arrowhead fill deliberately and

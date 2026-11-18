@@ -195,7 +195,7 @@ function removeItems(ids) {
 }
 // Adds items as one undoable step and selects them. `edit` opens a single new item for typing.
 function addItems(list, { edit = false } = {}) {
-    if (workspace.items.length + list.length > ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
+    if (workspaceItemCount() + list.length > ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
     const before = snapshotBoard();
     commitHistory(before);
     workspace.items.push(...list);
@@ -216,7 +216,7 @@ function makeItem(kind, rect) {
 // Creation tools: click for a default size, or drag to draw. Lines attach to whatever they start or end on.
 function beginCreate(event) {
     const kind = activeTool, start = toWorld(event);
-    if (workspace.items.length >= ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
+    if (workspaceItemCount() >= ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
     if (kind === 'line' || kind === 'arrow') {
         const from = attachableAt(start);
         recordHistory();
@@ -385,8 +385,11 @@ function importImageFiles(files, point) {
 function referencedImages() {
     const names = new Set();
     const add = items => { for (const item of items) if (item.type === 'image') names.add(item.asset); };
-    add(workspace.items);
-    for (const step of [...boardHistory.undo, ...boardHistory.redo]) for (const name of step.assets) names.add(name);
+    rememberCanvas();
+    for (const canvas of canvasStates) {
+        add(canvas.board.items);
+        for (const step of [...canvas.history.undo, ...canvas.history.redo]) for (const name of step.assets) names.add(name);
+    }
     if (boardClipboard) add(boardClipboard.items);
     return [...names];
 }

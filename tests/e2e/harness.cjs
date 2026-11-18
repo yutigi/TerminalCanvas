@@ -94,7 +94,7 @@ async function launch({ phase, clean = false, env = {}, scale } = {}) {
             async dispose() {
                 try {
                     if (!terminal) {
-                        await page.evaluate(() => { void window.terminalCanvas.invoke('close', workspace); }).catch(() => {});
+                        await page.evaluate(() => { void invoke('close', workspace); }).catch(() => {});
                         await until(() => terminal, 'Host did not close.', 10000);
                     }
                 } finally {
