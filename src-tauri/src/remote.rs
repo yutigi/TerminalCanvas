@@ -65,8 +65,12 @@ impl Security {
     }
 
     fn expire(&mut self) {
+        self.expire_at(Instant::now());
+    }
+
+    fn expire_at(&mut self, now: Instant) {
         self.sessions.retain(|_, session| {
-            let live = session.created.elapsed() < SESSION_TTL && session.active.load(Ordering::Acquire);
+            let live = now.duration_since(session.created) < SESSION_TTL && session.active.load(Ordering::Acquire);
             if !live {
                 session.active.store(false, Ordering::Release);
             }
@@ -82,8 +86,12 @@ impl Security {
     }
 
     fn login(&mut self, token: &str) -> Result<String, StatusCode> {
-        self.expire();
-        self.failures.retain(|time| time.elapsed() < LOGIN_WINDOW);
+        self.login_at(token, Instant::now())
+    }
+
+    fn login_at(&mut self, token: &str, now: Instant) -> Result<String, StatusCode> {
+        self.expire_at(now);
+        self.failures.retain(|time| now.duration_since(*time) < LOGIN_WINDOW);
         if self.failures.len() >= 5 {
             return Err(StatusCode::TOO_MANY_REQUESTS);
         }
@@ -94,7 +102,7 @@ impl Security {
         } else if view {
             Role::View
         } else {
-            self.failures.push_back(Instant::now());
+            self.failures.push_back(now);
             return Err(StatusCode::UNAUTHORIZED);
         };
         if self.sessions.len() >= MAX_CLIENTS {
@@ -105,7 +113,7 @@ impl Security {
             id.clone(),
             Session {
                 role,
-                created: Instant::now(),
+                created: now,
                 active: Arc::new(AtomicBool::new(true)),
                 connected: false,
             },
@@ -625,23 +633,34 @@ mod tests {
     #[test]
     fn tokens_are_independent_and_logins_are_bounded_expiring_and_revocable() {
         let mut security = Security::new();
+        let now = Instant::now();
         assert_eq!(security.control.len(), 64);
         assert_ne!(security.control, security.view);
         for _ in 0..5 {
-            assert_eq!(security.login("wrong"), Err(StatusCode::UNAUTHORIZED));
+            assert_eq!(security.login_at("wrong", now), Err(StatusCode::UNAUTHORIZED));
         }
         let token = security.control.clone();
-        assert_eq!(security.login(&token), Err(StatusCode::TOO_MANY_REQUESTS));
-        security.failures.clear();
-        let id = security.login(&token).unwrap();
+        assert_eq!(security.login_at(&token, now), Err(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(
+            security.login_at(&token, now + LOGIN_WINDOW - Duration::from_nanos(1)),
+            Err(StatusCode::TOO_MANY_REQUESTS)
+        );
+        let created = now + LOGIN_WINDOW;
+        let id = security.login_at(&token, created).unwrap();
+        assert!(security.failures.is_empty());
         let active = security.sessions[&id].active.clone();
-        security.sessions.get_mut(&id).unwrap().created = Instant::now() - SESSION_TTL;
-        security.expire();
+        // Advance the clock: subtracting the TTL can underflow on freshly booted Windows.
+        let expired = created + SESSION_TTL;
+        security.expire_at(expired - Duration::from_nanos(1));
+        assert!(active.load(Ordering::Acquire));
+        assert!(security.sessions.contains_key(&id));
+        security.expire_at(expired);
         assert!(!active.load(Ordering::Acquire));
+        assert!(!security.sessions.contains_key(&id));
         for _ in 0..MAX_CLIENTS {
-            security.login(&token).unwrap();
+            security.login_at(&token, expired).unwrap();
         }
-        assert_eq!(security.login(&token), Err(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(security.login_at(&token, expired), Err(StatusCode::TOO_MANY_REQUESTS));
         let active = security.sessions.values().next().unwrap().active.clone();
         security.revoke();
         assert!(!active.load(Ordering::Acquire));
