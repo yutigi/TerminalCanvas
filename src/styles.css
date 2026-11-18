@@ -1,4 +1,12 @@
 @import url('./typography.css');
+.sidebar-section{display:contents}
+.section-disclosure{padding:0;text-align:left;flex-shrink:0}
+.workspace-disclosure{display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.workspace-disclosure .badge{letter-spacing:normal;font-weight:400}
+.section-disclosure:hover{color:var(--accent)}
+.section-disclosure:hover .section-label{color:inherit}
+.section-disclosure[aria-expanded="false"] .disclosure-mark{transform:rotate(-90deg)}
+.board-icon:hover{background:#303b2d}
 .minimap{position:absolute;right:20px;bottom:25px;width:220px;padding:10px;background:#1c2128f5;border:1px solid #39404a;border-radius:9px;box-shadow:0 8px 25px #0004;z-index:10;cursor:default;user-select:none}
 .minimap-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:8px;letter-spacing:1px;color:#a6b39c}
 .minimap-heading span:last-child{font-size:9px;letter-spacing:0;color:#768192}
