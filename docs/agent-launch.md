@@ -208,9 +208,19 @@ For more than this snippet, install the [`terminal-canvas` skill](../skills/term
 It follows the open Agent Skills format, so Claude Code, Codex, Gemini CLI, opencode, and other
 harnesses that read `SKILL.md` can use it. It covers finding `tc-hook` when `TC_HOOK` is missing,
 handing work over to a fresh session of the same or another agent through a briefing file, and
-running parallel workers in linked cards. Copy the `skills/terminal-canvas` folder into the
-harness's skill folder, for example `~/.claude/skills/` for Claude Code, or `~/.agents/skills/`
-or `~/.codex/skills/` for Codex.
+running parallel workers in linked cards.
+
+Terminal Canvas installs it for you. The first launch offers **Set up AI agents**, and **Set up
+agents** in the sidebar's *Launch a terminal* heading offers it again at any time, for example after
+an update changes the skill. It writes `terminal-canvas/SKILL.md`, and nothing else, into:
+
+- Claude Code: `~/.claude/skills/` (or `skills/` in `CLAUDE_CONFIG_DIR` when shells inherit it) and
+  `skills/` in each Terminal Canvas Claude account folder;
+- Codex, Gemini CLI, opencode, and other Agent Skills harnesses: `~/.agents/skills/`.
+
+Agents load it in sessions started afterward. To install it by hand instead, copy the
+`skills/terminal-canvas` folder into those folders. The app ships the skill built in, so a change
+to `SKILL.md` reaches users with the next release.
 
 ## Sandboxes
 
