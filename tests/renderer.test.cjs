@@ -120,6 +120,94 @@ test('restored AI sessions offer Resume and a fresh shell without launching anyt
     assert.deepEqual(calls.map(c => c.action), ['initialize']);
 });
 
+test('automatic titles refresh header, outline, minimap, and search while rejecting stale or malformed events', async () => {
+    const workspace = createWorkspace();
+    const card = createCard({ title: 'repo · Codex', titleMode: 'automatic' }); workspace.cards.push(card);
+    const { context, onEvent, elements, calls } = await boot(workspace);
+    const event = { type: 'title', id: card.id, title: 'Fix ไทย 🚀', titleMode: 'automatic', titleRevision: 1 };
+    onEvent(event);
+    assert.equal(json(context, 'workspace.cards[0].title'), event.title);
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).element.querySelector(".card-title").textContent', context), event.title);
+    assert.equal(elements.get('#outline').children[0].children[1].textContent, event.title);
+    assert.equal(elements.get('#minimap-cards').children[0].title, event.title);
+    elements.get('#search').value = 'ไทย'; elements.get('#search').oninput();
+    assert.equal(elements.get('#outline').children[0].children[1].textContent, event.title);
+    for (const patch of [{ title: 'Old', titleRevision: 0 }, { title: 'bad\nname', titleRevision: 2 },
+        { title: '🚀'.repeat(51), titleRevision: 2 }, { title: 'bidi\u202e', titleRevision: 2 }]) onEvent({ ...event, ...patch });
+    assert.equal(json(context, 'workspace.cards[0].title'), event.title);
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'title events never execute commands');
+});
+
+test('renaming immediately takes manual precedence during pending generation and can return to automatic', async () => {
+    const workspace = createWorkspace();
+    const card = createCard({ title: 'repo · Codex', titleMode: 'automatic' }); workspace.cards.push(card);
+    let finish, revision = 2;
+    const respond = (action, payload) => action === 'rename-title' ? new Promise(resolve => {
+        finish = () => resolve({ card: { title: payload.mode === 'manual' ? payload.title : 'repo · Codex', titleMode: payload.mode, titleRevision: revision++ } });
+    }) : null;
+    const { context, onEvent, elements } = await boot(workspace, { respond });
+    vm.runInContext('sessions.get(workspace.cards[0].id).element.querySelector(".card-title").onclick()', context);
+    assert.equal(elements.get('#title-dialog').open, true);
+    assert.match(elements.get('#title-mode').textContent, /Automatic/);
+    const saving = vm.runInContext('renameTerminal(workspace.cards[0], "manual", "My own title")', context);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(json(context, 'workspace.cards[0].titleMode'), 'manual');
+    onEvent({ type: 'title', id: card.id, title: 'Late generation', titleMode: 'automatic', titleRevision: 1 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'My own title');
+    finish(); await saving;
+    assert.equal(elements.get('#title-dialog').open, false);
+    onEvent({ type: 'title', id: card.id, title: 'Another generation', titleMode: 'automatic', titleRevision: 3 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'My own title');
+    const automatic = vm.runInContext('renameTerminal(workspace.cards[0], "automatic")', context);
+    await new Promise(resolve => setImmediate(resolve));
+    onEvent({ type: 'title', id: card.id, title: 'New session task', titleMode: 'automatic', titleRevision: 4 });
+    finish(); await automatic;
+    assert.equal(json(context, 'workspace.cards[0].titleMode'), 'automatic');
+    assert.equal(json(context, 'workspace.cards[0].title'), 'New session task');
+});
+
+test('legacy names remain manual, invalid edits fail, and pending renames cannot mutate a replacement workspace', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard({ title: 'Codex' }));
+    const { context, onEvent } = await boot(workspace);
+    onEvent({ type: 'title', id: workspace.cards[0].id, title: 'Should not apply', titleMode: 'automatic', titleRevision: 1 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'Codex');
+    for (const invalid of ['', 'a\nb', '🚀'.repeat(51)]) {
+        context.invalid = invalid;
+        await assert.rejects(vm.runInContext('renameTerminal(workspace.cards[0], "manual", invalid)', context), /without controls/);
+    }
+    vm.runInContext(`bridge.invoke = async action => action === 'rename-title'
+        ? new Promise(resolve => { globalThis.finishRename = resolve; }) : ({ ok: true });`, context);
+    const saving = vm.runInContext('renameTerminal(workspace.cards[0], "manual", "Pending")', context);
+    await new Promise(resolve => setImmediate(resolve));
+    vm.runInContext('loadWorkspace({ version: 3, name: "Other", camera: { x: 0, y: 0, z: 1 }, cards: [], items: [] }); finishRename({ card: { title: "Late", titleMode: "manual", titleRevision: 2 } })', context);
+    await saving;
+    assert.deepEqual(json(context, 'workspace.cards'), []);
+});
+
+test('launch defaults are automatic, while typed names stay manual even when equal to the profile default', async () => {
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null;
+    const { elements, calls } = await boot(createWorkspace(), { respond, terminals: true });
+    const flush = () => new Promise(resolve => setImmediate(resolve));
+    elements.get('#add-terminal').onclick();
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(calls.find(call => call.action === 'create-card').payload.titleMode, 'automatic');
+    elements.get('#add-terminal').onclick();
+    elements.get('#terminal-title').value = 'Terminal'; elements.get('#terminal-title').oninput();
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(calls.filter(call => call.action === 'create-card').at(-1).payload.titleMode, 'manual');
+});
+
+test('title events from an earlier workspace cannot rename a restored card with the same ID', async () => {
+    const workspace = createWorkspace();
+    const card = createCard({ title: 'Saved title', titleMode: 'automatic' }); workspace.cards.push(card);
+    const { context, onEvent } = await boot(workspace);
+    vm.runInContext('loadWorkspace(workspace, 20)', context);
+    onEvent({ type: 'title', id: card.id, title: 'Other workspace', titleMode: 'automatic', titleRevision: 50, titleEpoch: 19 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'Saved title');
+    onEvent({ type: 'title', id: card.id, title: 'Current workspace', titleMode: 'automatic', titleRevision: 1, titleEpoch: 20 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'Current workspace');
+});
+
 test('host metadata updates the renderer model and folder display without running commands', async () => {
     const workspace = createWorkspace(); const card = createCard(); workspace.cards.push(card);
     const { context, calls, onEvent } = await boot(workspace);

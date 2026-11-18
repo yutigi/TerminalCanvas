@@ -25,6 +25,7 @@ use tc_core::assets::{
 use tc_core::atomic::{self, Access};
 use tc_core::js::utf16_len;
 use tc_core::recovery::{CardMetadata, WorkspaceRecovery};
+use tc_core::titles::{SettledTitle, TitleMode};
 use tc_core::workspace::{PROFILES, Workspace, create_card, create_workspace, limits, validate_workspace};
 use tc_core::{Error, Platform as Os};
 use tc_pty::manager::{Backend, Config, DirectoryRequest, EventSink, Integrations, STOP_TIMEOUT};
@@ -135,11 +136,27 @@ struct InputOrder {
 }
 
 struct State {
+    names: Naming,
     manager: TerminalManager,
     recovery: WorkspaceRecovery,
     filename: Option<PathBuf>,
     inputs: HashMap<String, InputOrder>,
     launches: crate::launches::Launches,
+}
+
+#[derive(Default)]
+struct Naming {
+    epoch: u64,
+    busy: bool,
+    entries: HashMap<String, NameEntry>,
+}
+
+struct NameEntry {
+    request: tc_pty::titles::NameRequest,
+    revision: u64,
+    next_read: std::time::Instant,
+    settled: SettledTitle,
+    origin: std::time::Instant,
 }
 
 /// Where events for the UI go.
@@ -228,6 +245,7 @@ impl Host {
             Err(error) => eprintln!("Could not create {}: {error}", inbox.display()),
         }
         let mut state = State {
+            names: Naming::default(),
             manager: TerminalManager::new(config, backend, integrations, sink),
             recovery: WorkspaceRecovery::new(),
             filename: None,
@@ -264,6 +282,7 @@ impl Host {
                         state.manager.stopping();
                         state.launches.idle();
                         host.poll_launch_requests(&mut state);
+                        host.poll_names(&mut state);
                     }
                     None => break,
                 }
@@ -275,6 +294,104 @@ impl Host {
 
     fn post(&self, task: impl FnOnce(&Host, &mut State) + Send + 'static) {
         let _ = self.state.send(Message::Task(Box::new(task)));
+    }
+
+    /// One bounded local metadata read at a time, off the PTY actor. Nothing contacts a provider.
+    fn poll_names(self: &Arc<Self>, state: &mut State) {
+        let epoch = state.recovery.epoch();
+        if state.names.epoch != epoch {
+            state.names.epoch = epoch;
+            state.names.entries.clear();
+        }
+        let now = std::time::Instant::now();
+        let cards = state.recovery.board().cards.clone();
+        state.names.entries.retain(|id, entry| {
+            cards.iter().any(|card| {
+                card.id == *id
+                    && card.title_mode == Some(TitleMode::Automatic)
+                    && card.title_revision == entry.revision
+                    && state.manager.name_request(id).as_ref() == Some(&entry.request)
+            })
+        });
+        for card in &cards {
+            if card.title_mode != Some(TitleMode::Automatic) {
+                continue;
+            }
+            let Some(request) = state.manager.name_request(&card.id) else {
+                continue;
+            };
+            let entry = state.names.entries.entry(card.id.clone()).or_insert_with(|| NameEntry {
+                request,
+                revision: card.title_revision,
+                next_read: now,
+                settled: SettledTitle::default(),
+                origin: now,
+            });
+            if let Some(title) = entry
+                .settled
+                .ready(&card.title, now.duration_since(entry.origin).as_secs())
+                && let Ok(named) = state.recovery.rename(&card.id, TitleMode::Automatic, Some(&title))
+            {
+                entry.revision = named.title_revision;
+                self.publish_title(state, &named);
+            }
+        }
+        if state.names.busy {
+            return;
+        }
+        let next = state
+            .names
+            .entries
+            .iter_mut()
+            .filter(|(_, entry)| entry.next_read <= now)
+            .min_by_key(|(_, entry)| entry.next_read);
+        let Some((id, entry)) = next else { return };
+        let (id, request, revision) = (id.clone(), entry.request.clone(), entry.revision);
+        entry.next_read = now + Duration::from_secs(5);
+        state.names.busy = true;
+        let weak = Arc::downgrade(self);
+        tauri::async_runtime::spawn(async move {
+            let reading = request.clone();
+            let name = tauri::async_runtime::spawn_blocking(move || reading.read())
+                .await
+                .ok()
+                .flatten();
+            if let Some(host) = weak.upgrade() {
+                host.post(move |_, state| {
+                    state.names.busy = false;
+                    if state.recovery.epoch() != epoch || state.manager.name_request(&id).as_ref() != Some(&request) {
+                        return;
+                    }
+                    let Some(card) = state.recovery.board().cards.iter().find(|card| card.id == id) else {
+                        return;
+                    };
+                    if card.title_mode != Some(TitleMode::Automatic) || card.title_revision != revision {
+                        return;
+                    }
+                    if let (Some(name), Some(entry)) = (name, state.names.entries.get_mut(&id)) {
+                        entry.settled.observe(name, entry.origin.elapsed().as_secs());
+                    }
+                });
+            }
+        });
+    }
+
+    fn publish_title(&self, state: &State, card: &tc_core::workspace::Card) {
+        // The naming change and its recovery write are queued in the same actor turn.
+        let (file, text, emitter) = (
+            self.paths.recovery(),
+            state.recovery.board().to_file_string(None),
+            self.emitter(),
+        );
+        self.writes.push(move || {
+            if let Err(error) = write_workspace_file(&file, &text)
+                && let Some(emit) = emitter
+            {
+                emit(json!({ "type": "error", "message": format!("Could not save terminal title: {error}") }));
+            }
+        });
+        self.emit(json!({ "type": "title", "id": card.id, "title": card.title,
+            "titleMode": card.title_mode, "titleRevision": card.title_revision, "titleEpoch": state.recovery.epoch() }));
     }
 
     async fn with_state<R: Send + 'static>(&self, task: impl FnOnce(&Host, &mut State) -> R + Send + 'static) -> R {
@@ -380,6 +497,9 @@ impl Host {
                         "type": "launch", "external": true, "request": id, "profile": request.profile,
                         "title": request.title, "cwd": request.cwd, "command": request.command,
                     });
+                    if let Some(mode) = request.title_mode {
+                        event["titleMode"] = json!(mode);
+                    }
                     if let Some(parent) = &request.parent {
                         event["parent"] = json!(parent);
                     }
@@ -507,13 +627,15 @@ impl Host {
                     warnings.push(HELPER_MISSING.to_owned());
                 }
                 let restored = workspace.clone();
-                self.with_state(move |_, state| {
-                    state.recovery.reset(restored);
-                    state.inputs.clear();
-                })
-                .await;
+                let title_epoch = self
+                    .with_state(move |_, state| {
+                        state.recovery.reset(restored);
+                        state.inputs.clear();
+                        state.recovery.epoch()
+                    })
+                    .await;
                 let mut result = json!({
-                    "workspace": workspace, "profiles": PROFILES, "home": self.home, "platform": node_platform(self.os)
+                    "workspace": workspace, "profiles": PROFILES, "home": self.home, "platform": node_platform(self.os), "titleEpoch": title_epoch
                 });
                 // One line each, the workspace first: the UI shows them together.
                 if !warnings.is_empty() {
@@ -522,6 +644,31 @@ impl Host {
                 Ok(result)
             }
             "create-card" => Ok(json!({ "card": create_card(payload.unwrap_or(&Value::Null)).map_err(message)? })),
+            "rename-title" => {
+                let id = field(payload, "id")
+                    .and_then(Value::as_str)
+                    .ok_or("Invalid terminal ID.")?
+                    .to_owned();
+                let mode = field(payload, "mode")
+                    .and_then(Value::as_str)
+                    .and_then(TitleMode::parse)
+                    .ok_or("Invalid title mode.")?;
+                let title = field(payload, "title").and_then(Value::as_str).map(str::to_owned);
+                let epoch = field(payload, "titleEpoch").and_then(Value::as_u64);
+                let (card, saved) = self
+                    .with_state(move |host, state| {
+                        if epoch.is_some_and(|epoch| epoch != state.recovery.epoch()) {
+                            return Err("The workspace has changed.".into());
+                        }
+                        let card = state.recovery.rename(&id, mode, title.as_deref()).map_err(message)?;
+                        state.names.entries.remove(&id);
+                        let saved = host.queue_save(host.paths.recovery(), state.recovery.board(), None);
+                        Ok::<_, String>((card, saved))
+                    })
+                    .await?;
+                saved.await?;
+                Ok(json!({ "card": card }))
+            }
             // Lists the Claude Code accounts; with `create`, first adds that account.
             "claude-accounts" => {
                 let root = self.paths.claude_accounts();
@@ -750,16 +897,18 @@ impl Host {
                 };
                 let workspace = self.read_workspace(&file).await.map_err(message)?;
                 let opened = workspace.clone();
-                self.with_state(move |host, state| {
-                    state.manager.stop_all();
-                    host.dispatch(state);
-                    state.manager.forget();
-                    state.recovery.reset(opened);
-                })
-                .await;
+                let title_epoch = self
+                    .with_state(move |host, state| {
+                        state.manager.stop_all();
+                        host.dispatch(state);
+                        state.manager.forget();
+                        state.recovery.reset(opened);
+                        state.recovery.epoch()
+                    })
+                    .await;
                 self.flush(None).await?;
                 self.with_state(move |_, state| state.filename = Some(file)).await;
-                Ok(json!({ "workspace": workspace }))
+                Ok(json!({ "workspace": workspace, "titleEpoch": title_epoch }))
             }
             "new" => {
                 self.with_state(|host, state| {
@@ -772,7 +921,9 @@ impl Host {
                 .await;
                 self.flush(None).await?;
                 Ok(self
-                    .with_state(|_, state| json!({ "workspace": state.recovery.board() }))
+                    .with_state(
+                        |_, state| json!({ "workspace": state.recovery.board(), "titleEpoch": state.recovery.epoch() }),
+                    )
                     .await)
             }
             "close" => {

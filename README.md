@@ -105,6 +105,47 @@ except that a terminal started without integration (see above) has only `TC_CARD
 an instruction snippet for `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`, sandbox notes, and the security
 model. A new terminal does not inherit the requesting agent's sandbox.
 
+### Terminal titles
+
+New terminals use automatic names when you leave the suggested launch name untouched. The initial
+name uses the project folder and profile. Once the shell integration captures a Claude or Codex
+session, Terminal Canvas reuses that CLI's locally stored session name. It never types `/status`
+into your terminal, starts a second agent, or makes an additional model request.
+
+Click a card's title to **Rename terminal**; the title is a keyboard-accessible button too. **Save
+name** makes your choice manual immediately. Automatic updates cannot replace it. **Use automatic
+title** returns to the project/profile fallback and then follows available session names again.
+The header, sidebar search, and minimap share the effective title. Names and modes survive autosave,
+Save, portable export/import, and restart; restored terminals stay stopped.
+
+Existing workspace titles remain manual, even when equal to a profile's default. A duplicate gets
+a fresh automatic name for its new shell. Program requests with an explicit title remain manual;
+requests without a title use automatic naming. Workspace format stays at 3; formats 1 and 2 still
+load. Optional `titleMode` and `titleRevision` fields carry naming intent and protect newer host
+decisions from stale saves.
+
+Naming reads only dedicated name fields: Codex's `thread_name` in `session_index.jsonl`, matched
+by the captured session ID, and Claude's `customTitle` (preferred) or `aiTitle` in that captured
+project/session's JSONL metadata. It uses the terminal's launch-time `CODEX_HOME` or
+`CLAUDE_CONFIG_DIR`, including a selected Claude account, or their usual home-directory defaults.
+No prompts, raw scrollback, credential files, or other sessions' conversation histories are used
+as naming context. Nothing is sent to an external service, and this feature adds no token or
+subscription cost. Selecting a manual name disables further metadata reads for that card.
+
+Local metadata is checked at most once every five seconds per eligible card, with one background
+read at a time. A changed name settles for five seconds; subsequent visible changes are at least
+60 seconds apart during that launch. Unchanged context does not churn titles. Reads are bounded
+to 64 KiB for Codex and the first/last 64 KiB for Claude. Names are plain text, limited to 100
+UTF-16 units without splitting emoji. Missing, malformed, unavailable, or unsupported metadata
+keeps the last useful name or initial fallback. CLI versions without these fields, names outside
+the bounded windows, Claude project paths longer than 200 encoded characters, and config-home
+changes made inside an already running shell can use the fallback; restart a terminal after
+changing its config home. No shared history scan or new AI summary is performed. Metadata formats
+can change across CLI releases; real installed CLI versions still require manual verification.
+
+The adapters follow the public [Codex session index](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/session_index.rs)
+and [Claude SDK metadata reader](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/sessions.py).
+
 ### Live terminal folders
 
 A running card shows its shell's last reported current folder, including changes made with `cd`, `Set-Location`, or directory-stack commands. The full path is available on hover. Each terminal tracks its own folder. The last valid folder is saved for reopening and fresh shell starts; AI resumes use the captured session folder. An unavailable live directory leaves the last valid saved folder intact.

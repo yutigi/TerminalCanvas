@@ -494,9 +494,11 @@ function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><button type="button" class="card-title" title="Rename terminal"></button><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
+    el.querySelector('.card-title').setAttribute('aria-label', 'Rename terminal: ' + card.title);
+    el.querySelector('.card-title').onclick = () => openTitleDialog(card);
     const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     recoveryInfo(card); renderAccount(card);
@@ -615,6 +617,84 @@ function showDirectory(s, cwd) {
     s.element.querySelector('.card-directory span').textContent = label;
     s.element.querySelector('.card-directory').title = label;
 }
+
+/* Titles are plain text. The host owns names and revisions; all surfaces read card.title. */
+let titleCard = null, titleBusy = false, launchTitleEdited = false, titleEpoch;
+function validTerminalTitle(value) {
+    const title = value.trim();
+    return title.length > 0 && title.length <= 100 && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(title);
+}
+function showTitle(card) {
+    const button = sessions.get(card.id)?.element.querySelector('.card-title');
+    if (button) {
+        button.textContent = card.title;
+        button.title = `${card.title} · Click to rename`;
+        button.setAttribute('aria-label', `Rename terminal: ${card.title}`);
+    }
+    refresh();
+}
+function applyTitleEvent(event) {
+    const card = findCard(event.id);
+    if (event.titleEpoch === titleEpoch && card && card.titleMode === 'automatic' && event.titleMode === 'automatic'
+        && Number.isSafeInteger(event.titleRevision) && event.titleRevision > (card.titleRevision || 0)
+        && typeof event.title === 'string' && validTerminalTitle(event.title)) {
+        Object.assign(card, { title: event.title, titleMode: event.titleMode, titleRevision: event.titleRevision });
+        showTitle(card); changed();
+    }
+}
+function openTitleDialog(card) {
+    if (!ready || titleBusy || document.querySelector('dialog[open]')) return;
+    titleCard = card;
+    $('#rename-title').value = card.title;
+    $('#title-mode').textContent = card.titleMode === 'automatic' ? 'Automatic title' : 'Manual title';
+    $('#title-error').hidden = true;
+    $('#title-dialog').showModal();
+    $('#rename-title').focus(); $('#rename-title').select();
+}
+async function renameTerminal(card, mode, title) {
+    if (titleBusy || findCard(card.id) !== card) return;
+    if (mode === 'manual' && !validTerminalTitle(title)) throw new Error('Use a name of 1 to 100 characters without controls.');
+    titleBusy = true;
+    const s = sessions.get(card.id), previous = { title: card.title, titleMode: card.titleMode, titleRevision: card.titleRevision };
+    // Immediate manual precedence, even while an older automatic event is in flight.
+    if (s) s.namingPending = true;
+    card.titleMode = mode;
+    if (mode === 'manual') card.title = title.trim();
+    showTitle(card);
+    try {
+        // New stopped cards might not have reached the host's debounced autosave yet.
+        await invoke('autosave', workspace);
+        if (findCard(card.id) !== card || sessions.get(card.id) !== s) return;
+        const result = await invoke('rename-title', { id: card.id, mode, ...(titleEpoch === undefined ? {} : { titleEpoch }), ...(mode === 'manual' ? { title: card.title } : {}) });
+        if (findCard(card.id) !== card || sessions.get(card.id) !== s) return;
+        Object.assign(card, { title: result.card.title, titleMode: result.card.titleMode, titleRevision: result.card.titleRevision });
+        showTitle(card); changed();
+        $('#title-dialog').close(); titleCard = null;
+    } catch (error) {
+        if (findCard(card.id) === card) { Object.assign(card, previous); showTitle(card); }
+        throw error;
+    } finally {
+        if (s) {
+            s.namingPending = false;
+            const deferred = s.deferredTitle; delete s.deferredTitle;
+            if (deferred && sessions.get(card.id) === s) applyTitleEvent(deferred);
+        }
+        titleBusy = false;
+    }
+}
+$('#title-form').onsubmit = event => {
+    event.preventDefault();
+    const card = titleCard;
+    if (card) run(async () => {
+        try { await renameTerminal(card, 'manual', $('#rename-title').value); }
+        catch (error) { $('#title-error').textContent = error.message; $('#title-error').hidden = false; }
+    });
+};
+$('#automatic-title').onclick = () => {
+    const card = titleCard;
+    if (card) run(() => renameTerminal(card, 'automatic'));
+};
+$('#terminal-title').oninput = () => { launchTitleEdited = true; };
 // `launch` names the program's request that opened this card, so the host can log its output.
 async function start(card, mode = card.session ? 'resume' : 'start', launch) {
     const s = sessions.get(card.id);
@@ -762,7 +842,7 @@ async function duplicateTerminal(source) {
             $('#launch-error').hidden = false;
             return;
         }
-        const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
+        const { card } = await invoke('create-card', { profile: 'shell', titleMode: 'automatic', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (source.fontSize) card.fontSize = source.fontSize;
         if (source.claudeAccount) card.claudeAccount = source.claudeAccount;
@@ -801,7 +881,7 @@ async function openRequestedTerminal(event) {
     const size = { w: 660, h: 430 };
     const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
     const spot = parent ? Geometry.placeBeside(parent, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-    const { card } = await invoke('create-card', { profile: event.profile, title: event.title, cwd: event.cwd, command: event.command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+    const { card } = await invoke('create-card', { profile: event.profile, title: event.title, ...(event.titleMode ? { titleMode: event.titleMode } : {}), cwd: event.cwd, command: event.command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
     if (parent && !workspace.cards.includes(parent)) {
         if (!event.external) throw new Error(closed);
         parent = null;
@@ -827,6 +907,7 @@ let launchFontSize, launchAccount;
 function openLaunch(profileId = 'shell', { fontSize, claudeAccount } = {}) {
     if (!ready || document.querySelector('dialog[open]')) return;
     launchFontSize = fontSize; launchAccount = claudeAccount;
+    launchTitleEdited = false;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
@@ -935,7 +1016,7 @@ async function openAccountSignIn(beside, name) {
     await start(card);
 }
 $('#account-dialog').addEventListener('close', () => { accountCard = null; });
-$('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); $('#terminal-title').value = p.name; $('#command').value = p.command; };
+$('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); if (!launchTitleEdited) $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
 $('#launch-form').onsubmit = event => {
     event.preventDefault(); if (formBusy) return;
@@ -944,7 +1025,7 @@ $('#launch-form').onsubmit = event => {
         try {
             const { x, y, z } = workspace.camera;
             const count = workspace.cards.length;
-            const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
+            const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), titleMode: launchTitleEdited && $('#terminal-title').value.trim() ? 'manual' : 'automatic', cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
             if (launchFontSize) result.card.fontSize = launchFontSize;
             if (launchAccount) result.card.claudeAccount = launchAccount;
             workspace.cards.push(result.card); mount(result.card); select(result.card.id); changed(); refresh();
@@ -957,7 +1038,9 @@ $('#launch-form').onsubmit = event => {
         } finally { formBusy = false; $('#launch-submit').disabled = false; }
     });
 };
-function loadWorkspace(board) {
+function loadWorkspace(board, epoch) {
+    titleEpoch = epoch;
+    $('#title-dialog').close(); titleCard = null;
     clearTimeout(autosaveTimer);
     if (editing) document.activeElement?.blur();
     workspace = board;
@@ -981,8 +1064,8 @@ async function canReplace() {
 }
 async function save() { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.'); }
 $('#save').onclick = () => run(save);
-$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace); changed(); toast('Workspace restored. Start each terminal when you are ready.'); } });
-$('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; loadWorkspace((await invoke('new')).workspace); changed(); });
+$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); } });
+$('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('new'); loadWorkspace(result.workspace, result.titleEpoch); changed(); });
 $('#workspace-name').oninput = () => { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; changed(); };
 $('#search').oninput = () => { if (ready) refresh(); };
 $('#canvas-nav').onclick = () => { if (ready) fitCanvas(); };
@@ -1118,6 +1201,11 @@ window.addEventListener('resize', () => { if (ready) renderCamera(); });
 if (bridge) {
     bridge.onEvent(event => {
         const s = sessions.get(event.id);
+        if (event.type === 'title' && s && event.titleEpoch === titleEpoch) {
+            if (s.namingPending) {
+                if (Number.isSafeInteger(event.titleRevision) && event.titleRevision > (s.deferredTitle?.titleRevision || 0)) s.deferredTitle = event;
+            } else applyTitleEvent(event);
+        }
         if (event.type === 'metadata') {
             const card = workspace?.cards.find(c => c.id === event.id);
             if (card) {
@@ -1158,7 +1246,7 @@ if (bridge) {
             button.onclick = () => openLaunch(p.id); $('#profile-list').append(button);
         }
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
-        loadWorkspace(initial.workspace); ready = true; markAppReady(); renderStyleToolbar();
+        loadWorkspace(initial.workspace, initial.titleEpoch); ready = true; markAppReady(); renderStyleToolbar();
         if (initial.warning) toast(initial.warning);
     });
 } else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');

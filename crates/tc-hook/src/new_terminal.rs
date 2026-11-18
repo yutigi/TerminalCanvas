@@ -436,6 +436,7 @@ mod tests {
         let request = |command: &str| LaunchRequest {
             profile: tc_core::workspace::ProfileId::Shell,
             title: "Terminal".into(),
+            title_mode: None,
             cwd: "/repo".into(),
             command: command.into(),
             parent: None,

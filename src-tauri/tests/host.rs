@@ -200,6 +200,48 @@ impl Drop for Harness {
 }
 
 #[tokio::test]
+async fn title_edits_survive_stale_saves_export_import_and_restart_without_starting_terminals() {
+    let h = Harness::new();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    let card = create_card(&json!({"cwd":h.folder,"titleMode":"automatic"})).unwrap();
+    let mut board = create_workspace().to_value();
+    board["cards"] = json!([card]);
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    let manual = h
+        .host
+        .command(
+            "rename-title",
+            Some(&json!({"id":card.id,"mode":"manual","title":"Release checks","titleEpoch":initial["titleEpoch"]})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(manual["card"]["titleMode"], "manual");
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    assert_eq!(h.read_saved()["cards"][0]["title"], "Release checks");
+    let export = h.folder.join("portable.terminalcanvas");
+    h.platform.chosen.lock().unwrap().push_back(Some(export.clone()));
+    h.host.command("export", Some(&board)).await.unwrap();
+    let exported: Value = serde_json::from_slice(&std::fs::read(&export).unwrap()).unwrap();
+    assert_eq!(exported["cards"][0]["title"], "Release checks");
+    h.host.command("new", None).await.unwrap();
+    h.platform.chosen.lock().unwrap().push_back(Some(export));
+    let imported = h.host.command("open", None).await.unwrap();
+    assert_eq!(imported["workspace"]["cards"][0]["titleMode"], "manual");
+    assert_eq!(h.host.running().await, 0);
+    assert_eq!(h.host.command("rename-title", Some(&json!({"id":card.id,"mode":"manual","title":"Stale workspace edit","titleEpoch":initial["titleEpoch"]}))).await.unwrap_err(), "The workspace has changed.");
+    let restored = h.host.command("initialize", None).await.unwrap();
+    assert_eq!(restored["workspace"]["cards"][0]["title"], "Release checks");
+    assert_eq!(h.host.running().await, 0);
+    let automatic = h
+        .host
+        .command("rename-title", Some(&json!({"id":card.id,"mode":"automatic"})))
+        .await
+        .unwrap();
+    assert_eq!(automatic["card"]["titleMode"], "automatic");
+    assert!(automatic["card"]["title"].as_str().unwrap().ends_with(" · Terminal"));
+}
+
+#[tokio::test]
 async fn clipboard_limits_count_utf16_and_os_failures_reach_the_renderer() {
     let h = Harness::new();
     *h.platform.clipboard.lock().unwrap() = "first\nsecond".into();
