@@ -5,6 +5,31 @@
     "legacyTolerance": 1.5,
     "engineTolerance": 0.5,
     "intended": {
+        "common": {
+            "reason": "The 76px canvas manager follows Your canvas and moves the remaining sidebar controls down. Canvas actions and the workspace theme selector are new controls, measured identically in current Chromium and WebKit.",
+            "added": [".canvas-manager[0]", "#canvas-list[0]", "#canvas-add[0]", "#canvas-rename[0]", "#canvas-earlier[0]", "#canvas-later[0]", "#canvas-delete[0]", "#workspace-theme[0]"],
+            "resized": {
+                ".section-label[1]": [0, 76, 0, 0],
+                ".section-label[2]": [0, 76, 0, 0],
+                ".nav-item[1]": [0, 76, 0, 0],
+                ".nav-item[2]": [0, 76, 0, 0],
+                ".nav-item[3]": [0, 76, 0, 0],
+                ".nav-item[4]": [0, 76, 0, 0],
+                ".nav-item[5]": [0, 76, 0, 0],
+                "#profile-list[0]": [0, 76, 0, 0],
+                ".profile-button[0]": [0, 76, 0, 0],
+                ".profile-button[1]": [0, 76, 0, 0],
+                ".profile-button[2]": [0, 76, 0, 0],
+                ".profile-button[3]": [0, 76, 0, 0],
+                ".profile-button[4]": [0, 76, 0, 0],
+                ".search[0]": [0, 76, 0, 0],
+                "#search[0]": [0, 76, 0, 0],
+                "#outline[0]": [0, 76, 0, 0],
+                ".sidebar-bottom[0]": [0, 76, 0, 0],
+                ".plugin-card[0]": [0, 76, 0, 0],
+                ".local-label[0]": [0, 76, 0, 0]
+            }
+        },
         "card": {
             "reason": "The Claude account icon is the first card action; the title gives up its 26px width and the 3px gap.",
             "added": [".card-account-icon[0]"],

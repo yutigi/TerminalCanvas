@@ -408,13 +408,17 @@ async function cleanUpImages() {
     toast(`Deleted ${result.deleted} unused image${result.deleted === 1 ? '' : 's'} (${formatBytes(result.bytes)}).${skipped}`);
 }
 // The style toolbar edits the color of selected items and the text size of those that hold text.
-const selectedItems = types => [...selection].map(findItem).filter(item => item && types.includes(item.type));
+const selectedItems = types => [...selection].map(findElement).filter(item => item && types.includes(item.type));
 function renderStyleToolbar() {
     const bar = $('#style-toolbar');
     const colored = ready && !focused ? selectedItems(COLORED_TYPES) : [];
     const texts = colored.filter(item => TEXT_TYPES.includes(item.type));
     bar.hidden = !colored.length;
     $('#style-sizes').hidden = $('#style-divider').hidden = !texts.length;
+    const terminals = colored.filter(item => item.type === 'terminal');
+    $('#style-themes').hidden = !terminals.length;
+    const theme = terminals.length && terminals.every(card => (card.theme || '') === (terminals[0].theme || '')) ? terminals[0].theme || '' : 'mixed';
+    $('#terminal-theme').value = theme;
     if (bar.hidden) return;
     const shared = (list, key, fallback) => (list.every(item => (item[key] || fallback) === (list[0][key] || fallback)) ? list[0][key] || fallback : null);
     const color = shared(colored, 'color', 'default'), size = texts.length ? shared(texts, 'fontSize', 'medium') : null;
@@ -429,10 +433,11 @@ function setItemColor(color) {
         for (const item of items) {
             if (color === 'default') delete item.color;
             else item.color = color;
-            renderItem(item);
+            if (item.type === 'terminal') renderTerminalAppearance(item);
+            else renderItem(item);
         }
     });
-    renderStyleToolbar(); changed();
+    renderStyleToolbar(); refresh(); changed();
 }
 function setItemFontSize(size) {
     if (boardBusy()) return;

@@ -17,6 +17,9 @@ test('native background canvases retain processes, backpressure, output, cwd and
     const secondCanvas = await h.page.evaluate(() => activeCanvas.id);
     assert.notEqual(firstCanvas, secondCanvas);
     const second = await startTerminal(h.page, { title: 'Foreground shell', cwd: root });
+    await h.page.selectOption('#workspace-theme', 'paper');
+    await h.page.evaluate(id => { select(id); setTerminalTheme('current'); }, second.id);
+    assert.deepEqual(await h.page.evaluate(() => [...sessions.values()].map(s => s.terminal.options.theme.background)), ['#faf7f0', '#15191f']);
     await until(async () => (await h.state()).host.terminals.every(card => card.cwd), 'Shell folders did not become available.');
     // More than the 256,000-unit high-water mark; fewer than 5,000 visual lines of scrollback.
     await input(h.page, first.id, `Set-Location -LiteralPath ${psQuote(root + '\\src')}; for ($i=0; $i -lt 600; $i++) { [Console]::WriteLine(('BG{0:D4}:' -f $i) + ('x' * 480)) }; [Console]::WriteLine('BACKGROUND_OUTPUT_COMPLETE')\r`);
@@ -39,6 +42,7 @@ test('native background canvases retain processes, backpressure, output, cwd and
     await h.page.selectOption('#canvas-list', firstCanvas);
     assert.deepEqual(await h.page.evaluate(() => workspace.camera), { x: 83, y: -51, z: .8 });
     assert.equal(await h.page.evaluate(() => sessions.get(workspace.cards[0].id).terminal === originalTerminal), true);
+    assert.equal(await h.page.locator('#workspace-theme').inputValue(), 'paper');
     const output = await h.page.evaluate(id => {
         const buffer = sessions.get(id).terminal.buffer.active;
         return Array.from({ length: buffer.length }, (_, line) => buffer.getLine(line)?.translateToString(true) || '').join('\n');
@@ -66,6 +70,7 @@ test('native recovery restores every canvas, last active canvas, order, items an
     try {
         const first = await startTerminal(h.page, { title: 'Remembered first', cwd: root });
         await h.page.evaluate(id => {
+            select(id); setTerminalTheme('paper'); setTerminalTheme('midnight', true);
             workspace.camera = { x: 11, y: 22, z: .65 }; setFocus(id);
             createCanvas('Project two');
             addItem(makeItem('note', { x: 50, y: 60, w: 200, h: 200 }));
@@ -81,6 +86,8 @@ test('native recovery restores every canvas, last active canvas, order, items an
         assert.deepEqual(restored, saved);
         assert.equal((await reopened.state()).host.running, 0);
         assert.equal(await reopened.page.evaluate(() => sessions.size), 2);
+        assert.equal(await reopened.page.locator('#workspace-theme').inputValue(), 'midnight');
+        assert.deepEqual(await reopened.page.evaluate(() => [...sessions.values()].map(s => s.terminal.options.theme.background)).then(backgrounds => backgrounds.sort()), ['#101827', '#faf7f0']);
         await reopened.page.selectOption('#canvas-list', saved.canvases[1].id);
         assert.equal(await reopened.page.evaluate(() => focused), saved.canvases[1].focused);
         assert.deepEqual(await reopened.page.evaluate(() => workspace.camera), saved.canvases[1].camera);

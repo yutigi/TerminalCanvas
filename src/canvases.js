@@ -17,6 +17,7 @@ function workspaceSnapshot() {
     rememberCanvas();
     const snapshot = { version: 3, name: workspace.name, camera: workspace.camera,
         cards: canvasStates.flatMap(canvas => canvas.board.cards), items: canvasStates.flatMap(canvas => canvas.board.items) };
+    if (workspace.terminalTheme) snapshot.terminalTheme = workspace.terminalTheme;
     if (canvasExtended) {
         snapshot.canvases = canvasStates.map(canvas => ({ id: canvas.id, name: canvas.name, camera: canvas.board.camera,
             cardIds: canvas.board.cards.map(card => card.id), itemIds: canvas.board.items.map(item => item.id),
@@ -77,7 +78,7 @@ function revealCanvas(canvas, { restoreKeyboard = true } = {}) {
     // The saved camera already belongs to this canvas's Focus/sidebar state. Reapplying
     // the chrome must not compensate it again on every trip between canvases.
     renderSidebar({ preserveCenter: false });
-    renderCamera(); renderLines(); applySelection(false); renderHistoryButtons(); renderCanvases();
+    renderCamera(); renderLines(); applySelection(false); renderHistoryButtons(); renderCanvases(); renderThemeControls();
     if (restoreKeyboard) {
         if (typing && sessions.get(focused || selected)?.status === 'running') sessions.get(focused || selected).terminal?.focus();
         else viewport.focus({ preventScroll: true });
@@ -99,7 +100,7 @@ function switchCanvas(id) {
 function createCanvas(name = `Canvas ${canvasStates.length + 1}`) {
     if (canvasLocked()) return false;
     const canvas = canvasState({ name });
-    canvasExtended = true; canvasStates.push(canvas); switchCanvas(canvas.id);
+    canvasExtended = true; canvasStates.push(canvas); setWorkspaceTerminalTheme(workspace.terminalTheme); switchCanvas(canvas.id);
     return canvas;
 }
 function reorderCanvas(delta) {

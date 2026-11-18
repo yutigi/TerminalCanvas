@@ -133,6 +133,40 @@ test('many canvases can be created, reordered, renamed, and restored with indepe
     assert.deepEqual(json(context, 'workspaceSnapshot()'), saved);
 });
 
+test('workspace themes reach hidden canvases, survive save and reload, and respect independent history', async () => {
+    const board = twoCanvases(); board.terminalTheme = 'midnight'; board.cards[1].theme = 'paper';
+    const { context, elements, calls } = await boot(board, { terminals: true });
+    const backgrounds = () => json(context, '[...sessions.values()].map(s => s.terminal.options.theme.background)');
+    const themes = require('../src/terminal-themes.js');
+    assert.deepEqual(backgrounds(), [themes.midnight.background, themes.paper.background]);
+    vm.runInContext(`
+        globalThis.terminalsBefore = [...sessions.values()].map(s => s.terminal);
+        addItem(makeItem('note', { x: 10, y: 20, w: 100, h: 100 }));
+        switchCanvas('canvas-1'); setTerminalTheme('current'); setTerminalTheme('paper', true);
+        switchCanvas('canvas-0'); undo();
+    `, context);
+    assert.equal(json(context, 'workspace.items.length'), 0);
+    assert.equal(elements.get('#workspace-theme').value, 'paper', 'an unrelated undo keeps the shared default');
+    assert.deepEqual(backgrounds(), [themes.paper.background, themes.current.background]);
+    vm.runInContext(`switchCanvas('canvas-1'); undo()`, context);
+    assert.deepEqual(backgrounds(), [themes.midnight.background, themes.current.background]);
+    vm.runInContext('redo(); undo(); undo(); redo(); redo(); createCanvas("New canvas")', context);
+    assert.equal(elements.get('#workspace-theme').value, 'paper', 'new canvases inherit the workspace default');
+    assert.equal(json(context, '[...sessions.values()].every((s, index) => s.terminal === terminalsBefore[index])'), true);
+    await vm.runInContext('save()', context);
+    const saved = JSON.parse(JSON.stringify(calls.find(call => call.action === 'save').payload));
+    assert.equal(saved.terminalTheme, 'paper');
+    assert.equal(saved.canvases.length, 3);
+    assert.equal(saved.cards[1].theme, 'current');
+    context.saved = saved; vm.runInContext('loadWorkspace(saved)', context);
+    assert.deepEqual(json(context, 'workspaceSnapshot()'), saved);
+    assert.deepEqual(backgrounds(), [themes.paper.background, themes.current.background]);
+    vm.runInContext(`switchCanvas('canvas-0'); setTerminalTheme('current', true)`, context);
+    assert.equal(json(context, '"terminalTheme" in workspaceSnapshot()'), false);
+    assert.equal(json(context, 'canvasStates.every(canvas => !("terminalTheme" in canvas.board))'), true);
+    assert.equal(calls.some(call => ['start', 'stop'].includes(call.action)), false);
+});
+
 test('hidden canvases keep complete writes, acknowledgments, cwd and session metadata without fitting', async () => {
     const board = twoCanvases(), hiddenId = board.cards[1].id;
     const { context, bridge, onEvent, calls, elements } = await boot(board, { terminals: true });
@@ -432,6 +466,9 @@ test('canvas input before the workspace loads is ignored instead of throwing', a
     viewport.dispatch('wheel', { ctrlKey: true, deltaY: -100 });
     viewport.dispatch('pointerdown', { target: viewport });
     viewport.dispatch('pointerdown', { target: viewport, shiftKey: true });
+    elements.get('#workspace-theme').value = 'paper';
+    elements.get('#workspace-theme').onchange();
+    assert.equal(elements.get('#workspace-theme').value, 'current');
     assert.equal(viewport.captured.size, 0);
 });
 
@@ -743,7 +780,10 @@ test('the style toolbar colors selected items and sizes only items that hold tex
     const bar = elements.get('#style-toolbar'), sizes = elements.get('#style-sizes');
     assert.equal(bar.hidden, true, 'nothing selected');
     vm.runInContext(`select(${JSON.stringify(card.id)}); select("pic", { additive: true })`, context);
-    assert.equal(bar.hidden, true, 'terminals and images have no style');
+    assert.equal(bar.hidden, false, 'terminals take a color even alongside images');
+    assert.equal(sizes.hidden, true, 'terminal text size still uses its own controls');
+    vm.runInContext('select("pic")', context);
+    assert.equal(bar.hidden, true, 'images have no style');
     vm.runInContext('select("frame"); select("wire", { additive: true })', context);
     assert.deepEqual([bar.hidden, sizes.hidden], [false, true], 'frames and lines take a color but no text size');
     vm.runInContext('select("a"); select("box", { additive: true }); select("wire", { additive: true }); select("pic", { additive: true })', context);
@@ -757,6 +797,105 @@ test('the style toolbar colors selected items and sizes only items that hold tex
     assert.deepEqual(style(), [['a', null, null], ['box', null, null], ['frame', null, null], ['pic', null, null], ['wire', null, null]], 'defaults are stored as absent fields');
     vm.runInContext(`setFocus(${JSON.stringify(card.id)})`, context);
     assert.equal(bar.hidden, true, 'focus mode hides the style toolbar');
+});
+
+test('terminal card colors share the item palette, clear to absent, and undo across mixed selections', async () => {
+    const board = createWorkspace(); board.cards.push(createCard()); board.items.push(note('a', 700, 0));
+    const { context, elements } = await boot(board, { terminals: true });
+    vm.runInContext('select(workspace.cards[0].id); select("a", { additive: true }); setItemColor("purple")', context);
+    assert.deepEqual(json(context, '[workspace.cards[0].color, workspace.items[0].color]'), ['purple', 'purple']);
+    const session = vm.runInContext('sessions.get(workspace.cards[0].id)', context);
+    assert.ok(session.element.classList.contains('color-purple'));
+    assert.ok(elements.get('#outline').children[0].classList.contains('color-purple'));
+    assert.ok(elements.get('#minimap-cards').children[0].classList.contains('color-purple'));
+    vm.runInContext('setItemColor("purple"); setItemColor("invalid")', context);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1, 'repeated and invalid colors add no step');
+    vm.runInContext('setItemColor("default")', context);
+    assert.equal(json(context, '"color" in workspace.cards[0]'), false);
+    assert.equal(session.element.classList.contains('colored'), false);
+    vm.runInContext('undo()', context);
+    assert.deepEqual(json(context, '[workspace.cards[0].color, workspace.items[0].color]'), ['purple', 'purple']);
+    vm.runInContext('undo()', context);
+    assert.equal(json(context, '"color" in workspace.cards[0]'), false);
+    vm.runInContext('redo(); redo()', context);
+    assert.equal(json(context, '"color" in workspace.cards[0]'), false);
+    assert.equal(session, vm.runInContext('sessions.get(workspace.cards[0].id)', context));
+});
+
+test('workspace themes and per-terminal overrides apply live and undo without resetting terminals', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard({ theme: 'current' }));
+    const { context, elements, calls } = await boot(board, { terminals: true });
+    const sessions = Array.from(vm.runInContext('[...sessions.values()]', context)), terminals = sessions.map(s => s.terminal);
+    for (const s of sessions) {
+        s.status = 'running';
+        s.terminal.scrollback = ['kept output']; s.terminal.selection = 'selected output';
+        s.terminal.reset = s.terminal.dispose = () => assert.fail('theme changes must preserve the terminal');
+    }
+    const backgrounds = () => sessions.map(s => s.terminal.options.theme.background);
+    const themes = require('../src/terminal-themes.js');
+    const current = themes.current.background, midnight = themes.midnight.background, paper = themes.paper.background;
+    assert.deepEqual(backgrounds(), [current, current]);
+    elements.get('#workspace-theme').value = 'midnight'; elements.get('#workspace-theme').onchange();
+    assert.deepEqual(backgrounds(), [midnight, current], 'an explicit Current overrides the workspace default');
+    vm.runInContext('select(workspace.cards[1].id); setTerminalTheme("paper")', context);
+    assert.deepEqual(backgrounds(), [midnight, paper]);
+    vm.runInContext('setTerminalTheme("paper"); setTerminalTheme("invalid")', context);
+    assert.equal(json(context, 'boardHistory.undo.length'), 2);
+    elements.get('#terminal-theme').value = ''; elements.get('#terminal-theme').onchange();
+    assert.equal(json(context, '"theme" in workspace.cards[1]'), false);
+    assert.deepEqual(backgrounds(), [midnight, midnight]);
+    vm.runInContext('undo(); undo(); undo()', context);
+    assert.deepEqual(backgrounds(), [current, current]);
+    assert.equal(json(context, '"terminalTheme" in workspace'), false);
+    assert.equal(elements.get('#workspace-theme').value, 'current');
+    vm.runInContext('redo(); redo(); redo(); setTerminalTheme("current", true)', context);
+    assert.deepEqual(backgrounds(), [current, current]);
+    assert.equal(json(context, '"terminalTheme" in workspace'), false);
+    vm.runInContext('undo()', context);
+    assert.deepEqual(backgrounds(), [midnight, midnight]);
+    for (let i = 0; i < terminals.length; i++) {
+        assert.equal(sessions[i].terminal, terminals[i]);
+        assert.deepEqual(terminals[i].scrollback, ['kept output']);
+        assert.equal(terminals[i].selection, 'selected output');
+        assert.equal(sessions[i].status, 'running');
+    }
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'no PTY commands are sent');
+    assert.equal(json(context, 'JSON.parse(JSON.stringify(workspace)).terminalTheme'), 'midnight');
+});
+
+test('mixed terminal themes, grouped selection, and global history keep new terminals and closed terminals safe', async () => {
+    const board = createWorkspace();
+    board.cards.push(createCard({ theme: 'paper', groups: ['g'] }), createCard({ groups: ['g'] }));
+    const { context, elements } = await boot(board, { terminals: true });
+    vm.runInContext('select(workspace.cards[0].id)', context);
+    assert.equal(elements.get('#terminal-theme').value, 'mixed');
+    vm.runInContext('setTerminalTheme("midnight")', context);
+    assert.equal(elements.get('#terminal-theme').value, 'midnight');
+    vm.runInContext('setTerminalTheme("paper", true); removeCard(workspace.cards[0]); undo(); undo()', context);
+    assert.equal(json(context, 'workspace.cards.length'), 1, 'undo never recreates the closed card');
+    assert.equal(json(context, '"theme" in workspace.cards[0]'), false);
+    assert.equal(json(context, '"terminalTheme" in workspace'), false);
+});
+
+test('saved coloring loads before mounting, new cards inherit, and older workspaces reset the theme controls', async () => {
+    const saved = require('./golden/terminal-styles.json');
+    const { context, elements, calls } = await boot(saved, { terminals: true });
+    assert.equal(elements.get('#workspace-theme').value, 'midnight');
+    assert.deepEqual(json(context, '[...sessions.values()].map(s => s.terminal.options.theme.background)'), ['#faf7f0', '#15191f', '#101827']);
+    await vm.runInContext('save()', context);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.find(call => call.action === 'save').payload)), saved);
+    for (const version of [1, 2, 3]) {
+        context.older = { ...createWorkspace(), version, cards: [createCard()] };
+        vm.runInContext('loadWorkspace(older)', context);
+        assert.equal(elements.get('#workspace-theme').value, 'current');
+        assert.equal(json(context, '[...sessions.values()][0].terminal.options.theme.background'), '#15191f');
+        assert.equal(json(context, 'boardHistory.undo.length'), 0);
+    }
+    vm.runInContext('setTerminalTheme("paper", true); mount({ ...workspace.cards[0], id: "new-terminal" })', context);
+    assert.equal(json(context, 'sessions.get("new-terminal").terminal.options.theme.background'), '#faf7f0');
+    context.empty = createWorkspace();
+    vm.runInContext('loadWorkspace(empty); setTerminalTheme("midnight", true); undo()', context);
+    assert.equal(json(context, '"terminalTheme" in workspace'), false, 'an empty workspace default is undoable');
 });
 
 const drag = (element, from, to) => {
@@ -1412,8 +1551,8 @@ test('Ctrl/Cmd+0 resets terminal text size while Ctrl+- and Ctrl+= still reach t
     assert.deepEqual(size(first), [null, 12]);
 });
 
-test('Duplicate copies the source terminal\'s text size, including through folder review', async () => {
-    const board = createWorkspace(); board.cards.push({ ...createCard(), fontSize: 20 }, createCard());
+test('Duplicate copies terminal text size, color, and theme, including through folder review', async () => {
+    const board = createWorkspace(); board.cards.push({ ...createCard(), fontSize: 20, color: 'red', theme: 'paper' }, createCard());
     const { context, bridge, calls, elements } = await boot(board);
     vm.runInContext('start = async card => invoke("start", { card })', context);
     let review = false;
@@ -1426,16 +1565,19 @@ test('Duplicate copies the source terminal\'s text size, including through folde
     await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
     await vm.runInContext('duplicateTerminal(workspace.cards[1])', context);
     assert.deepEqual(json(context, 'workspace.cards.map(card => card.fontSize ?? null)'), [20, null, 20, null]);
+    assert.deepEqual(json(context, 'workspace.cards.map(card => [card.color ?? null, card.theme ?? null])'), [['red', 'paper'], [null, null], ['red', 'paper'], [null, null]]);
     assert.equal(calls.filter(c => c.action === 'start')[0].payload.card.fontSize, 20, 'the host receives the size with the card');
     review = true;
     await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
     assert.equal(elements.get('#launch-dialog').open, true);
     elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush(); await flush();
     assert.deepEqual(json(context, 'workspace.cards.map(card => card.fontSize ?? null)'), [20, null, 20, null, 20]);
+    assert.deepEqual(json(context, '[workspace.cards.at(-1).color, workspace.cards.at(-1).theme]'), ['red', 'paper']);
     // An ordinary New terminal dialog afterwards starts at the default.
     vm.runInContext('openLaunch()', context);
     elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush(); await flush();
     assert.equal(json(context, 'workspace.cards.at(-1).fontSize ?? null'), null);
+    assert.deepEqual(json(context, '[workspace.cards.at(-1).color ?? null, workspace.cards.at(-1).theme ?? null]'), [null, null]);
 });
 
 test('pending paste cannot write to a stopped or disposed terminal and clipboard errors are shown', async () => {
@@ -2232,7 +2374,7 @@ test('Alt+arrow keys select the nearest terminal without typing in it, highlight
     let now = state();
     assert.equal(now.selected, id('A'));
     assert.deepEqual(now.highlighted, [id('A')]);
-    assert.deepEqual(now.camera, { x: 100, y: 48, z: .8 }, 'a terminal already in view does not move the canvas');
+    assert.deepEqual(now.camera, { x: 100, y: 72, z: .8 }, 'selection reveals the terminal below its newly visible style toolbar');
     assert.ok(viewport.focusCount >= 1, 'the keyboard stays on the board');
     // B is far to the right, beyond the view: the canvas pans just enough, keeping zoom.
     navigationKey(context, 'ArrowRight', { altKey: true });
@@ -2240,7 +2382,7 @@ test('Alt+arrow keys select the nearest terminal without typing in it, highlight
     assert.equal(now.selected, id('B'));
     assert.deepEqual(now.highlighted, [id('B')]);
     assert.equal(now.camera.z, .8);
-    assert.equal(now.camera.y, 48);
+    assert.equal(now.camera.y, 72);
     assert.equal(now.camera.x + (2000 + 660) * .8, 1100 - 24, 'the right edge lands just inside the view');
     // No terminal further right: the selection stays where it is.
     navigationKey(context, 'ArrowRight', { altKey: true });
@@ -2404,7 +2546,7 @@ test('a terminal revealed from the keyboard clears the minimap and toolbars', as
     assert.equal(camera.z, 1);
     const shown = { x: camera.x + 500, y: camera.y + 900, w: 660, h: 430 };
     const overlays = json(context, 'canvasOverlays()');
-    assert.equal(overlays.length, 3, 'the hidden style toolbar is left out');
+    assert.equal(overlays.length, 4, 'terminal selection now shows the style toolbar too');
     for (const box of overlays) assert.equal(vm.runInContext('Geometry', context).intersects(shown, box), false, JSON.stringify({ shown, box }));
     assert.ok(shown.x >= 24 && shown.y >= 24 && shown.x + shown.w <= 1100 - 24 && shown.y + shown.h <= 720 - 24, JSON.stringify(shown));
 });

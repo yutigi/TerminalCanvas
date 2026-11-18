@@ -22,6 +22,25 @@ fn multiple() -> Value {
 }
 
 #[test]
+fn canvas_recovery_keeps_workspace_theme_and_hidden_terminal_styles() {
+    let mut raw = multiple();
+    raw["terminalTheme"] = json!("midnight");
+    raw["cards"][1]["color"] = json!("red");
+    raw["cards"][1]["theme"] = json!("current");
+    let mut recovery = WorkspaceRecovery::new();
+    recovery.accept(&raw).unwrap();
+    let saved = recovery.persist(Some(&raw)).unwrap();
+    assert_eq!(saved.to_value(), raw);
+    assert_eq!(validate_workspace(&saved.to_value()).unwrap(), saved);
+    raw["canvases"] = json!([]);
+    raw["terminalTheme"] = json!("invalid");
+    assert_eq!(
+        validate_workspace(&raw).unwrap_err().to_string(),
+        "Unsupported terminal theme."
+    );
+}
+
+#[test]
 fn many_canvases_roundtrip_without_a_fixed_count_limit() {
     let mut raw = create_workspace().to_value();
     raw["canvases"] = (0..4096)
