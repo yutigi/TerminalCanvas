@@ -11,6 +11,7 @@ const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 
 pub(crate) struct Mirror {
     board: Option<Workspace>,
+    epoch: Option<u64>,
     terminals: Value,
     output: VecDeque<(String, String)>,
     bytes: usize,
@@ -20,6 +21,7 @@ impl Mirror {
     pub fn new() -> Self {
         Self {
             board: None,
+            epoch: None,
             terminals: Value::Null,
             output: VecDeque::new(),
             bytes: 0,
@@ -44,18 +46,28 @@ impl Mirror {
                 }
             }
         }
-        if matches!(event["type"].as_str(), Some("data" | "exit" | "cwd" | "metadata")) {
+        if matches!(
+            event["type"].as_str(),
+            Some("data" | "exit" | "cwd" | "metadata" | "title")
+        ) {
             let _ = events.send(event.clone());
         }
     }
 
-    pub fn sync(&mut self, board: &Workspace, manager: &TerminalManager, events: &broadcast::Sender<Value>) {
-        if self.board.as_ref() != Some(board) {
+    pub fn sync(
+        &mut self,
+        board: &Workspace,
+        epoch: u64,
+        manager: &TerminalManager,
+        events: &broadcast::Sender<Value>,
+    ) {
+        if self.board.as_ref() != Some(board) || self.epoch != Some(epoch) {
             self.output
                 .retain(|(id, _)| board.cards.iter().any(|card| &card.id == id));
             self.bytes = self.output.iter().map(|(_, data)| data.len()).sum();
             self.board = Some(board.clone());
-            let _ = events.send(json!({ "type": "remote-workspace", "workspace": board }));
+            self.epoch = Some(epoch);
+            let _ = events.send(json!({ "type": "remote-workspace", "workspace": board, "titleEpoch": epoch }));
         }
         let terminals = Self::terminals(board, manager);
         if self.terminals != terminals {

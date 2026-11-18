@@ -21,8 +21,10 @@ pub struct CardMetadata {
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceRecovery {
+    epoch: u64,
     board: Workspace,
     metadata: HashMap<String, CardMetadata>,
+    titles: HashMap<String, Card>,
 }
 
 impl Default for WorkspaceRecovery {
@@ -34,8 +36,10 @@ impl Default for WorkspaceRecovery {
 impl WorkspaceRecovery {
     pub fn new() -> Self {
         WorkspaceRecovery {
+            epoch: 0,
             board: create_workspace(),
             metadata: HashMap::new(),
+            titles: HashMap::new(),
         }
     }
 
@@ -43,16 +47,27 @@ impl WorkspaceRecovery {
         &self.board
     }
 
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
     /// Starts over with `board`, forgetting observed metadata.
     pub fn reset(&mut self, board: Workspace) {
+        self.epoch = self.epoch.wrapping_add(1);
         self.board = board;
         self.metadata.clear();
+        self.titles.clear();
     }
 
     /// Validates a renderer snapshot and applies observed metadata to it, without keeping it.
     pub fn merge(&self, raw: &Value) -> Result<Workspace> {
         let mut board = validate_workspace(raw)?;
         for card in &mut board.cards {
+            if let Some(named) = self.titles.get(&card.id) {
+                card.title.clone_from(&named.title);
+                card.title_mode = named.title_mode;
+                card.title_revision = named.title_revision;
+            }
             if let Some(metadata) = self.metadata.get(&card.id) {
                 card.cwd.clone_from(&metadata.cwd);
                 if metadata.session.is_some() {
@@ -66,7 +81,32 @@ impl WorkspaceRecovery {
     /// Merges a renderer snapshot and keeps it as the current board.
     pub fn accept(&mut self, raw: &Value) -> Result<&Workspace> {
         self.board = self.merge(raw)?;
+        self.titles
+            .retain(|id, _| self.board.cards.iter().any(|card| &card.id == id));
         Ok(&self.board)
+    }
+
+    /// The actor is the sole writer of naming decisions. Stale renderer saves cannot undo them.
+    pub fn rename(&mut self, id: &str, mode: crate::titles::TitleMode, title: Option<&str>) -> Result<Card> {
+        let card = self
+            .board
+            .cards
+            .iter_mut()
+            .find(|card| card.id == id)
+            .ok_or_else(|| crate::Error::Invalid("This terminal has closed.".into()))?;
+        let title = match mode {
+            crate::titles::TitleMode::Manual => crate::titles::valid_title(title.unwrap_or_default())
+                .ok_or_else(|| crate::Error::Invalid("Use a name of 1 to 100 characters without controls.".into()))?,
+            crate::titles::TitleMode::Automatic => title
+                .and_then(crate::titles::valid_title)
+                .unwrap_or_else(|| crate::titles::fallback(card)),
+        };
+        card.title = title;
+        card.title_mode = Some(mode);
+        card.title_revision = card.title_revision.saturating_add(1).min(9_007_199_254_740_991);
+        let card = card.clone();
+        self.titles.insert(id.to_owned(), card.clone());
+        Ok(card)
     }
 
     /// Adds a card that is starting, unless the board already has it, and returns the board's copy.
@@ -119,6 +159,47 @@ mod tests {
     use crate::session::Provider;
     use crate::workspace::create_card;
     use serde_json::json;
+
+    #[test]
+    fn naming_decisions_survive_stale_autosaves_export_and_metadata_recovery() {
+        use crate::titles::TitleMode;
+        let mut recovery = WorkspaceRecovery::new();
+        let card = create_card(&json!({ "titleMode": "automatic", "cwd": "/repo" })).unwrap();
+        recovery.remember_card(&json!(card)).unwrap();
+        let stale = recovery.board().to_value();
+        let named = recovery
+            .rename(&card.id, TitleMode::Automatic, Some("Fix session titles"))
+            .unwrap();
+        assert_eq!(named.title_revision, 1);
+        recovery.persist(Some(&stale)).unwrap();
+        assert_eq!(recovery.board().cards[0].title, "Fix session titles");
+        recovery
+            .rename(&card.id, TitleMode::Manual, Some("My chosen name"))
+            .unwrap();
+        recovery
+            .update(
+                &card.id,
+                CardMetadata {
+                    cwd: "/other".into(),
+                    session: Some(session()),
+                },
+            )
+            .unwrap();
+        let saved = recovery.persist(Some(&stale)).unwrap();
+        assert_eq!(saved.cards[0].title, "My chosen name");
+        assert_eq!(saved.cards[0].title_mode, Some(TitleMode::Manual));
+        assert_eq!(saved.cards[0].title_revision, 2);
+        let exported: Value = serde_json::from_str(&saved.to_file_string(None)).unwrap();
+        let reopened = validate_workspace(&exported).unwrap();
+        assert_eq!(reopened, saved);
+        let previous_epoch = recovery.epoch();
+        recovery.reset(reopened);
+        assert_ne!(recovery.epoch(), previous_epoch);
+        let automatic = recovery.rename(&card.id, TitleMode::Automatic, None).unwrap();
+        assert_eq!(automatic.title, "other · Terminal");
+        recovery.accept(&create_workspace().to_value()).unwrap();
+        assert!(recovery.rename(&card.id, TitleMode::Manual, Some("late")).is_err());
+    }
 
     fn session() -> SessionMetadata {
         SessionMetadata {

@@ -473,11 +473,13 @@ test('menu creation retains the clicked world point through the launch form at d
         assert.equal(calls.length, 1, 'choosing a profile does not start anything');
         // A camera change while the form is open must not move the requested world point.
         vm.runInContext('workspace.camera = { x: 12, y: 34, z: 1.2 }', context);
-        elements.get('#terminal-title').value = 'Reviewed name'; elements.get('#cwd').value = '/project';
+        elements.get('#terminal-title').value = 'Reviewed name'; elements.get('#terminal-title').oninput();
+        elements.get('#cwd').value = '/project';
         elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
         const request = calls.find(call => call.action === 'create-card').payload;
         assert.deepEqual({ x: request.x, y: request.y }, expected);
         assert.equal(request.title, 'Reviewed name'); assert.equal(request.cwd, '/project');
+        assert.equal(request.titleMode, 'manual');
         assert.equal(calls.filter(call => call.action === 'start').length, 1);
     }
 });
@@ -486,6 +488,7 @@ test('canceling a menu launch does not create a card or change the next normal l
     const { elements, calls, context } = await boot(createWorkspace(), { respond: (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null });
     vm.runInContext('start = async () => {}', context);
     openMenu(elements); elements.get('#canvas-menu-profiles').children[0].click();
+    elements.get('#terminal-title').value = 'Cancelled manual name'; elements.get('#terminal-title').oninput();
     elements.get('#launch-dialog').close();
     assert.deepEqual(calls.map(call => call.action), ['initialize']);
     elements.get('#add-terminal').click();
@@ -493,6 +496,7 @@ test('canceling a menu launch does not create a card or change the next normal l
     elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
     const request = calls.find(call => call.action === 'create-card').payload;
     assert.deepEqual({ x: request.x, y: request.y }, expected);
+    assert.equal(request.titleMode, 'automatic', 'cancelled menu edits do not make the next ordinary title manual');
 });
 
 test('menu launches reset reviewed duplicate appearance and duplicate review resets menu placement', async () => {
@@ -510,6 +514,7 @@ test('menu launches reset reviewed duplicate appearance and duplicate review res
     elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
     const request = calls.find(call => call.action === 'create-card').payload;
     assert.deepEqual({ x: request.x, y: request.y }, point);
+    assert.equal(request.titleMode, 'automatic');
     assert.deepEqual(json(context, '[workspace.cards.at(-1).fontSize ?? null, workspace.cards.at(-1).color ?? null, workspace.cards.at(-1).theme ?? null, workspace.cards.at(-1).claudeAccount ?? null]'), [null, null, null, null]);
     assert.equal(json(context, 'sessions.get(workspace.cards.at(-1).id).terminal.options.theme.background'), vm.runInContext('window.TerminalCanvasThemes.midnight.background', context));
 
@@ -526,15 +531,20 @@ test('menu launches reset reviewed duplicate appearance and duplicate review res
 });
 
 test('canvas Find opens the shared switcher; a result reveals and highlights without typing', async () => {
-    const board = createWorkspace(); board.cards.push(createCard({ x: 5000, y: -3000, title: 'Far away' }));
-    const { elements, calls, context } = await boot(board);
+    const board = createWorkspace(); board.cards.push(createCard({ x: 5000, y: -3000, title: 'repo · Codex', titleMode: 'automatic' }));
+    const { elements, calls, context, onEvent } = await boot(board);
     const query = elements.get('#switcher-query');
     const before = json(context, 'workspace.camera');
     openMenu(elements); elements.get('#canvas-menu-find').click();
     assert.equal(elements.get('#canvas-menu').hidden, true);
     assert.equal(elements.get('#terminal-switcher').open, true);
     assert.equal(query.focusCount, 1);
-    query.value = 'Far away'; query.oninput(); elements.get('#switcher-results').children[0].click();
+    query.value = 'Far away'; query.oninput();
+    assert.deepEqual(switcherState(context).matches, []);
+    onEvent({ type: 'title', id: board.cards[0].id, title: 'Far away', titleMode: 'automatic', titleRevision: 1 });
+    assert.deepEqual(switcherState(context).matches, [board.cards[0].id]);
+    assert.equal(query.value, 'Far away');
+    elements.get('#switcher-results').children[0].click();
     assert.equal(elements.get('#terminal-switcher').open, false);
     assert.equal(json(context, 'keyboardCurrent'), board.cards[0].id);
     assert.equal(json(context, 'selected'), board.cards[0].id);
@@ -638,6 +648,94 @@ test('restored AI sessions offer Resume and a fresh shell without launching anyt
     assert.deepEqual(calls.map(c => c.action), ['initialize']);
 });
 
+test('automatic titles refresh header, outline, minimap, and search while rejecting stale or malformed events', async () => {
+    const workspace = createWorkspace();
+    const card = createCard({ title: 'repo · Codex', titleMode: 'automatic' }); workspace.cards.push(card);
+    const { context, onEvent, elements, calls } = await boot(workspace);
+    const event = { type: 'title', id: card.id, title: 'Fix ไทย 🚀', titleMode: 'automatic', titleRevision: 1 };
+    onEvent(event);
+    assert.equal(json(context, 'workspace.cards[0].title'), event.title);
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).element.querySelector(".card-title").textContent', context), event.title);
+    assert.equal(elements.get('#outline').children[0].children[1].textContent, event.title);
+    assert.equal(elements.get('#minimap-cards').children[0].title, event.title);
+    elements.get('#search').value = 'ไทย'; elements.get('#search').oninput();
+    assert.equal(elements.get('#outline').children[0].children[1].textContent, event.title);
+    for (const patch of [{ title: 'Old', titleRevision: 0 }, { title: 'bad\nname', titleRevision: 2 },
+        { title: '🚀'.repeat(51), titleRevision: 2 }, { title: 'bidi\u202e', titleRevision: 2 }]) onEvent({ ...event, ...patch });
+    assert.equal(json(context, 'workspace.cards[0].title'), event.title);
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'title events never execute commands');
+});
+
+test('renaming immediately takes manual precedence during pending generation and can return to automatic', async () => {
+    const workspace = createWorkspace();
+    const card = createCard({ title: 'repo · Codex', titleMode: 'automatic' }); workspace.cards.push(card);
+    let finish, revision = 2;
+    const respond = (action, payload) => action === 'rename-title' ? new Promise(resolve => {
+        finish = () => resolve({ card: { title: payload.mode === 'manual' ? payload.title : 'repo · Codex', titleMode: payload.mode, titleRevision: revision++ } });
+    }) : null;
+    const { context, onEvent, elements } = await boot(workspace, { respond });
+    vm.runInContext('sessions.get(workspace.cards[0].id).element.querySelector(".card-title").onclick()', context);
+    assert.equal(elements.get('#title-dialog').open, true);
+    assert.match(elements.get('#title-mode').textContent, /Automatic/);
+    const saving = vm.runInContext('renameTerminal(workspace.cards[0], "manual", "My own title")', context);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(json(context, 'workspace.cards[0].titleMode'), 'manual');
+    onEvent({ type: 'title', id: card.id, title: 'Late generation', titleMode: 'automatic', titleRevision: 1 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'My own title');
+    finish(); await saving;
+    assert.equal(elements.get('#title-dialog').open, false);
+    onEvent({ type: 'title', id: card.id, title: 'Another generation', titleMode: 'automatic', titleRevision: 3 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'My own title');
+    const automatic = vm.runInContext('renameTerminal(workspace.cards[0], "automatic")', context);
+    await new Promise(resolve => setImmediate(resolve));
+    onEvent({ type: 'title', id: card.id, title: 'New session task', titleMode: 'automatic', titleRevision: 4 });
+    finish(); await automatic;
+    assert.equal(json(context, 'workspace.cards[0].titleMode'), 'automatic');
+    assert.equal(json(context, 'workspace.cards[0].title'), 'New session task');
+});
+
+test('legacy names remain manual, invalid edits fail, and pending renames cannot mutate a replacement workspace', async () => {
+    const workspace = createWorkspace(); workspace.cards.push(createCard({ title: 'Codex' }));
+    const { context, onEvent } = await boot(workspace);
+    onEvent({ type: 'title', id: workspace.cards[0].id, title: 'Should not apply', titleMode: 'automatic', titleRevision: 1 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'Codex');
+    for (const invalid of ['', 'a\nb', '🚀'.repeat(51)]) {
+        context.invalid = invalid;
+        await assert.rejects(vm.runInContext('renameTerminal(workspace.cards[0], "manual", invalid)', context), /without controls/);
+    }
+    vm.runInContext(`bridge.invoke = async action => action === 'rename-title'
+        ? new Promise(resolve => { globalThis.finishRename = resolve; }) : ({ ok: true });`, context);
+    const saving = vm.runInContext('renameTerminal(workspace.cards[0], "manual", "Pending")', context);
+    await new Promise(resolve => setImmediate(resolve));
+    vm.runInContext('loadWorkspace({ version: 3, name: "Other", camera: { x: 0, y: 0, z: 1 }, cards: [], items: [] }); finishRename({ card: { title: "Late", titleMode: "manual", titleRevision: 2 } })', context);
+    await saving;
+    assert.deepEqual(json(context, 'workspace.cards'), []);
+});
+
+test('launch defaults are automatic, while typed names stay manual even when equal to the profile default', async () => {
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null;
+    const { elements, calls } = await boot(createWorkspace(), { respond, terminals: true });
+    const flush = () => new Promise(resolve => setImmediate(resolve));
+    elements.get('#add-terminal').onclick();
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(calls.find(call => call.action === 'create-card').payload.titleMode, 'automatic');
+    elements.get('#add-terminal').onclick();
+    elements.get('#terminal-title').value = 'Terminal'; elements.get('#terminal-title').oninput();
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(calls.filter(call => call.action === 'create-card').at(-1).payload.titleMode, 'manual');
+});
+
+test('title events from an earlier workspace cannot rename a restored card with the same ID', async () => {
+    const workspace = createWorkspace();
+    const card = createCard({ title: 'Saved title', titleMode: 'automatic' }); workspace.cards.push(card);
+    const { context, onEvent } = await boot(workspace);
+    vm.runInContext('loadWorkspace(workspace, 20)', context);
+    onEvent({ type: 'title', id: card.id, title: 'Other workspace', titleMode: 'automatic', titleRevision: 50, titleEpoch: 19 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'Saved title');
+    onEvent({ type: 'title', id: card.id, title: 'Current workspace', titleMode: 'automatic', titleRevision: 1, titleEpoch: 20 });
+    assert.equal(json(context, 'workspace.cards[0].title'), 'Current workspace');
+});
+
 test('browser layout updates preserve terminal emulators, local camera, and desktop dimensions', async () => {
     const workspace = createWorkspace(), card = createCard(); workspace.cards.push(card);
     const { context, bridge, onEvent, calls } = await boot(workspace, { remote: true, terminals: true });
@@ -736,6 +834,37 @@ test('browser clients can switch canvases but cannot create, reorder, rename, or
     assert.equal(vm.runInContext(`switchCanvas('canvas-1')`, context), true);
     assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
     assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('browser title events and desktop renames update hidden canvases while rejecting old workspace epochs', async () => {
+    const board = twoCanvases(), id = board.cards[1].id;
+    board.cards.forEach(card => { card.titleMode = 'automatic'; });
+    const { context, onEvent, elements, calls } = await boot(board, { remote: true, terminals: true,
+        respond: action => action === 'initialize' ? { workspace: structuredClone(board), profiles: PROFILES, home: '', platform: 'win32', titleEpoch: 7 } : null });
+    const title = () => vm.runInContext(`anyCard('${id}').title`, context);
+    const header = vm.runInContext(`sessions.get('${id}').element.querySelector('.card-title')`, context);
+    onEvent({ type: 'title', id, title: 'Browser task', titleMode: 'automatic', titleRevision: 1, titleEpoch: 7 });
+    assert.equal(title(), 'Browser task');
+    assert.equal(header.textContent, 'Browser task');
+    assert.equal(header.disabled, true);
+    const update = structuredClone(board);
+    Object.assign(update.cards[1], { title: 'Desktop manual title', titleMode: 'manual', titleRevision: 2 });
+    onEvent({ type: 'remote-workspace', workspace: update, titleEpoch: 7 });
+    assert.equal(header.textContent, 'Desktop manual title');
+    onEvent({ type: 'title', id, title: 'Late automatic title', titleMode: 'automatic', titleRevision: 3, titleEpoch: 7 });
+    assert.equal(title(), 'Desktop manual title');
+    Object.assign(update.cards[1], { title: 'Restored task', titleMode: 'automatic', titleRevision: 0 });
+    onEvent({ type: 'remote-workspace', workspace: update, titleEpoch: 8 });
+    onEvent({ type: 'title', id, title: 'Old workspace', titleMode: 'automatic', titleRevision: 99, titleEpoch: 7 });
+    assert.equal(title(), 'Restored task');
+    onEvent({ type: 'title', id, title: 'Current workspace', titleMode: 'automatic', titleRevision: 1, titleEpoch: 8 });
+    assert.equal(title(), 'Current workspace');
+    await vm.runInContext(`openTitleDialog(anyCard('${id}')); renameTerminal(anyCard('${id}'), 'manual', 'Browser edit')`, context);
+    assert.equal(elements.get('#title-dialog').open, false);
+    assert.equal(title(), 'Current workspace');
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+    vm.runInContext(`switchCanvas('canvas-1')`, context);
+    assert.equal(elements.get('#minimap-cards').children[0].title, 'Current workspace');
 });
 
 test('a rejected browser connection reports the error before the remote banner exists', async () => {
@@ -2152,7 +2281,7 @@ test('Ctrl/Cmd+0 resets terminal text size while Ctrl+- and Ctrl+= still reach t
     assert.deepEqual(size(first), [null, 12]);
 });
 
-test('Duplicate copies terminal text size, color, and theme, including through folder review', async () => {
+test('Duplicate keeps appearance and automatic titles through folder review, then resets launch defaults', async () => {
     const board = createWorkspace(); board.cards.push({ ...createCard(), fontSize: 20, color: 'red', theme: 'paper' }, createCard());
     const { context, bridge, calls, elements } = await boot(board);
     vm.runInContext('start = async card => invoke("start", { card })', context);
@@ -2160,25 +2289,31 @@ test('Duplicate copies terminal text size, color, and theme, including through f
     bridge.invoke = async (action, payload) => {
         calls.push({ action, payload });
         if (action === 'duplicate-directory') return review ? { cwd: 'D:\\review', warning: 'Review folder.' } : { cwd: 'D:\\current' };
-        if (action === 'create-card') return { card: createCard({ cwd: payload.cwd }) };
+        if (action === 'create-card') return { card: createCard(payload) };
         return { ok: true };
     };
     await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
     await vm.runInContext('duplicateTerminal(workspace.cards[1])', context);
     assert.deepEqual(json(context, 'workspace.cards.map(card => card.fontSize ?? null)'), [20, null, 20, null]);
     assert.deepEqual(json(context, 'workspace.cards.map(card => [card.color ?? null, card.theme ?? null])'), [['red', 'paper'], [null, null], ['red', 'paper'], [null, null]]);
+    assert.deepEqual(calls.filter(c => c.action === 'create-card').map(c => c.payload.titleMode), ['automatic', 'automatic']);
     assert.equal(calls.filter(c => c.action === 'start')[0].payload.card.fontSize, 20, 'the host receives the size with the card');
     review = true;
     await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
     assert.equal(elements.get('#launch-dialog').open, true);
+    elements.get('#terminal-title').value = 'Review this task'; elements.get('#terminal-title').oninput();
+    elements.get('#profile').onchange();
+    assert.equal(elements.get('#terminal-title').value, 'Review this task', 'profile changes preserve a typed name');
     elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush(); await flush();
     assert.deepEqual(json(context, 'workspace.cards.map(card => card.fontSize ?? null)'), [20, null, 20, null, 20]);
     assert.deepEqual(json(context, '[workspace.cards.at(-1).color, workspace.cards.at(-1).theme]'), ['red', 'paper']);
+    assert.deepEqual(json(context, '[workspace.cards.at(-1).title, workspace.cards.at(-1).titleMode]'), ['Review this task', 'manual']);
     // An ordinary New terminal dialog afterwards starts at the default.
     vm.runInContext('openLaunch()', context);
     elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush(); await flush();
     assert.equal(json(context, 'workspace.cards.at(-1).fontSize ?? null'), null);
     assert.deepEqual(json(context, '[workspace.cards.at(-1).color ?? null, workspace.cards.at(-1).theme ?? null]'), [null, null]);
+    assert.equal(json(context, 'workspace.cards.at(-1).titleMode'), 'automatic');
 });
 
 test('pending paste cannot write to a stopped or disposed terminal and clipboard errors are shown', async () => {
@@ -3203,8 +3338,8 @@ test('switcher reveals a distant terminal at the wheel zoom and canvas scrolling
 
 test('switcher live titles and reveal preserve terminal colors, themes, and running instances', async () => {
     const board = createWorkspace(); board.terminalTheme = 'midnight'; board.camera.z = .65;
-    board.cards.push(createCard({ title: 'Task one', color: 'purple' }), createCard({ title: 'Task two', color: 'red', theme: 'paper', x: 2400 }));
-    const { context, elements, calls } = await boot(board, { terminals: true });
+    board.cards.push(createCard({ title: 'Task one', color: 'purple' }), createCard({ title: 'Task two', titleMode: 'automatic', color: 'red', theme: 'paper', x: 2400 }));
+    const { context, elements, calls, onEvent } = await boot(board, { terminals: true });
     const live = Array.from(vm.runInContext('[...sessions.values()]', context)), terminals = live.map(s => s.terminal);
     for (const s of live) { s.status = 'running'; s.terminal.selection = 'kept output'; }
     vm.runInContext('openTerminalSwitcher()', context);
@@ -3212,10 +3347,11 @@ test('switcher live titles and reveal preserve terminal colors, themes, and runn
     elements.get('#terminal-switcher').dispatch('keydown', { key: 'ArrowDown' });
     const active = switcherState(context).active;
     assert.equal(active, board.cards[1].id);
-    vm.runInContext("workspace.cards[1].title = 'Task renamed'; refresh()", context);
+    onEvent({ type: 'title', id: active, title: 'Task renamed', titleMode: 'automatic', titleRevision: 1 });
     assert.equal(switcherState(context).active, active);
     assert.equal(switcherState(context).query, 'task');
     assert.equal(elements.get('#switcher-results').children[1].children[1].children[0].textContent, 'Task renamed');
+    assert.equal(live[1].element.querySelector('.card-title').attributes.get('aria-label'), 'Rename terminal: Task renamed');
     const minimap = elements.get('#minimap-cards').children;
     assert.deepEqual(minimap.map(node => node.title), ['Task one', 'Task renamed']);
     assert.ok(minimap[0].classList.contains('color-purple'));
@@ -3233,6 +3369,41 @@ test('switcher live titles and reveal preserve terminal colors, themes, and runn
         assert.equal(live[i].status, 'running');
     }
     assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('switcher searches automatic title events live and honors manual precedence and stale revisions', async () => {
+    const board = createWorkspace();
+    const automatic = createCard({ title: 'repo · Codex', titleMode: 'automatic' });
+    const manual = createCard({ title: 'Manual task', titleMode: 'manual' });
+    board.cards.push(automatic, manual);
+    const { context, elements, onEvent, document } = await boot(board, {
+        respond: (action, payload) => action === 'rename-title'
+            ? { card: { title: payload.title, titleMode: payload.mode, titleRevision: 3 } } : null
+    });
+    vm.runInContext('openTerminalSwitcher()', context);
+    switcherSearch(elements, 'fix ไทย');
+    assert.deepEqual(switcherState(context).matches, []);
+    const event = { type: 'title', id: automatic.id, title: 'Fix ไทย <task>', titleMode: 'automatic', titleRevision: 1 };
+    onEvent(event);
+    assert.deepEqual(switcherState(context).matches, [automatic.id]);
+    assert.equal(elements.get('#switcher-results').children[0].children[1].children[0].textContent, event.title);
+    assert.equal(switcherState(context).active, automatic.id);
+    assert.equal(switcherState(context).query, 'fix ไทย');
+    assert.equal(document.activeElement, elements.get('#switcher-query'));
+    onEvent({ ...event, title: 'Stale', titleRevision: 0 });
+    onEvent({ ...event, id: manual.id, titleRevision: 9 });
+    assert.deepEqual(switcherState(context).matches, [automatic.id]);
+    onEvent({ ...event, title: 'Another task', titleRevision: 2 });
+    assert.deepEqual(switcherState(context).matches, []);
+    switcherSearch(elements, 'another');
+    assert.deepEqual(switcherState(context).matches, [automatic.id]);
+    await vm.runInContext('renameTerminal(workspace.cards[0], "manual", "My task")', context);
+    assert.deepEqual(switcherState(context).matches, []);
+    switcherSearch(elements, 'my task');
+    onEvent({ ...event, title: 'Late generated task', titleRevision: 4 });
+    assert.deepEqual(switcherState(context).matches, [automatic.id]);
+    assert.equal(elements.get('#switcher-results').children[0].children[1].children[0].textContent, 'My task');
+    assert.equal(document.activeElement, elements.get('#switcher-query'));
 });
 
 test('switcher shortcut works with a collapsed sidebar and restores focus without changing sidebar preferences', async () => {
@@ -3487,4 +3658,49 @@ test('Settings › Set up AI agents installs the skill where the user chose and 
     elements.get('#agent-form').onsubmit({ preventDefault() {} }); await flush();
     assert.equal(elements.get('#agent-dialog').open, false);
     assert.equal(calls.filter(c => c.action === 'agent-setup').length, 4);
+});
+
+
+test('automatic titles update hidden canvases and persist without switching or starting terminals', async () => {
+    const board = twoCanvases();
+    board.cards.forEach(card => { card.titleMode = 'automatic'; });
+    const { context, elements, onEvent, calls } = await boot(board);
+    const hidden = board.cards[1].id;
+    const title = () => vm.runInContext(`anyCard('${hidden}').title`, context);
+    const event = { type: 'title', id: hidden, title: 'Background task', titleMode: 'automatic', titleRevision: 1 };
+    onEvent(event);
+    assert.equal(title(), 'Background task');
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-0');
+    assert.equal(vm.runInContext(`sessions.get('${hidden}').element.hidden`, context), true);
+    assert.equal(vm.runInContext(`sessions.get('${hidden}').element.querySelector('.card-title').attributes.get('aria-label')`, context), 'Rename terminal: Background task');
+    onEvent({ ...event, title: 'Stale', titleRevision: 0 });
+    onEvent({ ...event, title: 'Wrong epoch', titleEpoch: 99, titleRevision: 2 });
+    assert.equal(title(), 'Background task');
+    await vm.runInContext('save()', context);
+    assert.equal(calls.find(call => call.action === 'save').payload.cards.find(card => card.id === hidden).title, 'Background task');
+    vm.runInContext('switchCanvas("canvas-1"); openTerminalSwitcher()', context);
+    assert.equal(elements.get('#outline').children[0].children[1].textContent, 'Background task');
+    assert.equal(elements.get('#minimap-cards').children[0].title, 'Background task');
+    elements.get('#switcher-query').value = 'Background'; elements.get('#switcher-query').oninput();
+    assert.deepEqual(switcherState(context).matches, [hidden]);
+    vm.runInContext(`anyCard('${hidden}').titleMode = 'manual'; switchCanvas('canvas-0')`, context);
+    onEvent({ ...event, title: 'Late automatic', titleRevision: 3 });
+    assert.equal(title(), 'Background task');
+    assert.equal(calls.some(call => ['start', 'stop'].includes(call.action)), false);
+});
+
+test('pending title renames finish on their owning canvas after a canvas switch', async () => {
+    const board = twoCanvases(), id = board.cards[0].id;
+    board.cards[0].titleMode = 'automatic';
+    let finish;
+    const { context, onEvent } = await boot(board, { respond: (action, payload) => action === 'rename-title'
+        ? new Promise(resolve => { finish = () => resolve({ card: { title: payload.title, titleMode: 'manual', titleRevision: 2 } }); }) : null });
+    const pending = vm.runInContext('renameTerminal(workspace.cards[0], "manual", "Chosen name")', context);
+    await flush();
+    vm.runInContext('switchCanvas("canvas-1")', context);
+    onEvent({ type: 'title', id, title: 'Deferred generated name', titleMode: 'automatic', titleRevision: 3 });
+    finish(); await pending;
+    assert.equal(vm.runInContext(`anyCard('${id}').title`, context), 'Chosen name');
+    assert.equal(vm.runInContext(`anyCard('${id}').titleRevision`, context), 2);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
 });

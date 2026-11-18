@@ -212,6 +212,145 @@ impl Drop for Harness {
 }
 
 #[tokio::test]
+async fn title_edits_survive_stale_saves_export_import_and_restart_without_starting_terminals() {
+    let h = Harness::new();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    let card = create_card(&json!({"cwd":h.folder,"titleMode":"automatic"})).unwrap();
+    let mut board = create_workspace().to_value();
+    board["cards"] = json!([card]);
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    let manual = h
+        .host
+        .command(
+            "rename-title",
+            Some(&json!({"id":card.id,"mode":"manual","title":"Release checks","titleEpoch":initial["titleEpoch"]})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(manual["card"]["titleMode"], "manual");
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    assert_eq!(h.read_saved()["cards"][0]["title"], "Release checks");
+    let export = h.folder.join("portable.terminalcanvas");
+    h.platform.chosen.lock().unwrap().push_back(Some(export.clone()));
+    h.host.command("export", Some(&board)).await.unwrap();
+    let exported: Value = serde_json::from_slice(&std::fs::read(&export).unwrap()).unwrap();
+    assert_eq!(exported["cards"][0]["title"], "Release checks");
+    h.host.command("new", None).await.unwrap();
+    h.platform.chosen.lock().unwrap().push_back(Some(export));
+    let imported = h.host.command("open", None).await.unwrap();
+    assert_eq!(imported["workspace"]["cards"][0]["titleMode"], "manual");
+    assert_eq!(h.host.running().await, 0);
+    assert_eq!(h.host.command("rename-title", Some(&json!({"id":card.id,"mode":"manual","title":"Stale workspace edit","titleEpoch":initial["titleEpoch"]}))).await.unwrap_err(), "The workspace has changed.");
+    let restored = h.host.command("initialize", None).await.unwrap();
+    assert_eq!(restored["workspace"]["cards"][0]["title"], "Release checks");
+    assert_eq!(h.host.running().await, 0);
+    let automatic = h
+        .host
+        .command("rename-title", Some(&json!({"id":card.id,"mode":"automatic"})))
+        .await
+        .unwrap();
+    assert_eq!(automatic["card"]["titleMode"], "automatic");
+    assert!(automatic["card"]["title"].as_str().unwrap().ends_with(" · Terminal"));
+}
+
+#[tokio::test]
+async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_manual_precedence() {
+    let h = Harness::new();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    let mut card = create_card(&json!({"cwd":h.folder,"titleMode":"automatic"})).unwrap();
+    card.claude_account = Some("Naming test".into());
+    h.host
+        .command("start", Some(&json!({"card":card,"cols":80,"rows":24})))
+        .await
+        .unwrap();
+    let project: String = h
+        .folder
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let folder = h
+        .folder
+        .join("claude-accounts")
+        .join("Naming test")
+        .join("projects")
+        .join(project);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("12345678-1234-4321-9876-123456789abc.jsonl"),
+        format!(
+            "{}\n",
+            json!({"sessionId":"12345678-1234-4321-9876-123456789abc","aiTitle":"Fix browser titles ไทย"})
+        ),
+    )
+    .unwrap();
+    let (snapshot, mut events) = h.host.remote_attach().await;
+    assert_eq!(snapshot["titleEpoch"], initial["titleEpoch"]);
+    h.report_session().await;
+    let title = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["type"] == "title" {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(title["title"], "Fix browser titles ไทย");
+    assert_eq!(title["titleEpoch"], initial["titleEpoch"]);
+    h.host.running().await;
+    assert!(
+        h.events.lock().unwrap().contains(&title),
+        "desktop and browsers receive the same title event"
+    );
+    let manual = h
+        .host
+        .command(
+            "rename-title",
+            Some(&json!({"id":card.id,"mode":"manual","title":"My task"})),
+        )
+        .await
+        .unwrap();
+    let board = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["type"] == "remote-workspace" && event["workspace"]["cards"][0]["titleMode"] == "manual" {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(board["workspace"]["cards"][0], json!(manual["card"]));
+    assert_eq!(board["titleEpoch"], initial["titleEpoch"]);
+    let (snapshot, _) = h.host.remote_attach().await;
+    assert_eq!(snapshot["workspace"]["cards"][0]["title"], "My task");
+    h.host.command("close", None).await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_workspace_replacement_broadcasts_a_new_epoch_even_when_the_board_is_identical() {
+    let h = Harness::new();
+    h.host.command("initialize", None).await.unwrap();
+    let (snapshot, mut events) = h.host.remote_attach().await;
+    let replacement = h.host.command("new", None).await.unwrap();
+    assert_eq!(snapshot["workspace"], replacement["workspace"]);
+    assert_ne!(snapshot["titleEpoch"], replacement["titleEpoch"]);
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["type"] == "remote-workspace" && event["titleEpoch"] == replacement["titleEpoch"] {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(event["workspace"], replacement["workspace"]);
+}
+
+#[tokio::test]
 async fn remote_attachment_preserves_desktop_state_sequences_and_event_delivery() {
     let h = Harness::new();
     h.host.command("initialize", None).await.unwrap();
