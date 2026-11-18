@@ -43,6 +43,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom the canvas; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
+- Use the canvas icon in the top toolbar or **Ctrl/Cmd + Shift + B** to hide or show the sidebar, including while typing in a terminal. Click a sidebar section heading to collapse it; its terminal count stays visible. **/** outside text fields and terminals reveals the sidebar search. These choices are remembered on this device, separately from workspace files. Focus mode temporarily hides the sidebar and restores your choice when you return; the toggle or search can reveal it during Focus mode. Small windows keep your manual choice.
 - Move between terminals from the keyboard with **Alt + arrow keys**. See [Keyboard navigation](#keyboard-navigation).
 - Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
 - Use **Duplicate** in a card header or **Ctrl + Shift + D** to start a fresh plain shell in that terminal's current directory. It gets a separate process and empty output; the source launch command and AI session are not copied. Ctrl + D keeps its normal terminal behavior.
@@ -123,6 +124,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl/Cmd + Shift + B | Hide / show sidebar, including inside terminals |
 | Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |
 | Enter, outside a terminal | Type in the selected terminal (a stopped one gets its Start button) |
 | Ctrl + Shift + E | Leave the terminal you are typing in, keeping it selected |
@@ -131,7 +133,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + C in a terminal | Copy selected text, or interrupt with no selection |
 | Ctrl + V / Ctrl + Shift + V in a terminal | Paste clipboard text |
 | Ctrl + Shift + C in a terminal | Copy selected text; no selection leaves clipboard intact |
-| / outside a terminal or input | Search terminals |
+| / outside a terminal or input | Reveal sidebar search and search terminals |
 | V / H | Select / hand tool |
 | T / N / R / O / L / A / F | Text, sticky note, rectangle, ellipse, line, arrow, frame tool |
 | Esc | Return to the Select tool, then clear the selection |
