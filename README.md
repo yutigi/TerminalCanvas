@@ -57,6 +57,40 @@ Paste accepts plain text up to 1 MB (1,048,576 UTF-16 code units), the same limi
 
 ![The in-app shortcut guide explaining selection-aware copy, paste, and interrupt.](docs/images/terminal-clipboard-shortcuts.png)
 
+### Multiple canvases
+
+Use the **Canvas** selector in the sidebar to switch boards. The buttons beneath it create,
+rename, reorder, or delete a canvas. There is no fixed canvas count limit. Each canvas keeps its
+own terminals, items, groups, camera, selection, Focus view, and undo history. The last canvas
+cannot be deleted; deleting another always asks for confirmation and stops only its terminals.
+
+Terminals keep running on hidden canvases. Their output is still parsed and acknowledged, with
+the same backpressure, directory tracking, and 5,000-line scrollback limit as visible terminals.
+Hidden canvases do not fit terminals or paint their board; terminals refit when shown. **New output**,
+**Bell**, and **Exited** indicators appear beside a hidden canvas's name and clear when it is shown.
+
+| Shortcut | Canvas action |
+| --- | --- |
+| Ctrl + Shift + K | Create a canvas |
+| Ctrl + Shift + R | Rename the current canvas |
+| Ctrl + Shift + PageUp / PageDown | Switch to the previous / next canvas |
+| Ctrl + Alt + Shift + PageUp / PageDown | Move the current canvas earlier / later |
+| Ctrl + Shift + Delete | Delete the current canvas, after confirmation |
+
+Use Command in place of Ctrl on macOS. These shortcuts also work inside terminals. Finish a
+drag, image import, terminal creation, or open dialog before changing canvases. Sidebar search,
+Arrange, Fit, and Alt + arrow navigation apply to the current canvas. A terminal jump by ID
+switches to its canvas first; an agent requesting a terminal beside a hidden parent also switches
+to that parent's canvas. Moving terminals between canvases is a follow-up; board items can be
+copied and pasted using the existing clipboard controls.
+
+Save, portable export, autosave, and recovery include all canvases and the last active canvas.
+Restoring a workspace leaves every terminal stopped. Existing format 1/2/3 single-board files
+open as one canvas. Canvas organization uses optional format-3 metadata; an unchanged legacy
+workspace retains its original serialized defaults. Older format-3 apps can read the flat items
+and terminals, but show them on a single board and discard canvas organization if they save.
+The 1,000-item and 64 MB workspace limits still apply across all canvases.
+
 ### Board items
 
 The left canvas toolbar adds items around your terminals. Click to place an item at its default size, or drag to draw it; the tool then returns to Select.

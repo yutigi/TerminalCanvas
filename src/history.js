@@ -80,6 +80,7 @@ function undo() { if (canStepHistory()) stepHistory(boardHistory.undo, boardHist
 function redo() { if (canStepHistory()) stepHistory(boardHistory.redo, boardHistory.undo); }
 function stepHistory(from, to) {
     if (!from.length) return;
+    if (workspaceItemCount() - workspace.items.length + from.at(-1).items.length > ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
     const target = from.pop();
     to.push(snapshotBoard());
     restoreBoard(target);
