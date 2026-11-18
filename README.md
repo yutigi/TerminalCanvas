@@ -40,7 +40,8 @@ even without command-line flags. Release builds reject the `e2e` feature.
 
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
 - Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** focuses the sidebar search; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior.
-- Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom the canvas; over the selected terminal, it changes that terminal's text size instead.
+- Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan.
+- Scroll or two-finger scroll over empty space to zoom the canvas at the pointer. Plain scrolling over terminals, board items, the minimap, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A gesture stays with its starting area until you pause, so crossing a terminal does not change zooming into terminal scrolling. Ctrl + scroll (Command on macOS) also zooms the canvas elsewhere; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
 - Select a terminal and use the canvas style bar to color its frame/title bar. The same seven colors work across terminals and board items; **Default color** restores the original look. Profile badges keep identifying the terminal's tool. Card colors also appear in the sidebar and minimap.
@@ -130,6 +131,8 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |
 | Enter, outside a terminal | Type in the selected terminal (a stopped one gets its Start button) |
 | Ctrl + Shift + E | Leave the terminal you are typing in, keeping it selected |
+| Scroll / two-finger scroll over empty canvas | Zoom at the pointer |
+| Ctrl + scroll (Command on macOS), outside the selected terminal | Zoom at the pointer outside Focus view |
 | Ctrl + scroll over the selected terminal, or in Focus | Change that terminal's text size |
 | Ctrl + 0 in a terminal | Reset its text size |
 | Ctrl + C in a terminal | Copy selected text, or interrupt with no selection |
