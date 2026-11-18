@@ -78,8 +78,16 @@ test('native terminal switcher isolates shell keys, restores focus, and reveals 
         setFocus(null); workspace.camera = { x: 120, y: 60, z: .65 }; renderCamera(); select(id);
         $('#outline-toggle').click(); setSidebarCollapsed(true);
     }, left.id);
-    await key(h.page, 'Control+Shift+p');
     const query = h.page.locator('#switcher-query'), dialog = h.page.locator('#terminal-switcher');
+    await h.page.locator('#viewport').click({ button: 'right', position: { x: 80, y: 120 } });
+    await h.page.locator('#canvas-menu-find').click();
+    await query.waitFor({ state: 'visible' });
+    assert.equal(await h.page.locator('#canvas-menu').isVisible(), false);
+    assert.equal(await h.page.locator('#sidebar').isVisible(), false, 'canvas Find preserves the hidden sidebar');
+    await key(h.page, 'Escape');
+    assert.equal(await h.page.evaluate(() => document.activeElement === viewport), true, 'cancelled canvas Find returns focus to the canvas');
+    await key(h.page, 'Enter');
+    await key(h.page, 'Control+Shift+p');
     await query.waitFor({ state: 'visible' });
     assert.equal(await query.evaluate(node => document.activeElement === node), true);
     assert.equal(await h.page.locator('#sidebar').isVisible(), false, 'the switcher works with the sidebar hidden');
