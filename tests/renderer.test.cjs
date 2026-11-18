@@ -186,7 +186,9 @@ test('renderer initializes an empty workspace and enables the launch dialog', as
     elements.get('#add-terminal').onclick();
     assert.equal(elements.get('#launch-dialog').open, true);
     assert.equal(elements.get('#profile').value, 'shell');
-    assert.deepEqual(calls.map(c => c.action), ['initialize']);
+    // The dialog only lists the Claude accounts it offers.
+    assert.deepEqual(calls.map(c => c.action), ['initialize', 'claude-accounts']);
+    assert.deepEqual(structuredClone(calls[1].payload), {});
     assert.equal(elements.get('#minimap').hidden, true);
     assert.equal(elements.get('#minimap-toggle').disabled, true);
 });
@@ -1374,7 +1376,63 @@ test('Duplicate fallback opens a plain-shell dialog for review and does not laun
     assert.equal(elements.get('#command').value, '');
     assert.equal(elements.get('#launch-error').hidden, false);
     assert.match(elements.get('#launch-error').textContent, /unavailable/);
-    assert.deepEqual(calls.map(c => c.action), ['initialize', 'duplicate-directory']);
+    assert.deepEqual(calls.map(c => c.action), ['initialize', 'duplicate-directory', 'claude-accounts']);
+    assert.deepEqual(structuredClone(calls[2].payload), {}, 'listing accounts creates none');
+});
+
+test('a terminal keeps the Claude account chosen for it and starts with it', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ profile: 'claude' }));
+    const respond = (action, payload) => action !== 'claude-accounts' ? null
+        : payload.create ? { accounts: ['Personal', 'Work'], created: 'Work' } : { accounts: ['Personal'] };
+    const { context, calls, elements } = await boot(board, { respond, terminals: true });
+    const badge = () => vm.runInContext('[...sessions.values()][0].element.querySelector(".card-account")', context);
+    assert.equal(badge().hidden, true);
+    await vm.runInContext('openAccountDialog(workspace.cards[0])', context);
+    assert.equal(elements.get('#account-dialog').open, true);
+    assert.equal(elements.get('#account-select').value, '');
+    assert.deepEqual(elements.get('#account-select').children.map(option => option.value), ['', 'Personal']);
+    elements.get('#account-name').value = ' Work ';
+    elements.get('#account-add').onclick(); await flush();
+    assert.deepEqual(structuredClone(calls.filter(c => c.action === 'claude-accounts').map(c => c.payload)), [{}, { create: 'Work' }]);
+    assert.equal(elements.get('#account-select').value, 'Work');
+    assert.equal(elements.get('#account-name').value, '');
+    elements.get('#account-form').onsubmit({ preventDefault() {} });
+    assert.equal(elements.get('#account-dialog').open, false);
+    assert.equal(json(context, 'workspace.cards[0].claudeAccount'), 'Work');
+    assert.equal(badge().hidden, false);
+    assert.equal(badge().textContent, 'Work');
+    await vm.runInContext('start(workspace.cards[0])', context);
+    assert.equal(calls.find(c => c.action === 'start').payload.card.claudeAccount, 'Work');
+    // A running terminal keeps its account until it starts again; the default removes the field.
+    elements.get('#toast').hidden = true;
+    await vm.runInContext('openAccountDialog(workspace.cards[0])', context);
+    assert.equal(elements.get('#account-select').value, 'Work');
+    elements.get('#account-select').value = '';
+    elements.get('#account-form').onsubmit({ preventDefault() {} });
+    assert.equal(json(context, '"claudeAccount" in workspace.cards[0]'), false);
+    assert.equal(badge().hidden, true);
+    assert.equal(elements.get('#toast').hidden, false);
+    assert.match(elements.get('#toast').textContent, /default Claude sign-in the next time it starts/);
+});
+
+test('new, duplicated, and requested terminals carry a Claude account', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ claudeAccount: 'Work' }));
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) }
+        : action === 'duplicate-directory' ? { cwd: '/repo' } : action === 'claude-accounts' ? { accounts: ['Work'] } : null;
+    const { context, calls, elements } = await boot(board, { respond, terminals: true });
+    await vm.runInContext('duplicateTerminal(workspace.cards[0])', context);
+    assert.equal(json(context, 'workspace.cards[1].claudeAccount'), 'Work');
+    vm.runInContext('openLaunch("claude")', context); await flush();
+    assert.equal(elements.get('#launch-account').value, '');
+    elements.get('#launch-account').value = 'Work';
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(json(context, 'workspace.cards[2].claudeAccount'), 'Work');
+    vm.runInContext('openLaunch("shell")', context); await flush();
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(json(context, '"claudeAccount" in workspace.cards[3]'), false);
+    await vm.runInContext('openRequestedTerminal({ id: workspace.cards[0].id, profile: "shell", title: "Child", cwd: "/repo", command: "" })', context);
+    assert.equal(json(context, 'workspace.cards[4].claudeAccount'), 'Work');
+    assert.deepEqual(calls.filter(c => c.action === 'start').map(c => c.payload.card.claudeAccount ?? null), ['Work', 'Work', null, 'Work']);
 });
 
 test('Duplicate shortcut targets the focused terminal, preserves Ctrl+D, and ignores text fields and repeats', async () => {

@@ -9,6 +9,7 @@
   "permissions": [
     "allow-initialize",
     "allow-create-card",
+    "allow-claude-accounts",
     "allow-autosave",
     "allow-save",
     "allow-save-as",

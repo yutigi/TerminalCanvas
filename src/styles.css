@@ -103,3 +103,5 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .item-shape.size-small{font-size:11px}.item-shape.size-large{font-size:19px}.item-shape.size-huge{font-size:28px}
 /* A terminal reached with the keyboard, while the keyboard is on the board rather than typing in it. */
 .terminal-card.keyboard-current:not(:focus-within){outline:calc(2px / var(--camera-zoom,1)) solid var(--accent);outline-offset:calc(4px / var(--camera-zoom,1));border-color:var(--accent)}.viewport.focus-mode .terminal-card.keyboard-current:not(:focus-within){outline-width:2px;outline-offset:4px}
+/* Claude account: the card badge and the dialog's hint. */
+.card-account{flex-shrink:0;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#d6a181;border:1px solid #d6a18155;background:#d6a18112;border-radius:4px;padding:2px 6px}.field-hint code{font:9px Consolas,monospace;color:#b7c9aa;background:#232e22;padding:2px 5px;border-radius:4px}

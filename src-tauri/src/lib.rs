@@ -74,6 +74,7 @@ macro_rules! actions {
 
 actions! {
     create_card => "create-card",
+    claude_accounts => "claude-accounts",
     autosave => "autosave",
     save => "save",
     save_as => "save-as",
@@ -279,6 +280,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialize,
             create_card,
+            claude_accounts,
             autosave,
             save,
             save_as,

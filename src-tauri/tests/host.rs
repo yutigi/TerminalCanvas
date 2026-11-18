@@ -365,6 +365,46 @@ async fn close_flushes_host_metadata_over_stale_layout_and_reopens_stopped() {
 }
 
 #[tokio::test]
+async fn claude_accounts_are_listed_added_and_kept_by_the_cards_that_use_them() {
+    let h = Harness::new();
+    h.host.command("initialize", None).await.unwrap();
+    let list = |create: Option<&str>| {
+        let payload = create.map_or_else(|| json!({}), |name| json!({ "create": name }));
+        let host = h.host.clone();
+        async move { host.command("claude-accounts", Some(&payload)).await }
+    };
+    assert_eq!(list(None).await.unwrap(), json!({ "accounts": [] }));
+    assert_eq!(
+        list(Some(" Work ")).await.unwrap(),
+        json!({ "accounts": ["Work"], "created": "Work" })
+    );
+    assert_eq!(
+        list(Some("work")).await.unwrap(),
+        json!({ "accounts": ["Work"], "created": "Work" }),
+        "names differing only in case are one account"
+    );
+    assert_eq!(
+        list(Some("../escape")).await.unwrap_err(),
+        "Account names use 1 to 40 letters, digits, spaces, hyphens, or underscores."
+    );
+    let accounts = h.folder.join("claude-accounts");
+    assert!(!h.folder.join("escape").exists());
+    // A card whose account folder is gone recreates it when it starts, and keeps the account.
+    let mut card = json!(create_card(&json!({ "cwd": h.folder })).unwrap());
+    card["claudeAccount"] = json!("Personal");
+    h.host
+        .command("start", Some(&json!({ "card": card, "cols": 80, "rows": 24 })))
+        .await
+        .unwrap();
+    assert!(accounts.join("Personal").is_dir());
+    let mut board = json!(create_workspace());
+    board["cards"] = json!([card]);
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    assert_eq!(h.read_saved()["cards"][0]["claudeAccount"], "Personal");
+    assert_eq!(list(None).await.unwrap(), json!({ "accounts": ["Personal", "Work"] }));
+}
+
+#[tokio::test]
 async fn more_than_24_terminals_start_save_and_restore_stopped() {
     let h = Harness::new();
     h.host.command("initialize", None).await.unwrap();
