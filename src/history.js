@@ -48,6 +48,8 @@ function renderHistoryButtons() {
 }
 // Call with a snapshot taken before a change, once the change is known to have happened.
 function commitHistory(snapshot) {
+    // Ordinary steps on another canvas must not undo a later workspace theme change.
+    snapshot.restoreTerminalTheme = snapshot.terminalTheme !== workspace.terminalTheme;
     clearedRedo = { step: snapshot, redo: boardHistory.redo };
     boardHistory.undo.push(snapshot);
     if (boardHistory.undo.length > HISTORY_LIMIT) boardHistory.undo.shift();
@@ -81,15 +83,15 @@ function undo() { if (canStepHistory()) stepHistory(boardHistory.undo, boardHist
 function redo() { if (canStepHistory()) stepHistory(boardHistory.redo, boardHistory.undo); }
 function stepHistory(from, to) {
     if (!from.length) return;
+    if (workspaceItemCount() - workspace.items.length + from.at(-1).items.length > ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
     const target = from.pop();
-    to.push(snapshotBoard());
+    to.push({ ...snapshotBoard(), restoreTerminalTheme: target.restoreTerminalTheme });
     restoreBoard(target);
     renderHistoryButtons();
 }
 // Items are updated in place so their views and event handlers stay attached.
 function restoreBoard(snapshot) {
-    if (snapshot.terminalTheme) workspace.terminalTheme = snapshot.terminalTheme;
-    else delete workspace.terminalTheme;
+    if (snapshot.restoreTerminalTheme) setWorkspaceTerminalTheme(snapshot.terminalTheme);
     const parsed = snapshot.items.map(json => JSON.parse(json));
     // Arrows attached to a terminal closed since the snapshot were removed with it, so they stay removed.
     const present = new Set([...workspace.cards, ...parsed].map(e => e.id));
@@ -130,7 +132,7 @@ function restoreBoard(snapshot) {
         const node = elementNode(id);
         if (node && findElement(id)?.type !== 'frame') node.style.zIndex = String(z);
     }
-    for (const card of workspace.cards) renderTerminalAppearance(card);
+    for (const canvas of canvasStates) for (const card of canvas.board.cards) renderTerminalAppearance(card);
     renderThemeControls();
     pruneGroups();
     setSelection(snapshot.selection.filter(id => findElement(id)));

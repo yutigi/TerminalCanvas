@@ -10,6 +10,15 @@ const PROFILES = fixture.profiles;
 const createWorkspace = () => structuredClone(fixture.workspace);
 const createCard = (options = {}) => ({ ...structuredClone(fixture.cards[options.profile || 'shell']), ...options, id: randomUUID() });
 
+function twoCanvases() {
+    const workspace = createWorkspace(), first = createCard({ title: 'Foreground' }), second = createCard({ title: 'Background' });
+    workspace.cards = [first, second];
+    workspace.canvases = [first, second].map((card, index) => ({ id: `canvas-${index}`, name: `Project ${index}`,
+        camera: { x: index * -100, y: index * 50, z: index ? .75 : 1 }, cardIds: [card.id], itemIds: [], selected: card.id }));
+    workspace.activeCanvas = 'canvas-0';
+    return workspace;
+}
+
 // A small DOM boundary substitute checks renderer boot/state without claiming visual coverage.
 class Element {
     constructor() {
@@ -86,6 +95,257 @@ class KeyboardTerminal {
     writeln() {}
     dispose() {}
 }
+
+
+test('legacy workspaces open as one canvas and keep format-3 serialized defaults', async () => {
+    for (const version of [1, 2, 3]) {
+        const board = createWorkspace(); board.version = version; board.cards.push(createCard());
+        const { context, calls } = await boot(board);
+        assert.equal(json(context, 'canvasStates.length'), 1);
+        assert.deepEqual(json(context, 'workspaceSnapshot()'), { ...board, version: 3 });
+        assert.equal(calls.length, 1, 'Opening a workspace never starts its terminals');
+    }
+});
+
+test('many canvases can be created, reordered, renamed, and restored with independent cameras and history', async () => {
+    const { context, elements } = await boot(createWorkspace());
+    vm.runInContext(`
+        addItem(makeItem('note', { x: 10, y: 20, w: 100, h: 100 }));
+        workspace.camera = { x: 321, y: -456, z: .65 };
+        globalThis.original = activeCanvas.id;
+        for (let index = 0; index < 160; index++) createCanvas();
+        workspace.camera = { x: -80, y: 42, z: 1.2 };
+        reorderCanvas(-1); renameCanvas();
+    `, context);
+    elements.get('#canvas-name').value = 'My project 日本語';
+    elements.get('#canvas-form').onsubmit({ preventDefault() {} });
+    assert.equal(json(context, 'canvasStates.length'), 161);
+    assert.equal(elements.get('#canvas-list').childElementCount, 161);
+    assert.equal(json(context, 'canvasStates.indexOf(activeCanvas)'), 159);
+    assert.equal(json(context, 'activeCanvas.name'), 'My project 日本語');
+    const saved = json(context, 'workspaceSnapshot()');
+    vm.runInContext('switchCanvas(original)', context);
+    assert.deepEqual(json(context, 'workspace.camera'), { x: 321, y: -456, z: .65 });
+    assert.equal(json(context, 'workspace.items.length'), 1);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+    vm.runInContext('undo()', context);
+    assert.equal(json(context, 'workspace.items.length'), 0);
+    context.saved = saved; vm.runInContext('loadWorkspace(saved)', context);
+    assert.deepEqual(json(context, 'workspace.camera'), { x: -80, y: 42, z: 1.2 });
+    assert.equal(json(context, 'activeCanvas.name'), 'My project 日本語');
+    assert.deepEqual(json(context, 'workspaceSnapshot()'), saved);
+});
+
+test('workspace themes reach hidden canvases, survive save and reload, and respect independent history', async () => {
+    const board = twoCanvases(); board.terminalTheme = 'midnight'; board.cards[1].theme = 'paper';
+    const { context, elements, calls } = await boot(board, { terminals: true });
+    const backgrounds = () => json(context, '[...sessions.values()].map(s => s.terminal.options.theme.background)');
+    const themes = require('../src/terminal-themes.js');
+    assert.deepEqual(backgrounds(), [themes.midnight.background, themes.paper.background]);
+    vm.runInContext(`
+        globalThis.terminalsBefore = [...sessions.values()].map(s => s.terminal);
+        addItem(makeItem('note', { x: 10, y: 20, w: 100, h: 100 }));
+        switchCanvas('canvas-1'); setTerminalTheme('current'); setTerminalTheme('paper', true);
+        switchCanvas('canvas-0'); undo();
+    `, context);
+    assert.equal(json(context, 'workspace.items.length'), 0);
+    assert.equal(elements.get('#workspace-theme').value, 'paper', 'an unrelated undo keeps the shared default');
+    assert.deepEqual(backgrounds(), [themes.paper.background, themes.current.background]);
+    vm.runInContext(`switchCanvas('canvas-1'); undo()`, context);
+    assert.deepEqual(backgrounds(), [themes.midnight.background, themes.current.background]);
+    vm.runInContext('redo(); undo(); undo(); redo(); redo(); createCanvas("New canvas")', context);
+    assert.equal(elements.get('#workspace-theme').value, 'paper', 'new canvases inherit the workspace default');
+    assert.equal(json(context, '[...sessions.values()].every((s, index) => s.terminal === terminalsBefore[index])'), true);
+    await vm.runInContext('save()', context);
+    const saved = JSON.parse(JSON.stringify(calls.find(call => call.action === 'save').payload));
+    assert.equal(saved.terminalTheme, 'paper');
+    assert.equal(saved.canvases.length, 3);
+    assert.equal(saved.cards[1].theme, 'current');
+    context.saved = saved; vm.runInContext('loadWorkspace(saved)', context);
+    assert.deepEqual(json(context, 'workspaceSnapshot()'), saved);
+    assert.deepEqual(backgrounds(), [themes.paper.background, themes.current.background]);
+    vm.runInContext(`switchCanvas('canvas-0'); setTerminalTheme('current', true)`, context);
+    assert.equal(json(context, '"terminalTheme" in workspaceSnapshot()'), false);
+    assert.equal(json(context, 'canvasStates.every(canvas => !("terminalTheme" in canvas.board))'), true);
+    assert.equal(calls.some(call => ['start', 'stop'].includes(call.action)), false);
+});
+
+test('hidden canvases keep complete writes, acknowledgments, cwd and session metadata without fitting', async () => {
+    const board = twoCanvases(), hiddenId = board.cards[1].id;
+    const { context, bridge, onEvent, calls, elements } = await boot(board, { terminals: true });
+    context.hiddenId = hiddenId;
+    vm.runInContext(`
+        globalThis.output = []; globalThis.acks = [];
+        const background = sessions.get(hiddenId);
+        background.status = 'running';
+        background.terminal.write = (data, done) => { output.push(data); done(); };
+        background.fit.proposeDimensions = () => { throw new Error('Hidden terminal was fitted'); };
+        Object.defineProperty(background.element, 'offsetWidth', { get() { throw new Error('Hidden terminal layout was read'); }, configurable: true });
+        bridge.acknowledge = (id, length) => acks.push({ id, length });
+        fitTerminal(background);
+    `, context);
+    const chunks = Array.from({ length: 400 }, (_, index) => `${index} 日本語 😀\r\n`);
+    for (const data of chunks) onEvent({ type: 'data', id: hiddenId, data });
+    assert.deepEqual(json(context, 'output'), chunks);
+    assert.deepEqual(json(context, 'acks'), chunks.map(data => ({ id: hiddenId, length: data.length })));
+    assert.equal(json(context, 'sessions.get(hiddenId).element.hidden'), true);
+    assert.match(elements.get('#canvas-list').children[1].textContent, /New output/);
+    assert.equal(elements.get('#canvas-activity').hidden, false);
+    assert.match(elements.get('#canvas-activity').textContent, /Project 1: New output/);
+    const session = { provider: 'codex', sessionId: randomUUID(), cwd: '/agent' };
+    onEvent({ type: 'cwd', id: hiddenId, cwd: '/live' });
+    onEvent({ type: 'metadata', id: hiddenId, cwd: '/latest', session });
+    assert.equal(json(context, 'anyCard(hiddenId).cwd'), '/latest');
+    assert.deepEqual(json(context, 'anyCard(hiddenId).session'), session);
+    assert.equal(calls.some(call => call.action === 'stop'), false);
+    onEvent({ type: 'exit', id: hiddenId, exitCode: 7 });
+    assert.equal(json(context, 'sessions.get(hiddenId).status'), 'exited');
+    assert.match(elements.get('#canvas-list').children[1].textContent, /Exited/);
+    vm.runInContext(`delete sessions.get(hiddenId).element.offsetWidth; switchCanvas('canvas-1')`, context);
+    assert.equal(json(context, 'sessions.get(hiddenId).element.hidden'), false);
+    assert.doesNotMatch(elements.get('#canvas-list').children[1].textContent, /Exited|New output/);
+    assert.equal(elements.get('#canvas-activity').hidden, true);
+    await bridge.invoke('noop');
+});
+
+test('canvas switches restore selection, fullscreen focus, and hide SVG connectors as well as cards', async () => {
+    const board = twoCanvases();
+    board.items = [{ id: 'connector', type: 'line', start: { id: board.cards[0].id }, end: { x: 12, y: 34 }, arrow: true }];
+    board.canvases[0].itemIds = ['connector']; board.canvases[0].focused = board.cards[0].id;
+    const { context, calls } = await boot(board);
+    assert.equal(json(context, 'focused'), board.cards[0].id);
+    vm.runInContext(`switchCanvas('canvas-1')`, context);
+    assert.equal(json(context, 'focused'), null);
+    assert.equal(json(context, 'itemViews.get("connector").element.style.display'), 'none');
+    assert.equal(json(context, 'selected'), board.cards[1].id);
+    context.firstId = board.cards[0].id;
+    assert.equal(vm.runInContext('showTerminal(firstId)', context), true);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-0');
+    assert.equal(json(context, 'focused'), board.cards[0].id);
+    assert.equal(json(context, 'itemViews.get("connector").element.style.display'), '');
+    assert.equal(calls.some(call => ['start', 'stop'].includes(call.action)), false);
+});
+
+test('deleting a canvas cancels safely and stops only its terminals after confirmation', async () => {
+    const board = twoCanvases();
+    const { context, elements, calls } = await boot(board);
+    vm.runInContext('for (const s of sessions.values()) s.status = "running"', context);
+    const canceled = vm.runInContext('deleteCanvas()', context);
+    assert.equal(elements.get('#confirm-dialog').open, true);
+    assert.match(elements.get('#confirm-description').textContent, /1 running terminal/);
+    assert.equal(calls.filter(call => call.action === 'stop').length, 0);
+    elements.get('#confirm-cancel').onclick(); await canceled;
+    assert.equal(json(context, 'canvasStates.length'), 2);
+    const deleted = vm.runInContext('deleteCanvas()', context);
+    elements.get('#confirm-ok').onclick(); await deleted;
+    assert.deepEqual(calls.filter(call => call.action === 'stop').map(call => call.payload.id), [board.cards[0].id]);
+    assert.equal(json(context, 'canvasStates.length'), 1);
+    assert.equal(json(context, 'sessions.size'), 1);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.equal(json(context, '[...sessions.values()][0].status'), 'running');
+    assert.equal(elements.get('#canvas-delete').disabled, true);
+});
+
+test('a failed process stop preserves the canvas and its terminal views', async () => {
+    const { context, elements } = await boot(twoCanvases(), { respond: action => action === 'stop' ? { error: 'Stop failed' } : undefined });
+    const deleting = vm.runInContext('deleteCanvas()', context);
+    elements.get('#confirm-ok').onclick();
+    await assert.rejects(deleting, /Stop failed/);
+    assert.equal(json(context, 'canvasStates.length'), 2);
+    assert.equal(json(context, 'sessions.size'), 2);
+    assert.equal(json(context, 'canvasMutation'), false);
+});
+
+test('save, export and close include hidden canvases, images and their undo history', async () => {
+    const { context, calls } = await boot(createWorkspace());
+    vm.runInContext(`
+        const image = { id: 'image', type: 'image', asset: '${'a'.repeat(64)}.png', x: 10, y: 20, w: 100, h: 100 };
+        addItem(image); recordHistory(); removeItems(['image']);
+        createCanvas('Second');
+        addItem({ ...image, id: 'other', asset: '${'b'.repeat(64)}.png' });
+    `, context);
+    assert.deepEqual(json(context, 'referencedImages().sort()'), [`${'a'.repeat(64)}.png`, `${'b'.repeat(64)}.png`]);
+    for (const action of ['autosave', 'save', 'export', 'close']) {
+        context.action = action; await vm.runInContext('invoke(action, workspace)', context);
+        const saved = calls.at(-1).payload;
+        assert.equal(saved.canvases.length, 2); assert.equal(saved.items.length, 1);
+        assert.equal(saved.activeCanvas, saved.canvases[1].id);
+    }
+});
+
+test('canvas shortcuts work from xterm and mutations wait for gestures and imports', async () => {
+    const board = twoCanvases();
+    const { context, documentListeners } = await boot(board, { terminals: true });
+    context.firstId = board.cards[0].id;
+    assert.equal(vm.runInContext(`sessions.get(firstId).terminal.keyHandler({ key: 'PageDown', ctrlKey: true, shiftKey: true })`, context), false);
+    const key = { key: 'PageDown', ctrlKey: true, shiftKey: true, preventDefault() {}, target: new Element() };
+    documentListeners.get('keydown')(key);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    vm.runInContext('imageImports++;', context);
+    assert.equal(vm.runInContext(`switchCanvas('canvas-0')`, context), false);
+    vm.runInContext('imageImports--; activeDrags++;', context);
+    assert.equal(vm.runInContext('createCanvas()', context), false);
+    vm.runInContext('activeDrags--', context);
+    documentListeners.get('keydown')({ ...key, key: 'K' });
+    assert.equal(json(context, 'canvasStates.length'), 3);
+});
+
+test('a requested terminal beside a hidden parent switches to its owning canvas before placement', async () => {
+    const board = twoCanvases();
+    const { context } = await boot(board, { respond: (action, options) => action === 'create-card' ? { card: createCard(options) } : undefined });
+    context.parentId = board.cards[1].id;
+    vm.runInContext(`start = async () => {};`, context);
+    await vm.runInContext(`openRequestedTerminal({ external: true, parent: parentId, profile: 'shell', title: 'Child' })`, context);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.equal(json(context, 'workspace.cards.length'), 2);
+    assert.equal(json(context, 'workspace.items[0].start.id'), board.cards[1].id);
+    assert.equal(json(context, 'canvasStates[0].board.cards.length'), 1);
+    assert.equal(json(context, 'canvasMutation'), false);
+});
+
+test('a terminal finishing startup on a hidden canvas does not take the keyboard', async () => {
+    const board = twoCanvases();
+    const { context } = await boot(board, { terminals: true });
+    context.id = board.cards[0].id;
+    vm.runInContext(`
+        sessions.get(id).terminal.focus = () => { globalThis.stolenFocus = true; };
+        bridge.invoke = async action => action === 'start' ? new Promise(resolve => { globalThis.completeStart = resolve; }) : ({ ok: true });
+    `, context);
+    const starting = vm.runInContext('start(workspace.cards[0])', context);
+    await new Promise(resolve => setImmediate(resolve));
+    vm.runInContext(`switchCanvas('canvas-1'); completeStart({ cwd: '/ready' })`, context);
+    await starting;
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.equal(vm.runInContext('globalThis.stolenFocus', context), undefined);
+    assert.equal(json(context, 'anyCard(id).cwd'), '/ready');
+});
+
+test('using the canvas selector remembers the terminal that had typing focus', async () => {
+    const board = twoCanvases();
+    const { context, document, documentListeners } = await boot(board, { terminals: true });
+    vm.runInContext(`const current = sessions.get(selected); current.status = 'running'; current.terminal.focus = () => { globalThis.focusRestored = true; };`, context);
+    documentListeners.get('focusin')({ target: { closest: selector => selector === '.xterm' ? {} : null } });
+    document.activeElement = { closest: selector => selector === '.canvas-manager' ? {} : null };
+    vm.runInContext(`switchCanvas('canvas-1'); switchCanvas('canvas-0')`, context);
+    assert.equal(json(context, 'globalThis.focusRestored'), true);
+});
+
+test('the workspace item budget includes hidden boards and prevents undo from exceeding it', async () => {
+    const { context, elements } = await boot(createWorkspace());
+    vm.runInContext(`
+        globalThis.firstCanvas = activeCanvas.id;
+        addItem(makeItem('note', { x: 0, y: 0, w: 100, h: 100 }));
+        recordHistory(); removeItems([workspace.items[0].id]);
+        createCanvas();
+        addItems(Array.from({ length: 1000 }, () => makeItem('note', { x: 0, y: 0, w: 100, h: 100 })));
+        switchCanvas(firstCanvas);
+        undo();
+    `, context);
+    assert.equal(json(context, 'workspace.items.length'), 0);
+    assert.equal(json(context, 'boardHistory.undo.length'), 2, 'A blocked undo must remain available');
+    assert.equal(json(context, 'workspaceItemCount()'), 1000);
+    assert.match(elements.get('#toast').textContent, /1,000 canvas items/);
+});
 async function boot(workspace, { initialized = true, respond, terminals = false, clipboard = { text: '' }, readClipboard, platform = 'win32', remote = false, ...windowOverrides } = {}) {
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
@@ -147,6 +407,28 @@ test('canvas menu opens only on empty background and uses the sidebar launch pro
     assert.equal(profiles[0].focusCount, 1);
     assert.equal(profiles[0].tabIndex, 0);
     assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('canvas menu clears old launch points on a canvas switch and creates only on the active canvas', async () => {
+    const board = twoCanvases();
+    const { elements, context, calls } = await boot(board, { respond: (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null });
+    vm.runInContext('start = async () => {}; canvasMutation = true', context);
+    assert.equal(openMenu(elements), false, 'an asynchronous canvas mutation cannot open a menu');
+    vm.runInContext('canvasMutation = false', context);
+    assert.equal(openMenu(elements), true);
+    assert.ok(json(context, 'canvasMenuPoint'));
+    vm.runInContext('switchCanvas("canvas-1")', context);
+    assert.equal(elements.get('#canvas-menu').hidden, true);
+    assert.equal(json(context, 'canvasMenuPoint'), null);
+    assert.equal(openMenu(elements), true);
+    const point = json(context, 'canvasMenuPoint');
+    elements.get('#canvas-menu-profiles').children[0].click();
+    assert.equal(vm.runInContext('switchCanvas("canvas-0")', context), false, 'the launch dialog keeps its owning canvas active');
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    const request = calls.find(call => call.action === 'create-card').payload;
+    assert.deepEqual({ x: request.x, y: request.y }, point);
+    assert.deepEqual(json(context, 'canvasStates.map(canvas => canvas.board.cards.length)'), [1, 2]);
+    assert.equal(json(context, 'sessions.get(workspace.cards.at(-1).id).canvas.id'), 'canvas-1');
 });
 
 test('canvas menu is unavailable before initialization, during drags, in Focus, or behind a dialog', async () => {
@@ -380,6 +662,80 @@ test('browser layout updates preserve terminal emulators, local camera, and desk
     assert.deepEqual(sent, [[card.id, 'typed']]);
     bridge.role = 'view'; terminal.dataHandler('blocked');
     assert.equal(sent.length, 1);
+    board.canvases = [
+        { id: 'desktop-original', name: 'Original', camera: board.camera, cardIds: [card.id], itemIds: [] },
+        { id: 'desktop-new', name: 'New canvas', camera: board.camera, cardIds: [], itemIds: [] }
+    ];
+    board.activeCanvas = 'desktop-new';
+    onEvent({ type: 'remote-workspace', workspace: board });
+    assert.equal(json(context, 'activeCanvas.id'), 'desktop-original');
+    assert.deepEqual(json(context, 'workspace.camera'), camera);
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context), terminal);
+    assert.equal(json(context, 'workspaceSnapshot().cards.length'), 1);
+});
+
+test('browser snapshots reconcile every canvas while preserving local navigation and hidden terminals', async () => {
+    const board = twoCanvases(), first = board.cards[0].id, hidden = board.cards[1].id;
+    const { context, onEvent, calls } = await boot(board, { remote: true, terminals: true });
+    context.first = first; context.hiddenId = hidden;
+    vm.runInContext(`
+        globalThis.originalTerminal = sessions.get(hiddenId).terminal;
+        globalThis.originalCard = anyCard(hiddenId);
+        workspace.camera = { x: 123, y: -456, z: .6 };
+        setFocus(first); switchCanvas('canvas-1');
+        workspace.camera = { x: 91, y: 82, z: .8 };
+        globalThis.output = [];
+        sessions.get(first).terminal.write = (data, done) => { output.push(data); done(); };
+    `, context);
+    const update = structuredClone(board);
+    update.name = 'Desktop update'; update.terminalTheme = 'paper';
+    update.activeCanvas = 'canvas-0'; update.canvases[1].name = 'Renamed on desktop';
+    update.cards[1].x = 900; update.cards[1].fontSize = 19;
+    update.items = [{ id: 'note', type: 'note', text: 'Background item', x: 10, y: 20, w: 100, h: 100 }];
+    update.canvases[0].itemIds = ['note'];
+    onEvent({ type: 'remote-workspace', workspace: update });
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.deepEqual(json(context, 'workspace.camera'), { x: 91, y: 82, z: .8 });
+    assert.equal(json(context, 'sessions.get(hiddenId).terminal === originalTerminal && anyCard(hiddenId) === originalCard'), true);
+    assert.equal(json(context, 'anyCard(hiddenId).x'), 900);
+    assert.equal(json(context, 'sessions.get(hiddenId).terminal.options.fontSize'), 19);
+    assert.equal(json(context, 'sessions.get(first).terminal.options.theme.background'), require('../src/terminal-themes.js').paper.background);
+    assert.equal(json(context, 'itemViews.get("note").element.style.display'), 'none');
+    onEvent({ type: 'remote-terminals', terminals: [first, hidden].map(id => ({ id, running: true, generation: 1, cols: 117, rows: 39 })) });
+    onEvent({ type: 'data', id: first, data: 'background output' });
+    assert.deepEqual(json(context, 'output'), ['background output']);
+    assert.equal(json(context, 'sessions.get(first).status'), 'running');
+    assert.equal(json(context, 'sessions.get(first).terminal.cols'), 117);
+    vm.runInContext(`switchCanvas('canvas-0')`, context);
+    assert.deepEqual(json(context, 'workspace.camera'), { x: 123, y: -456, z: .6 });
+    assert.equal(json(context, 'focused'), first);
+    assert.equal(json(context, 'sessions.get(first).element.hidden'), false);
+    assert.equal(json(context, 'itemViews.get("note").element.style.display'), '');
+    // Moving a card between canvases keeps its emulator and updates its owner.
+    update.canvases[0].cardIds.push(hidden); update.canvases[1].cardIds = [];
+    onEvent({ type: 'remote-workspace', workspace: update });
+    assert.equal(json(context, 'sessions.get(hiddenId).canvas.id'), 'canvas-0');
+    assert.equal(json(context, 'sessions.get(hiddenId).terminal === originalTerminal'), true);
+    // Removing the browser's current canvas selects a surviving one and drops stale focus.
+    update.canvases.shift(); update.cards = []; update.items = [];
+    update.activeCanvas = 'canvas-1';
+    onEvent({ type: 'remote-workspace', workspace: update });
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.equal(json(context, 'sessions.size'), 0);
+    assert.equal(json(context, 'focused'), null);
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('browser clients can switch canvases but cannot create, reorder, rename, or delete them', async () => {
+    const { context, calls, elements } = await boot(twoCanvases(), { remote: true });
+    const before = json(context, 'workspaceSnapshot()');
+    await vm.runInContext(`createCanvas(); reorderCanvas(1); renameCanvas(); deleteCanvas()`, context);
+    assert.deepEqual(json(context, 'workspaceSnapshot()'), before);
+    assert.equal(elements.get('#canvas-dialog').open, undefined);
+    assert.equal(elements.get('#confirm-dialog').open, undefined);
+    assert.equal(vm.runInContext(`switchCanvas('canvas-1')`, context), true);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
 });
 
 test('a rejected browser connection reports the error before the remote banner exists', async () => {
@@ -1491,6 +1847,22 @@ function canvasWheel({ elements, document }) {
         return event;
     };
 }
+test('wheel zoom updates only the active canvas and switching restores each camera', async () => {
+    const board = twoCanvases(), h = await boot(board), wheel = canvasWheel(h);
+    wheel();
+    const firstCamera = json(h.context, 'workspace.camera');
+    assert.ok(firstCamera.z > board.canvases[0].camera.z);
+    vm.runInContext('switchCanvas("canvas-1")', h.context);
+    assert.deepEqual(json(h.context, 'workspace.camera'), board.canvases[1].camera);
+    wheel({ deltaY: 100, timeStamp: 300 });
+    const secondCamera = json(h.context, 'workspace.camera');
+    assert.ok(secondCamera.z < board.canvases[1].camera.z);
+    vm.runInContext('switchCanvas("canvas-0")', h.context);
+    assert.deepEqual(json(h.context, 'workspace.camera'), firstCamera);
+    vm.runInContext('switchCanvas("canvas-1")', h.context);
+    assert.deepEqual(json(h.context, 'workspace.camera'), secondCamera);
+});
+
 function wheelSurface(selector, root = new Element()) {
     const target = new Element();
     target.closest = selectors => selectors.split(',').some(value => value.trim() === selector) ? root : null;
@@ -2381,6 +2753,47 @@ function sidebarViewport({ elements }) {
         get: () => elements.get('#sidebar').hidden ? 1350 : 1100
     });
 }
+test('switching canvases restores Focus sidebar visibility without camera drift or losing a temporary reveal', async () => {
+    const board = twoCanvases();
+    const app = await boot(board, { terminals: true }); sidebarViewport(app);
+    const { context, elements, document } = app;
+    vm.runInContext('setFocus(workspace.cards[0].id)', context);
+    const focusedCamera = json(context, 'workspace.camera');
+    assert.equal(elements.get('#sidebar').hidden, true);
+    for (let trip = 0; trip < 3; trip++) {
+        vm.runInContext("switchCanvas('canvas-1')", context);
+        assert.equal(elements.get('#sidebar').hidden, false);
+        assert.deepEqual(json(context, 'workspace.camera'), board.canvases[1].camera);
+        vm.runInContext("switchCanvas('canvas-0')", context);
+        assert.equal(elements.get('#sidebar').hidden, true);
+        assert.deepEqual(json(context, 'workspace.camera'), focusedCamera);
+    }
+    elements.get('#sidebar-toggle').click();
+    const revealedCamera = json(context, 'workspace.camera');
+    vm.runInContext("switchCanvas('canvas-1'); switchCanvas('canvas-0')", context);
+    assert.equal(elements.get('#sidebar').hidden, false, 'The Focus visit keeps its temporary reveal');
+    assert.deepEqual(json(context, 'workspace.camera'), revealedCamera);
+    assert.equal(json(context, 'focused'), board.cards[0].id);
+    vm.runInContext(`
+        const typingSession = sessions.get(selected);
+        typingSession.status = 'running';
+        typingSession.terminal.focus = () => {
+            globalThis.typingRestored = true;
+            document.activeElement = { closest: selector => selector === '.xterm' ? {} : null };
+        };
+        setFocus(null); setFocus(workspace.cards[0].id);
+        globalThis.typingRestored = false;
+        switchCanvas('canvas-1');
+    `, context);
+    const selector = elements.get('#canvas-list'), toggle = elements.get('#sidebar-toggle');
+    elements.get('#sidebar').append(selector);
+    selector.closest = query => query === '.canvas-manager' ? {} : null;
+    selector.focus();
+    const focusToggle = toggle.focus.bind(toggle);
+    toggle.focus = () => { focusToggle(); document.dispatch('focusin', { target: toggle }); };
+    vm.runInContext("switchCanvas('canvas-0')", context);
+    assert.equal(json(context, 'globalThis.typingRestored'), true, 'Hiding the selector restores keyboard focus to the running terminal');
+});
 test('sidebar toggling preserves the world center, refreshes minimap and dimensions, and refits running PTYs', async () => {
     const board = createWorkspace(); board.cards.push(createCard()); board.camera = { x: 30, y: 50, z: .65 };
     const app = await boot(board, { terminals: true }); sidebarViewport(app);
@@ -2745,6 +3158,27 @@ function switcherState(context) {
 function switcherSearch(elements, value) {
     const query = elements.get('#switcher-query'); query.value = value; query.oninput();
 }
+
+test('terminal switcher follows the active canvas and waits for canvas mutations', async () => {
+    const board = twoCanvases(), { context, elements, calls } = await boot(board, { terminals: true });
+    vm.runInContext('canvasMutation = true', context);
+    assert.equal(vm.runInContext('openTerminalSwitcher()', context), false);
+    vm.runInContext('canvasMutation = false; openTerminalSwitcher()', context);
+    assert.deepEqual(switcherState(context).matches, [board.cards[0].id]);
+    switcherSearch(elements, 'Background');
+    assert.deepEqual(switcherState(context).matches, [], 'hidden canvases keep running outside this canvas search');
+    vm.runInContext('terminalSwitcher.close(); switchCanvas("canvas-1"); openTerminalSwitcher()', context);
+    assert.deepEqual(switcherState(context).matches, [board.cards[1].id]);
+    context.oldCanvasId = board.cards[0].id;
+    vm.runInContext('confirmTerminalSwitch(oldCanvasId)', context);
+    assert.equal(switcherState(context).open, true, 'an ID from the previous canvas cannot be confirmed');
+    vm.runInContext('confirmTerminalSwitch()', context);
+    assert.equal(switcherState(context).open, false);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.equal(json(context, 'selected'), board.cards[1].id);
+    assert.equal(json(context, 'sessions.size'), 2);
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'switching and searching never launch shells');
+});
 
 test('switcher reveals a distant terminal at the wheel zoom and canvas scrolling resumes afterward', async () => {
     const board = createWorkspace();

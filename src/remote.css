@@ -16,7 +16,8 @@
 .remote-client #profile-list, .remote-client #add-terminal, .remote-client #empty-add,
 .remote-client #open-workspace, .remote-client #new-workspace, .remote-client #save,
 .remote-client #export-workspace, .remote-client #clean-images, .remote-client #arrange,
-.remote-client #undo, .remote-client #redo { display: none !important; }
+.remote-client #undo, .remote-client #redo,
+.remote-client .canvas-controls { display: none !important; }
 .remote-client .canvas-item, .remote-client .line-hit { pointer-events: none; }
 .remote-client .card-header { cursor: default; }
 .remote-client .terminal-body { overflow: auto; }

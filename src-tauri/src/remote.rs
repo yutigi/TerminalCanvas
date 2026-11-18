@@ -367,6 +367,7 @@ fn static_path(path: &str) -> Option<&str> {
         | "/remote-login.js"
         | "/minimap.js"
         | "/canvas-geometry.js"
+        | "/canvases.js"
         | "/terminal-pointer.js"
         | "/item-styles.js"
         | "/terminal-themes.js"

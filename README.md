@@ -71,7 +71,8 @@ View the live canvas and type into its running terminals from a browser **on the
    Only one remote controller can connect at once. The desktop can still type; simultaneous input
    reaches the shell in arrival order. Viewer tokens allow additional read-only windows, up to
    eight sessions in total. Use another browser or a private browser profile for a different token;
-   tabs in one profile share their login cookie. Each client keeps its own focus, selection, pan, and zoom.
+   tabs in one profile share their login cookie. Each client can switch canvases independently and
+   keeps its own focus, selection, pan, and zoom on each canvas. Hidden terminals keep receiving output.
 4. Keep workspace editing, terminal start/stop, folder/file dialogs, image import/cleanup, and
    updates in the desktop app. Browser output uses the desktop's PTY dimensions and scrolls when
    necessary. Browser clipboard shortcuts use that browser's permission-controlled clipboard.
@@ -108,6 +109,40 @@ to the one running desktop canvas, and closing the desktop still stops its termi
 Paste accepts plain text up to 1 MB (1,048,576 UTF-16 code units), the same limit as copying, and uses xterm to normalize line endings and respect bracketed-paste mode. Long pastes are sent in ordered pieces, and keys pressed afterward, Ctrl + C included, follow the whole paste. The limit keeps that wait bounded when a program reads its input slowly; the card's stop control ends a program that stops reading. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
 
 ![The in-app shortcut guide explaining selection-aware copy, paste, and interrupt.](docs/images/terminal-clipboard-shortcuts.png)
+
+### Multiple canvases
+
+Use the **Canvas** selector in the sidebar to switch boards. The buttons beneath it create,
+rename, reorder, or delete a canvas. There is no fixed canvas count limit. Each canvas keeps its
+own terminals, items, groups, camera, selection, Focus view, and undo history. The last canvas
+cannot be deleted; deleting another always asks for confirmation and stops only its terminals.
+
+Terminals keep running on hidden canvases. Their output is still parsed and acknowledged, with
+the same backpressure, directory tracking, and 5,000-line scrollback limit as visible terminals.
+Hidden canvases do not fit terminals or paint their board; terminals refit when shown. **New output**,
+**Bell**, and **Exited** indicators appear beside a hidden canvas's name and clear when it is shown.
+
+| Shortcut | Canvas action |
+| --- | --- |
+| Ctrl + Shift + K | Create a canvas |
+| Ctrl + Shift + R | Rename the current canvas |
+| Ctrl + Shift + PageUp / PageDown | Switch to the previous / next canvas |
+| Ctrl + Alt + Shift + PageUp / PageDown | Move the current canvas earlier / later |
+| Ctrl + Shift + Delete | Delete the current canvas, after confirmation |
+
+Use Command in place of Ctrl on macOS. These shortcuts also work inside terminals. Finish a
+drag, image import, terminal creation, or open dialog before changing canvases. Sidebar search,
+Arrange, Fit, and Alt + arrow navigation apply to the current canvas. A terminal jump by ID
+switches to its canvas first; an agent requesting a terminal beside a hidden parent also switches
+to that parent's canvas. Moving terminals between canvases is a follow-up; board items can be
+copied and pasted using the existing clipboard controls.
+
+Save, portable export, autosave, and recovery include all canvases and the last active canvas.
+Restoring a workspace leaves every terminal stopped. Existing format 1/2/3 single-board files
+open as one canvas. Canvas organization uses optional format-3 metadata; an unchanged legacy
+workspace retains its original serialized defaults. Older format-3 apps can read the flat items
+and terminals, but show them on a single board and discard canvas organization if they save.
+The 1,000-item and 64 MB workspace limits still apply across all canvases.
 
 ### Board items
 

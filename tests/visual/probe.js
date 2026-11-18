@@ -67,15 +67,16 @@ window.captureLayout = async function (scene) {
         '.field-hint', '.dialog-footer', '.dialog-footer button', '.icon-button', '#find-terminal',
         '.terminal-card', '.card-header', '.card-title', '.card-directory', '.card-account-icon',
         '.terminal-placeholder .button', '.minimap', '.canvas-item',
+        '.canvas-manager', '#canvas-list', '#canvas-add', '#canvas-rename', '#canvas-earlier', '#canvas-later', '#canvas-delete',
+        '#workspace-theme',
     ];
     const rect = box => [box.x, box.y, box.width, box.height].map(n => Math.round(n * 1000) / 1000);
     const elements = {};
     for (const selector of selectors) {
-        // Hidden controls do not participate in layout or shift visible controls' identities.
+        // Hidden controls do not shift visible identities; new actions use stable IDs.
         let index = 0;
         document.querySelectorAll(selector).forEach(element => {
-            // Find terminal is captured separately by stable ID, preserving existing icon identities.
-            if (selector === '.icon-button' && element.id === 'find-terminal') return;
+            if (selector === '.icon-button' && (element.closest('.canvas-controls') || element.id === 'find-terminal')) return;
             const style = getComputedStyle(element);
             if (!element.getClientRects().length || style.visibility === 'hidden') return;
             const box = element.getBoundingClientRect();

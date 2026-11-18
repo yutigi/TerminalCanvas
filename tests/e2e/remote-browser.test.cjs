@@ -100,6 +100,51 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
     }, card.id);
     await until(() => seesOutput(controller), 'Controller did not receive desktop output.');
     await until(() => seesOutput(viewer), 'Viewer did not receive desktop output.');
+    // A new desktop canvas must arrive without replacing existing browser emulators or navigation.
+    await controller.evaluate(id => {
+        window.__originalTerminal = sessions.get(id).terminal;
+    }, card.id);
+    const secondCanvas = await h.page.evaluate(async () => {
+        const canvas = createCanvas('Remote second canvas');
+        const { card } = await invoke('create-card', { title: 'Second canvas terminal', x: 40, y: 30 });
+        workspace.cards.push(card); mount(card); refresh(); await invoke('autosave', workspace);
+        return canvas.id;
+    });
+    await controller.waitForFunction(id => canvasStates.some(canvas => canvas.id === id), secondCanvas);
+    await viewer.waitForFunction(id => canvasStates.some(canvas => canvas.id === id), secondCanvas);
+    const firstCanvas = await controller.evaluate(id => sessions.get(id).canvas.id, card.id);
+    assert.equal(await controller.evaluate(() => activeCanvas.id), firstCanvas);
+    assert.equal(await controller.evaluate(id => sessions.get(id).terminal === window.__originalTerminal, card.id), true);
+    assert.equal(await controller.locator('#canvas-add').isVisible(), false);
+    await controller.locator('#canvas-list').selectOption(secondCanvas);
+    await viewer.locator('#canvas-list').selectOption(secondCanvas);
+    assert.equal(await controller.evaluate(id => sessions.get(id).element.hidden, card.id), true);
+    await h.page.evaluate(id => window.terminalCanvas.input(id, "Write-Output 'REMOTE_HIDDEN_OUTPUT'\r"), card.id);
+    const seesHiddenOutput = page => page.evaluate(id => {
+        const buffer = sessions.get(id).terminal.buffer.active;
+        return Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true)).includes('REMOTE_HIDDEN_OUTPUT');
+    }, card.id);
+    await until(() => seesHiddenOutput(controller), 'Hidden controller terminal lost output.');
+    await until(() => seesHiddenOutput(viewer), 'Hidden viewer terminal lost output.');
+    await controller.locator('#canvas-list').selectOption(firstCanvas);
+    await controller.locator(`.terminal-card[data-id="${card.id}"] .xterm-helper-textarea`).focus();
+    await controller.keyboard.type("Write-Output 'REMOTE_OTHER_CANVAS_INPUT'");
+    await controller.keyboard.press('Enter');
+    await until(async () => hasOutputLine(await h.output(card.id), 'REMOTE_OTHER_CANVAS_INPUT'),
+        'Browser input did not reach a terminal on the hidden desktop canvas.');
+    assert.equal(await h.page.evaluate(() => activeCanvas.id), secondCanvas);
+    assert.equal(await viewer.evaluate(() => activeCanvas.id), secondCanvas);
+    assert.deepEqual(await controller.evaluate(id => {
+        const s = sessions.get(id); return { cols: s.terminal.cols, rows: s.terminal.rows };
+    }, card.id), desktopSize);
+    // Removing a desktop canvas falls back locally without breaking the surviving terminal.
+    await h.page.evaluate(async () => {
+        const removing = deleteCanvas(); finishConfirm(true); await removing;
+        await invoke('autosave', workspace);
+    });
+    await viewer.waitForFunction(id => activeCanvas.id === id && canvasStates.length === 1, firstCanvas);
+    await controller.waitForFunction(() => canvasStates.length === 1);
+    assert.equal(await controller.evaluate(id => sessions.get(id).terminal === window.__originalTerminal, card.id), true);
     await until(async () => (await h.page.evaluate(() => invoke('remote-status'))).clients === 2,
         'Desktop did not report both clients.');
     await controller.screenshot({ path: path.join(root, '.cache', 'tauri-remote-browser-controller.png') });

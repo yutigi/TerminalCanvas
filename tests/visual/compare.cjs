@@ -8,8 +8,8 @@ function compare(expected, actual, tolerance, { colors = true, intended = {} } =
     assert.deepEqual(Object.keys(actual.scenes).sort(), Object.keys(expected.scenes).sort(), 'Layout scenes');
     for (const [scene, before] of Object.entries(expected.scenes)) {
         const after = actual.scenes[scene];
-        const change = intended[scene.replace(/^\d+x\d+-/, '')] || {};
-        const added = change.added || [], resized = change.resized || {};
+        const change = intended[scene.replace(/^\d+x\d+-/, '')] || {}, common = intended.common || {};
+        const added = [...(common.added || []), ...(change.added || [])], resized = { ...common.resized, ...change.resized };
         assert.equal(after.width, before.width, `${scene}: viewport width`);
         assert.equal(after.height, before.height, `${scene}: viewport height`);
         for (const selector of added) assert.ok(after.elements[selector], `${scene}: intended control ${selector} is missing`);
@@ -24,7 +24,10 @@ function compare(expected, actual, tolerance, { colors = true, intended = {} } =
             };
             check(old.rect, current.rect, 'bounds');
             assert.equal(current.icons.length, old.icons.length, `${scene} ${selector}: icons`);
-            old.icons.forEach((icon, index) => check(icon, current.icons[index], `icon ${index}`));
+            old.icons.forEach((icon, index) => {
+                const delta = resized[selector] || [0, 0, 0, 0];
+                check(icon.map((value, axis) => value + (axis < 2 ? delta[axis] : 0)), current.icons[index], `icon ${index}`);
+            });
             if (colors && (old.background !== current.background || old.color !== current.color)) {
                 failures.push(`${scene} ${selector}: control colors changed`);
             }
