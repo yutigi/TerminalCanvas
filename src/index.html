@@ -75,6 +75,12 @@
                 </div>
             </aside>
             <button id="exit-focus" class="button exit-focus" hidden><span data-icon="minimize"></span>Back to canvas<span>Ctrl ⇧ F</span></button>
+            <div id="canvas-menu" class="canvas-menu" role="menu" aria-label="Canvas actions" hidden>
+                <div id="canvas-menu-heading" class="canvas-menu-heading">New terminal here</div>
+                <div id="canvas-menu-profiles" role="group" aria-labelledby="canvas-menu-heading"></div>
+                <div class="canvas-menu-separator" role="separator"></div>
+                <button id="canvas-menu-find" type="button" role="menuitem" tabindex="-1"><span data-icon="search"></span>Find terminal…</button>
+            </div>
         </section>
         <footer><div><span class="footer-brand" data-icon="terminal"></span><span id="footer-hint">Drag to explore · Scroll empty space to zoom</span></div><div><span id="terminal-total">0 terminals</span><span class="bar-divider"></span><span id="runtime-label">Desktop workspace</span><i class="status-dot"></i><span class="bar-divider"></span><button id="settings" class="footer-button" title="Settings" aria-label="Settings" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"><span data-icon="settings"></span></button></div></footer>
         <div id="settings-menu" class="settings-menu" role="menu" aria-label="Settings" hidden><div class="settings-menu-label">SETTINGS</div><button id="agent-setup" role="menuitem"><span data-icon="spark"></span><span>Set up AI agents…<small>Install the Terminal Canvas skill for Claude Code, Codex, and others</small></span></button></div>
