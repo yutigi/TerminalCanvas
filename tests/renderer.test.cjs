@@ -22,7 +22,7 @@ class Element {
             contains: name => classes.has(name)
         };
         this.dataset = {}; this.lastChild = { textContent: '' }; this.clientWidth = 1100; this.clientHeight = 720;
-        this.listeners = new Map(); this.attributes = new Map(); this.captured = new Set();
+        this.listeners = new Map(); this.listenerOptions = new Map(); this.attributes = new Map(); this.captured = new Set();
     }
     append(...children) {
         for (const child of children) {
@@ -39,9 +39,10 @@ class Element {
         return this.queries.get(selector);
     }
     querySelectorAll() { return []; }
-    addEventListener(type, handler) {
+    addEventListener(type, handler, options) {
         if (!this.listeners.has(type)) this.listeners.set(type, new Set());
         this.listeners.get(type).add(handler);
+        this.listenerOptions.set(handler, options);
     }
     removeEventListener(type, handler) { this.listeners.get(type)?.delete(handler); }
     dispatch(type, values = {}) {
@@ -1291,6 +1292,212 @@ async function bootSizedTerminals(board, options = {}) {
     booted.size = id => json(booted.context, `[workspace.cards.find(c => c.id === ${JSON.stringify(id)}).fontSize ?? null, sessions.get(${JSON.stringify(id)}).terminal.options.fontSize]`);
     return booted;
 }
+
+// Model viewport capture -> native target -> viewport bubble, so a target that stops propagation
+// (xterm and the minimap both can) cannot hide an incorrectly registered canvas gesture listener.
+function canvasWheel({ elements }) {
+    const viewport = elements.get('#viewport');
+    let time = 0;
+    return (values = {}) => {
+        time = values.timeStamp ?? time + 16;
+        let stopped = false;
+        const event = { target: viewport, deltaX: 0, deltaY: -100, deltaMode: 0, clientX: 400, clientY: 300,
+            ctrlKey: false, metaKey: false, timeStamp: time, defaultPrevented: false,
+            preventDefault() { this.defaultPrevented = true; }, stopPropagation() { stopped = true; }, ...values };
+        const handlers = [...viewport.listeners.get('wheel')];
+        for (const handler of handlers.filter(fn => viewport.listenerOptions.get(fn)?.capture)) {
+            handler(event); if (stopped) return event;
+        }
+        if (event.target !== viewport) {
+            for (const handler of event.target.listeners?.get('wheel') || []) {
+                handler(event); if (stopped) return event;
+            }
+        }
+        for (const handler of handlers.filter(fn => !viewport.listenerOptions.get(fn)?.capture)) {
+            handler(event); if (stopped) break;
+        }
+        return event;
+    };
+}
+function wheelSurface(selector, root = new Element()) {
+    const target = new Element();
+    target.closest = selectors => selectors.split(',').some(value => value.trim() === selector) ? root : null;
+    return target;
+}
+
+test('plain wheel zooms empty canvas through the modifier path around the real pointer, with bounds', async () => {
+    const plain = await boot(createWorkspace()), modified = await boot(createWorkspace());
+    for (const h of [plain, modified]) {
+        h.elements.get('#viewport').getBoundingClientRect = () => ({ left: 80, top: 60 });
+        h.window.TerminalCanvasPointer.clientPoint = () => ({ x: 580, y: 360 });
+    }
+    const wheel = canvasWheel(plain), ctrlWheel = canvasWheel(modified);
+    const before = json(plain.context, 'workspace.camera');
+    assert.equal(wheel({ clientX: 900, clientY: 700 }).defaultPrevented, true);
+    ctrlWheel({ ctrlKey: true, clientX: 900, clientY: 700 });
+    const after = json(plain.context, 'workspace.camera');
+    assert.deepEqual(after, json(modified.context, 'workspace.camera'));
+    assert.ok(after.z > before.z);
+    assert.ok(Math.abs((500 - before.x) / before.z - (500 - after.x) / after.z) < 1e-9);
+    assert.ok(Math.abs((300 - before.y) / before.z - (300 - after.y) / after.z) < 1e-9);
+    wheel({ deltaY: 100 });
+    assert.ok(Math.abs(json(plain.context, 'workspace.camera.z') - before.z) < 1e-9, 'wheel down zooms out');
+    wheel({ deltaY: -100000 });
+    assert.equal(json(plain.context, 'workspace.camera.z'), 1.5);
+    wheel({ deltaY: 100000 });
+    assert.equal(json(plain.context, 'workspace.camera.z'), .35);
+});
+
+test('world and empty-state decorations count as empty canvas, but its launch button does not', async () => {
+    const h = await boot(createWorkspace()), wheel = canvasWheel(h);
+    for (const target of [h.elements.get('#world'), wheelSurface('.empty-state')]) {
+        const before = json(h.context, 'workspace.camera.z');
+        assert.equal(wheel({ target }).defaultPrevented, true);
+        assert.ok(json(h.context, 'workspace.camera.z') > before);
+    }
+    const before = json(h.context, 'workspace.camera');
+    assert.equal(wheel({ target: wheelSurface('button'), timeStamp: 300 }).defaultPrevented, false);
+    assert.deepEqual(json(h.context, 'workspace.camera'), before);
+});
+
+for (const surface of ['.terminal-card', '.canvas-item', '.canvas-line', '.minimap', '.canvas-toolbar', '.create-toolbar', '.style-toolbar', 'select', 'textarea', '[contenteditable="true"]', 'other scrollable UI']) {
+    test(`plain wheel over ${surface} preserves native behavior without canvas zoom`, async () => {
+        const h = await boot(createWorkspace()), wheel = canvasWheel(h), target = wheelSurface(surface);
+        const before = json(h.context, 'workspace.camera');
+        let nativeWheels = 0;
+        target.addEventListener('wheel', event => { nativeWheels++; event.stopPropagation(); });
+        assert.equal(wheel({ target }).defaultPrevented, false);
+        assert.equal(nativeWheels, 1, 'the wheel reaches the native handler');
+        assert.deepEqual(json(h.context, 'workspace.camera'), before);
+    });
+}
+
+test('wheel zoom preserves live terminal appearance after the sidebar changes viewport geometry', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ color: 'purple' }));
+    const h = await bootSizedTerminals(board); sidebarViewport(h);
+    const { context, elements } = h;
+    const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+    elements.get('#workspace-theme').value = 'paper'; elements.get('#workspace-theme').onchange();
+    elements.get('#sidebar-toggle').click();
+    const before = json(context, 'workspace.camera');
+    const wheel = canvasWheel(h);
+    wheel({ clientX: 900, clientY: 400 });
+    const after = json(context, 'workspace.camera');
+    assert.ok(after.z > before.z);
+    assert.ok(Math.abs((900 - before.x) / before.z - (900 - after.x) / after.z) < 1e-9);
+    assert.ok(Math.abs((400 - before.y) / before.z - (400 - after.y) / after.z) < 1e-9);
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context), terminal);
+    assert.equal(terminal.options.theme.background, '#faf7f0');
+    assert.equal(json(context, 'workspace.cards[0].color'), 'purple');
+    assert.equal(json(context, 'boardHistory.undo.length'), 1, 'zoom and sidebar changes add no appearance history');
+    assert.equal(wheel({ target: wheelSurface('select'), timeStamp: 300 }).defaultPrevented, false);
+    assert.deepEqual(json(context, 'workspace.camera'), after, 'the theme selector keeps native scrolling');
+});
+
+test('canvas markup keeps theme and Settings controls alongside accessible wheel guidance', () => {
+    const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
+    assert.equal([...html.matchAll(/id="workspace-theme"/g)].length, 1);
+    assert.match(html, /<label class="theme-control" for="workspace-theme">Default theme/);
+    assert.match(html, /id="viewport"[^>]*aria-label="[^"]*Scroll empty space to zoom; Control or Command and scroll zooms elsewhere/);
+    assert.match(html, /id="footer-hint">Drag to explore · Scroll empty space to zoom<\/span>/);
+    const footer = html.match(/<footer>[\s\S]*?<\/footer>/)?.[0];
+    assert.match(footer, /id="settings"[^>]*aria-controls="settings-menu"/);
+    assert.equal([...html.matchAll(/id="settings"/g)].length, 1);
+    assert.match(html, /id="settings-menu"[^>]*role="menu"[^>]*hidden>[\s\S]*?id="agent-setup"[^>]*role="menuitem"/);
+});
+
+test('plain wheel never zooms in Focus mode or before initialization', async () => {
+    const board = createWorkspace(); board.cards.push(createCard());
+    const h = await bootSizedTerminals(board), wheel = canvasWheel(h);
+    vm.runInContext('setFocus(workspace.cards[0].id)', h.context);
+    const before = json(h.context, 'workspace.camera');
+    for (const target of [h.elements.get('#viewport'), wheelSurface('.terminal-card')]) {
+        assert.equal(wheel({ target }).defaultPrevented, false);
+        assert.deepEqual(json(h.context, 'workspace.camera'), before);
+    }
+    const loading = await boot(createWorkspace(), { initialized: false });
+    assert.equal(canvasWheel(loading)().defaultPrevented, false);
+});
+
+test('tiny trackpad deltas accumulate, discard reversals and idle remainders, and ignore horizontal-only scroll', async () => {
+    const h = await boot(createWorkspace()), wheel = canvasWheel(h);
+    const before = json(h.context, 'workspace.camera');
+    assert.equal(wheel({ deltaX: 80, deltaY: 0 }).defaultPrevented, false);
+    assert.deepEqual(json(h.context, 'workspace.camera'), before);
+    for (const deltaY of [-1, 1, -1, 1, -1, -1, -1]) wheel({ deltaY });
+    assert.deepEqual(json(h.context, 'workspace.camera'), before);
+    wheel({ deltaX: 2, deltaY: -1 });
+    const zoomed = json(h.context, 'workspace.camera');
+    assert.ok(Math.abs(zoomed.z - before.z * Math.exp(4 * .002)) < 1e-9);
+    wheel({ deltaY: -3 });
+    wheel({ deltaY: -1, timeStamp: 500 });
+    assert.deepEqual(json(h.context, 'workspace.camera'), zoomed, 'an idle gap discards the old remainder');
+    wheel({ deltaY: -3 });
+    assert.ok(json(h.context, 'workspace.camera.z') > zoomed.z);
+});
+
+test('plain wheel normalizes line and page deltas before zooming', async () => {
+    for (const [deltaMode, pixels] of [[1, 40], [2, 720]]) {
+        const h = await boot(createWorkspace()), wheel = canvasWheel(h);
+        vm.runInContext('workspace.camera.z = .5', h.context);
+        wheel({ deltaY: -.1, deltaMode });
+        assert.ok(Math.abs(json(h.context, 'workspace.camera.z') - .5 * Math.exp(.1 * pixels * .002)) < 1e-9);
+    }
+});
+
+test('a canvas gesture consumes crossings into terminals until 200 ms without input', async () => {
+    const h = await boot(createWorkspace()), wheel = canvasWheel(h), target = wheelSurface('.terminal-card');
+    let nativeWheels = 0;
+    target.addEventListener('wheel', () => { nativeWheels++; });
+    wheel({ timeStamp: 0 });
+    const zoomed = json(h.context, 'workspace.camera');
+    for (const timeStamp of [100, 299, 498]) {
+        assert.equal(wheel({ target, timeStamp }).defaultPrevented, true);
+        assert.equal(nativeWheels, 0);
+        assert.deepEqual(json(h.context, 'workspace.camera'), zoomed);
+    }
+    assert.equal(wheel({ target, timeStamp: 698 }).defaultPrevented, false);
+    assert.equal(nativeWheels, 1);
+});
+
+for (const surface of ['.terminal-card', '.canvas-item', '.minimap']) {
+    test(`a gesture starting on ${surface} cannot become canvas zoom or scroll another terminal`, async () => {
+        const h = await boot(createWorkspace()), wheel = canvasWheel(h), root = new Element();
+        const target = wheelSurface(surface, root), sibling = wheelSurface(surface, root), other = wheelSurface('.terminal-card');
+        let nativeWheels = 0;
+        for (const node of [target, sibling, other]) node.addEventListener('wheel', event => { nativeWheels++; event.stopPropagation(); });
+        const before = json(h.context, 'workspace.camera');
+        assert.equal(wheel({ target, timeStamp: 0 }).defaultPrevented, false);
+        assert.equal(wheel({ target: sibling, timeStamp: 50 }).defaultPrevented, false, 'children share a destination');
+        assert.equal(nativeWheels, 2);
+        assert.equal(wheel({ timeStamp: 100 }).defaultPrevented, true);
+        assert.equal(wheel({ target: other, timeStamp: 150 }).defaultPrevented, true);
+        assert.equal(nativeWheels, 2);
+        assert.deepEqual(json(h.context, 'workspace.camera'), before);
+        assert.equal(wheel({ timeStamp: 350 }).defaultPrevented, true);
+        assert.ok(json(h.context, 'workspace.camera.z') > before.z, 'the new gesture can zoom');
+    });
+}
+
+test('blur and modifier wheel clear plain gesture ownership without changing Ctrl/Cmd behavior', async () => {
+    const board = createWorkspace(); board.cards.push(createCard());
+    const h = await bootSizedTerminals(board), wheel = canvasWheel(h);
+    const card = vm.runInContext('sessions.get(workspace.cards[0].id).element', h.context);
+    const target = wheelSurface('.terminal-card', card);
+    vm.runInContext('select(workspace.cards[0].id)', h.context);
+    wheel();
+    assert.equal(wheel({ target }).defaultPrevented, true);
+    h.window.dispatch('blur');
+    assert.equal(wheel({ target }).defaultPrevented, false);
+    assert.equal(wheel().defaultPrevented, true, 'native gesture is still locked');
+    const before = json(h.context, 'workspace.camera');
+    wheel({ target, ctrlKey: true });
+    assert.equal(h.size(board.cards[0].id)[0], 13, 'Ctrl still scales selected terminal text');
+    assert.deepEqual(json(h.context, 'workspace.camera'), before);
+    wheel({ metaKey: true });
+    assert.ok(json(h.context, 'workspace.camera.z') > before.z, 'Cmd still zooms elsewhere');
+    assert.equal(wheel({ target }).defaultPrevented, false, 'plain input starts a new gesture after modifiers');
+});
 
 test('Ctrl/Cmd + wheel over the selected terminal scales its text one pixel per notch and resizes its PTY', async () => {
     const board = createWorkspace(); board.cards.push(createCard(), createCard());
