@@ -38,7 +38,10 @@
         </div>
         <button id="profiles-toggle" class="section-heading section-disclosure" aria-expanded="true" aria-controls="profile-list"><span class="section-label">LAUNCH A TERMINAL</span><span class="tiny-label disclosure-mark" aria-hidden="true">⌄</span></button>
         <div id="profile-list" class="profile-list"></div>
-        <button id="outline-toggle" class="section-heading terminal-heading section-disclosure" aria-expanded="true" aria-controls="outline-section"><span class="section-label">ON THIS CANVAS</span><span id="outline-count" class="tiny-label">00</span></button>
+        <div class="section-heading terminal-heading terminal-heading-row">
+            <button id="outline-toggle" class="section-disclosure" aria-expanded="true" aria-controls="outline-section"><span class="section-label">ON THIS CANVAS</span><span id="outline-count" class="tiny-label">00</span></button>
+            <button id="find-terminal" class="icon-button" aria-label="Find terminal" aria-haspopup="dialog" aria-controls="terminal-switcher" aria-keyshortcuts="Control+Shift+P Meta+Shift+P" title="Find terminal (Ctrl+Shift+P / Command+Shift+P)"><span data-icon="search"></span></button>
+        </div>
         <div id="outline-section" class="sidebar-section">
             <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find a terminal…" aria-label="Find a terminal"><kbd>/</kbd></label>
             <div id="outline" class="outline"><p class="outline-empty">Your terminals will appear here.</p></div>
@@ -105,6 +108,14 @@
             <p id="account-error" class="form-error" role="alert" hidden></p>
             <div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Save</button></div>
         </form>
+    </dialog>
+    <dialog id="terminal-switcher" aria-labelledby="switcher-title" aria-describedby="switcher-help">
+        <div class="switcher-heading"><h2 id="switcher-title">Find terminal</h2><button id="switcher-close" class="icon-button" aria-label="Cancel terminal search"><span data-icon="x"></span></button></div>
+        <label class="field-label" for="switcher-query">Title, folder, or profile</label>
+        <input id="switcher-query" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="switcher-results" autocomplete="off" spellcheck="false" autofocus placeholder="Search terminals…">
+        <p id="switcher-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div id="switcher-results" role="listbox" aria-label="Matching terminals"></div>
+        <p id="switcher-help" class="field-hint">↑ ↓ choose · Enter reveals · Esc cancels. After revealing, press Enter again to type; a stopped terminal gets its Start or Resume button.</p>
     </dialog>
     <dialog id="agent-dialog">
         <form id="agent-form">

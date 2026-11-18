@@ -64,7 +64,7 @@ window.captureLayout = async function (scene) {
         '.style-toolbar .swatch', '.style-toolbar .size-button', 'footer', '#launch-dialog',
         '.dialog-heading', '.eyebrow', 'h2', '.dialog-description', '.field-label',
         '#profile', '#terminal-title', '#cwd', '#command', '#browse-folder',
-        '.field-hint', '.dialog-footer', '.dialog-footer button', '.icon-button',
+        '.field-hint', '.dialog-footer', '.dialog-footer button', '.icon-button', '#find-terminal',
         '.terminal-card', '.card-header', '.card-title', '.card-directory', '.card-account-icon',
         '.terminal-placeholder .button', '.minimap', '.canvas-item',
     ];
@@ -74,6 +74,8 @@ window.captureLayout = async function (scene) {
         // Hidden controls do not participate in layout or shift visible controls' identities.
         let index = 0;
         document.querySelectorAll(selector).forEach(element => {
+            // Find terminal is captured separately by stable ID, preserving existing icon identities.
+            if (selector === '.icon-button' && element.id === 'find-terminal') return;
             const style = getComputedStyle(element);
             if (!element.getClientRects().length || style.visibility === 'hidden') return;
             const box = element.getBoundingClientRect();
