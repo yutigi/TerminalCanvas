@@ -147,6 +147,7 @@ function changed() {
     }), 500);
 }
 function renderCamera() {
+    closeCanvasMenu();
     const { x, y, z } = workspace.camera;
     world.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
     viewport.style.backgroundSize = `${24 * z}px ${24 * z}px`;
@@ -285,7 +286,7 @@ function refresh() {
         const label = document.createElement('span'); label.className = 'label'; label.textContent = terminalDisplayTitle(card);
         const dot = document.createElement('span'); dot.className = 'state-dot'; dot.title = s.status;
         button.append(label, dot);
-        button.onclick = () => { if (focused) setFocus(null); select(card.id); centerCard(card); };
+        button.onclick = () => { if (focused) setFocus(null); showTerminal(card.id); };
         outline.append(button);
     });
     if (!outline.childElementCount) {
@@ -965,7 +966,71 @@ function drag(element, allowed, move, initial) {
         beginDrag(element, event, (dx, dy) => move(dx, dy, data), moved => { if (moved) changed(); }, { history: true });
     });
 }
-const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus');
+const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus, .canvas-menu');
+// Only the canvas background owns this menu; terminals, board items and controls keep their menus.
+function emptyCanvasTarget(target) {
+    if (target.closest('button,input,textarea,select,[contenteditable="true"],.terminal-card,.canvas-item,.canvas-line') || onCanvasChrome(target)) return false;
+    return target === viewport || target === world || !!target.closest('.empty-state');
+}
+let canvasMenuPoint = null, canvasPointer = null, canvasMenuIndex = 0;
+function canvasMenuButtons() {
+    return [...$('#canvas-menu-profiles').children, $('#canvas-menu-find')];
+}
+function closeCanvasMenu({ restoreFocus = false } = {}) {
+    const menu = $('#canvas-menu');
+    if (menu.hidden) return;
+    menu.hidden = true; canvasMenuPoint = null;
+    if (restoreFocus) viewport.focus({ preventScroll: true });
+}
+function focusCanvasMenu(index) {
+    const buttons = canvasMenuButtons();
+    canvasMenuIndex = (index + buttons.length) % buttons.length;
+    buttons.forEach((button, i) => { button.tabIndex = i === canvasMenuIndex ? 0 : -1; });
+    buttons[canvasMenuIndex].focus();
+}
+function openCanvasMenu(point) {
+    if (!ready || focused || boardBusy() || document.querySelector('dialog[open]')) return false;
+    const area = viewport.getBoundingClientRect();
+    const local = { x: Math.max(0, Math.min(area.width, point.x - area.left)), y: Math.max(0, Math.min(area.height, point.y - area.top)) };
+    const worldPoint = toWorld({ clientX: area.left + local.x, clientY: area.top + local.y });
+    // The hand tool disables world hit targets so they can pan; they still are not empty space.
+    if (hand && Geometry.topmostAt(worldPoint, elementRecords().filter(record => !record.line))) return false;
+    canvasMenuPoint = worldPoint;
+    const menu = $('#canvas-menu'); menu.hidden = false;
+    const size = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(0, Math.min(local.x, area.width - size.width))}px`;
+    menu.style.top = `${Math.max(0, Math.min(local.y, area.height - size.height))}px`;
+    focusCanvasMenu(0);
+    return true;
+}
+function findTerminalFromCanvas() {
+    closeCanvasMenu({ restoreFocus: true });
+    openTerminalSwitcher();
+}
+$('#canvas-menu-find').onclick = findTerminalFromCanvas;
+viewport.addEventListener('pointermove', event => {
+    if (emptyCanvasTarget(event.target)) canvasPointer = { x: event.clientX, y: event.clientY };
+});
+function canvasKeyboardPoint() {
+    const area = viewport.getBoundingClientRect();
+    return canvasPointer || { x: area.left + area.width / 2, y: area.top + area.height / 2 };
+}
+viewport.addEventListener('contextmenu', event => {
+    if (!emptyCanvasTarget(event.target)) return;
+    const point = event.button === 0 ? canvasKeyboardPoint() : { x: event.clientX, y: event.clientY };
+    if (openCanvasMenu(point)) { canvasPointer = point; event.preventDefault(); }
+});
+document.addEventListener('pointerdown', event => {
+    if (!event.target?.closest?.('#canvas-menu')) closeCanvasMenu();
+}, true);
+// A small window can make the profile list scroll; scrolling that list keeps its menu usable.
+function dismissCanvasMenuOnScroll(event) {
+    if (!event.target?.closest?.('#canvas-menu')) closeCanvasMenu();
+}
+document.addEventListener('wheel', dismissCanvasMenuOnScroll, { capture: true, passive: true });
+document.addEventListener('scroll', dismissCanvasMenuOnScroll, true);
+window.addEventListener('blur', () => closeCanvasMenu());
+window.addEventListener('resize', () => closeCanvasMenu());
 // Capture phase: finish in-place edits, and let creation tools draw over existing elements.
 viewport.addEventListener('pointerdown', event => {
     if (editing && !event.target.closest('.item-editor, .frame-title-editor')) document.activeElement?.blur();
@@ -1139,10 +1204,11 @@ async function openRequestedTerminal(event) {
     return { card, parent };
 }
 // Folder review preserves a duplicate's text size, appearance, and account.
-let launchFontSize, launchAccount, launchColor, launchTheme;
-function openLaunch(profileId = 'shell', { fontSize, claudeAccount, color, theme } = {}) {
+let launchFontSize, launchAccount, launchColor, launchTheme, launchPoint;
+function openLaunch(profileId = 'shell', { fontSize, claudeAccount, color, theme, point } = {}) {
     if (!ready || document.querySelector('dialog[open]')) return;
-    launchFontSize = fontSize; launchAccount = claudeAccount; launchColor = color; launchTheme = theme;
+    closeCanvasMenu();
+    launchFontSize = fontSize; launchAccount = claudeAccount; launchColor = color; launchTheme = theme; launchPoint = point;
     launchTitleEdited = false;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
@@ -1338,7 +1404,8 @@ $('#launch-form').onsubmit = event => {
         try {
             const { x, y, z } = workspace.camera;
             const count = workspace.cards.length;
-            const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), titleMode: launchTitleEdited && $('#terminal-title').value.trim() ? 'manual' : 'automatic', cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
+            const point = launchPoint || { x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) };
+            const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), titleMode: launchTitleEdited && $('#terminal-title').value.trim() ? 'manual' : 'automatic', cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), ...point });
             if (launchFontSize) result.card.fontSize = launchFontSize;
             if (launchColor) result.card.color = launchColor;
             if (launchTheme) result.card.theme = launchTheme;
@@ -1449,6 +1516,21 @@ $('#help').onclick = () => info('A workspace that moves with you.', '<p class="i
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
+    if (!$('#canvas-menu').hidden) {
+        if (event.key === 'Tab') { closeCanvasMenu({ restoreFocus: true }); return; }
+        event.preventDefault();
+        if (event.key === 'Escape') closeCanvasMenu({ restoreFocus: true });
+        else if (event.key === 'ArrowDown') focusCanvasMenu(canvasMenuIndex + 1);
+        else if (event.key === 'ArrowUp') focusCanvasMenu(canvasMenuIndex - 1);
+        else if (event.key === 'Home') focusCanvasMenu(0);
+        else if (event.key === 'End') focusCanvasMenu(canvasMenuButtons().length - 1);
+        else if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) canvasMenuButtons()[canvasMenuIndex].click();
+        return;
+    }
+    if ((event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) && !event.ctrlKey && !event.metaKey && !event.altKey && emptyCanvasTarget(event.target)) {
+        if (openCanvasMenu(canvasKeyboardPoint())) event.preventDefault();
+        return;
+    }
     // A held Enter never presses a terminal's buttons: Enter on the board moves focus to a stopped
     // terminal's Start or Resume button, and only a separate press may start it.
     if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
@@ -1573,6 +1655,12 @@ if (bridge) {
             const label = document.createElement('span'); label.textContent = p.name; button.append(label);
             const arrow = document.createElement('span'); arrow.className = 'launch-arrow'; arrow.innerHTML = icon('plus'); button.append(arrow);
             button.onclick = () => openLaunch(p.id); $('#profile-list').append(button);
+            const menuButton = document.createElement('button');
+            menuButton.type = 'button'; menuButton.setAttribute('role', 'menuitem'); menuButton.tabIndex = -1;
+            const menuLabel = document.createElement('span'); menuLabel.textContent = p.name;
+            menuButton.append(mark(p), menuLabel);
+            menuButton.onclick = () => { const point = canvasMenuPoint; openLaunch(p.id, { point }); };
+            $('#canvas-menu-profiles').append(menuButton);
         }
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
         loadWorkspace(initial.workspace, initial.titleEpoch); ready = true; markAppReady(); renderStyleToolbar();
