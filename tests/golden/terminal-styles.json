@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "name": "Terminal coloring",
+  "camera": {
+    "x": 48,
+    "y": 48,
+    "z": 1
+  },
+  "cards": [
+    {
+      "id": "colored-paper",
+      "type": "terminal",
+      "profile": "shell",
+      "title": "Terminal",
+      "cwd": "",
+      "command": "",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430,
+      "color": "purple",
+      "theme": "paper"
+    },
+    {
+      "id": "explicit-current",
+      "type": "terminal",
+      "profile": "codex",
+      "title": "Codex",
+      "cwd": "",
+      "command": "codex",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430,
+      "color": "blue",
+      "theme": "current"
+    },
+    {
+      "id": "inherited",
+      "type": "terminal",
+      "profile": "claude",
+      "title": "Claude Code",
+      "cwd": "",
+      "command": "claude",
+      "x": 0,
+      "y": 0,
+      "w": 660,
+      "h": 430
+    }
+  ],
+  "items": [],
+  "terminalTheme": "midnight"
+}
