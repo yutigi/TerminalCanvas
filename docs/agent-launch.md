@@ -204,7 +204,13 @@ To follow its output, add `--log` and read the file named by `log`; a line start
 `[Terminal Canvas: the process exited` marks the end. Never open more terminals than the task needs.
 ```
 
-The Claude Code `session-handover` skill uses this command when it detects Terminal Canvas.
+For more than this snippet, install the [`terminal-canvas` skill](../skills/terminal-canvas/SKILL.md).
+It follows the open Agent Skills format, so Claude Code, Codex, Gemini CLI, opencode, and other
+harnesses that read `SKILL.md` can use it. It covers finding `tc-hook` when `TC_HOOK` is missing,
+handing work over to a fresh session of the same or another agent through a briefing file, and
+running parallel workers in linked cards. Copy the `skills/terminal-canvas` folder into the
+harness's skill folder, for example `~/.claude/skills/` for Claude Code, or `~/.agents/skills/`
+or `~/.codex/skills/` for Codex.
 
 ## Sandboxes
 
