@@ -30,7 +30,7 @@
         <button class="nav-item" id="new-workspace"><span data-icon="plus"></span>New workspace</button>
         <button class="nav-item" id="export-workspace" title="Save a copy with images embedded so it works on another computer"><span data-icon="package"></span>Export portable copy</button>
         <button class="nav-item" id="clean-images" title="Delete stored images that this workspace no longer uses"><span data-icon="trash"></span>Clean up images</button>
-        <div class="section-heading"><span class="section-label">LAUNCH A TERMINAL</span><span class="tiny-label agent-setup-slot"><span aria-hidden="true">+</span><button id="agent-setup" class="tiny-action" title="Set up AI agents: teach Claude Code, Codex, Gemini CLI, and others to open linked terminals and hand work over" aria-label="Set up AI agents">Agents</button></span></div>
+        <div class="section-heading"><span class="section-label">LAUNCH A TERMINAL</span><span class="tiny-label">+</span></div>
         <div id="profile-list" class="profile-list"></div>
         <div class="section-heading terminal-heading"><span class="section-label">ON THIS CANVAS</span><span id="outline-count" class="tiny-label">00</span></div>
         <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find a terminal…" aria-label="Find a terminal"><kbd>/</kbd></label>
@@ -68,7 +68,8 @@
             </aside>
             <button id="exit-focus" class="button exit-focus" hidden><span data-icon="minimize"></span>Back to canvas<span>Ctrl ⇧ F</span></button>
         </section>
-        <footer><div><span class="footer-brand" data-icon="terminal"></span><span id="footer-hint">Drag to explore · Ctrl + scroll to zoom</span></div><div><span id="terminal-total">0 terminals</span><span class="bar-divider"></span><span id="runtime-label">Desktop workspace</span><i class="status-dot"></i></div></footer>
+        <footer><div><span class="footer-brand" data-icon="terminal"></span><span id="footer-hint">Drag to explore · Ctrl + scroll to zoom</span></div><div><span id="terminal-total">0 terminals</span><span class="bar-divider"></span><span id="runtime-label">Desktop workspace</span><i class="status-dot"></i><span class="bar-divider"></span><button id="settings" class="footer-button" title="Settings" aria-label="Settings" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"><span data-icon="settings"></span></button></div></footer>
+        <div id="settings-menu" class="settings-menu" role="menu" aria-label="Settings" hidden><div class="settings-menu-label">SETTINGS</div><button id="agent-setup" role="menuitem"><span data-icon="spark"></span><span>Set up AI agents…<small>Install the Terminal Canvas skill for Claude Code, Codex, and others</small></span></button></div>
     </main>
     <dialog id="launch-dialog">
         <form id="launch-form">
@@ -100,7 +101,7 @@
             <div class="dialog-heading"><span class="dialog-symbol" data-icon="spark"></span><button type="button" class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div>
             <div class="eyebrow">TEACH YOUR AGENTS THE CANVAS</div><h2>Set up AI agents</h2><p class="dialog-description">Install the Terminal Canvas skill for every session. Agents then open terminals linked to their own on the canvas, run helpers side by side, and hand work over to a fresh Claude Code, Codex, or Gemini session.</p>
             <div id="agent-targets" class="agent-targets" role="group" aria-label="Where to install the skill"></div>
-            <p class="field-hint">Writes one <code>terminal-canvas/SKILL.md</code> in each folder and leaves your other skills alone. Agents load it in sessions started afterward. Run this again from <strong>Agents</strong> beside “Launch a terminal” in the sidebar after an update.</p>
+            <p class="field-hint">Writes one <code>terminal-canvas/SKILL.md</code> in each folder and leaves your other skills alone. Agents load it in sessions started afterward. Run this again from <strong>Settings</strong> (the gear at the bottom right) after an update.</p>
             <p id="agent-error" class="form-error" role="alert" hidden></p>
             <div class="dialog-footer"><button type="button" class="button" data-close>Not now</button><button type="submit" class="button primary" id="agent-install"><span data-icon="package"></span>Install skill</button></div>
         </form>

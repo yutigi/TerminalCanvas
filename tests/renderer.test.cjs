@@ -2004,7 +2004,7 @@ test('the first launch offers the agent setup once and declining it is remembere
     assert.deepEqual(structuredClone(calls.filter(c => c.action === 'agent-setup').map(c => c.payload)), [{}, { dismiss: true }, {}]);
 });
 
-test('Set up agents installs the skill where the user chose and reports failures in the dialog', async () => {
+test('Settings › Set up AI agents installs the skill where the user chose and reports failures in the dialog', async () => {
     let fail = true;
     const targets = structuredClone(AGENT_TARGETS);
     targets[0].status = 'current'; targets[1].detected = ['Codex']; targets[1].status = 'outdated';
@@ -2013,7 +2013,20 @@ test('Set up agents installs the skill where the user chose and reports failures
             : { targets, installed: payload.install || [] };
     const { calls, elements } = await boot(createWorkspace(), { respond });
     assert.deepEqual(calls.map(c => c.action), ['initialize'], 'the setup is not offered after the first launch');
+    // The footer's gear opens the Settings menu, whose first item is the agent setup.
+    elements.get('#settings-menu').hidden = true; // as the markup starts it
+    elements.get('#settings').onclick();
+    assert.equal(elements.get('#settings-menu').hidden, false);
+    assert.equal(elements.get('#settings').attributes.get('aria-expanded'), 'true');
+    elements.get('#settings').onclick();
+    assert.equal(elements.get('#settings-menu').hidden, true, 'the gear also closes it');
+    elements.get('#settings').onclick();
+    elements.get('#settings-menu').dispatch('keydown', { key: 'Escape' });
+    assert.equal(elements.get('#settings-menu').hidden, true, 'Escape closes it');
+    elements.get('#settings').onclick();
     elements.get('#agent-setup').onclick(); await flush();
+    assert.equal(elements.get('#settings-menu').hidden, true, 'choosing an item closes it');
+    assert.equal(elements.get('#settings').attributes.get('aria-expanded'), 'false');
     assert.equal(elements.get('#agent-dialog').open, true);
     assert.deepEqual(agentRows(elements).map(row => agentBox(row).checked), [false, true], 'installed copies are not preselected');
     assert.equal(agentRows(elements)[1].children[1].children[0].children[1].textContent, 'UPDATE');

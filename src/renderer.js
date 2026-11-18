@@ -35,6 +35,7 @@ const paths = {
     redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
     trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
     spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
@@ -976,7 +977,22 @@ async function openAgentSetup({ offer = false } = {}) {
     $('#agent-error').hidden = true; $('#agent-install').disabled = false;
     $('#agent-dialog').showModal();
 }
-$('#agent-setup').onclick = () => run(() => openAgentSetup());
+// The footer's gear opens the Settings menu; Escape, a click elsewhere, or choosing an item closes it.
+function setSettingsMenu(open) {
+    $('#settings-menu').hidden = !open;
+    $('#settings').setAttribute('aria-expanded', String(open));
+    if (open) $('#agent-setup').focus();
+}
+$('#settings').onclick = () => setSettingsMenu($('#settings-menu').hidden);
+$('#settings-menu').addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation();
+    setSettingsMenu(false); $('#settings').focus();
+});
+document.addEventListener('pointerdown', event => {
+    if (!$('#settings-menu').hidden && !event.target.closest?.('#settings-menu,#settings')) setSettingsMenu(false);
+}, true);
+$('#agent-setup').onclick = () => { setSettingsMenu(false); run(() => openAgentSetup()); };
 $('#agent-form').onsubmit = event => {
     event.preventDefault(); if (agentBusy) return;
     const chosen = [...agentChoices.values()].filter(choice => choice.box.checked);
