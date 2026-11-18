@@ -140,7 +140,7 @@ async function invoke(action, payload) {
 }
 function run(task) { Promise.resolve().then(task).catch(error => toast(error.message)); }
 function changed() {
-    if (!ready) return;
+    if (!ready || bridge?.remote) return;
     const revision = ++saveRevision;
     $('#save-state').lastChild.textContent = 'Saving…';
     clearTimeout(autosaveTimer);
@@ -365,6 +365,7 @@ function movingElements() {
     return { rects: elements.filter(e => e.type !== 'line'), lines: elements.filter(e => e.type === 'line') };
 }
 function startMove(event, id, handle) {
+    if (bridge?.remote) return;
     if (event.button !== 0 || focused || event.shiftKey) return;
     if (!selection.has(id)) select(id);
     const { rects, lines } = movingElements(), z = workspace.camera.z;
@@ -609,6 +610,7 @@ function setFocus(id, { type = true } = {}) {
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
 function fitTerminal(s) {
+    if (bridge?.remote) return;
     if (!s?.fit || s.canvas !== activeCanvas || !s.element.offsetWidth || !s.element.offsetHeight) return;
     const size = s.fit.proposeDimensions();
     if (size && Number.isFinite(size.cols) && Number.isFinite(size.rows)) s.terminal.resize(Math.max(2, Math.min(500, size.cols)), Math.max(1, Math.min(300, size.rows)));
@@ -707,11 +709,13 @@ function mount(card) {
     el.querySelector('.card-title').textContent = terminalDisplayTitle(card);
     el.querySelector('.card-title').setAttribute('aria-label', 'Rename terminal: ' + terminalDisplayTitle(card));
     el.querySelector('.card-title').onclick = () => openTitleDialog(card);
+    el.querySelector('.card-title').disabled = !!bridge?.remote;
     const s = { element: el, canvas: activeCanvas, card, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
+            disableStdin: !!bridge?.remote && bridge.role !== 'control',
             fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: terminalFontSize(card), lineHeight: 1.3,
             cursorBlink: true, scrollback: 5000, allowProposedApi: false,
             linkHandler: {
@@ -726,12 +730,27 @@ function mount(card) {
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
         s.terminal.onData(data => {
+            if (bridge?.remote && (bridge.role !== 'control' || s.replaying || !s.userInput)) return;
             // ConPTY can ask for its cursor before the start invoke resolves.
             // Answer an observed query while keeping early user typing blocked.
             const startupReply = s.status === 'starting' && s.startupCursorQueries > 0 && /^\x1b\[\d+;\d+R$/.test(data);
             if (startupReply) s.startupCursorQueries--;
             if (s.status === 'running' || startupReply) bridge.input(card.id, data);
         });
+        if (bridge?.remote) {
+            // Only user input reaches the shared PTY. Terminal query responses come from desktop.
+            const userInput = event => {
+                if (!event.isTrusted) return;
+                s.userInput = true;
+                // Native dispatch runs a microtask checkpoint between DOM listeners. Keep the
+                // flag through xterm's target listener, then clear it in the next task.
+                clearTimeout(s.userInputTimer);
+                s.userInputTimer = setTimeout(() => { s.userInput = false; }, 0);
+            };
+            el.addEventListener('keydown', userInput, true);
+            el.addEventListener('paste', userInput, true);
+            el.addEventListener('input', userInput, true);
+        }
         s.terminal.onResize(({ cols, rows }) => { if (['running', 'starting'].includes(s.status)) bridge.resize(card.id, cols, rows); });
         s.terminal.onBell?.(() => markCanvasActivity(s, 'Bell'));
         s.terminal.attachCustomKeyEventHandler(event => {
@@ -763,7 +782,10 @@ function mount(card) {
                     const generation = s.generation;
                     run(async () => {
                         const { text } = await invoke('clipboard-read');
-                        if (sessions.get(card.id) === s && s.status === 'running' && s.generation === generation) s.terminal.paste(text);
+                        if (sessions.get(card.id) === s && s.status === 'running' && s.generation === generation) {
+                            s.userInput = true;
+                            try { s.terminal.paste(text); } finally { s.userInput = false; }
+                        }
                     });
                 }
             }
@@ -800,7 +822,7 @@ function mount(card) {
     }));
     const header = el.querySelector('.card-header');
     header.addEventListener('pointerdown', event => { if (!event.target.closest('button')) startMove(event, card.id, header); });
-    drag(el.querySelector('.card-resize'), () => !focused, (dx, dy, initial) => {
+    drag(el.querySelector('.card-resize'), () => !focused && !bridge?.remote, (dx, dy, initial) => {
         card.w = Math.max(400, Math.min(2400, initial.w + dx / workspace.camera.z));
         card.h = Math.max(280, Math.min(1800, initial.h + dy / workspace.camera.z));
         renderGeometry(card);
@@ -856,7 +878,7 @@ function applyTitleEvent(event) {
     }
 }
 function openTitleDialog(card) {
-    if (!ready || titleBusy || document.querySelector('dialog[open]')) return;
+    if (!ready || bridge?.remote || titleBusy || document.querySelector('dialog[open]')) return;
     titleCard = card;
     $('#rename-title').value = card.title;
     $('#title-mode').textContent = card.titleMode === 'automatic' ? 'Automatic title' : 'Manual title';
@@ -865,7 +887,7 @@ function openTitleDialog(card) {
     $('#rename-title').focus(); $('#rename-title').select();
 }
 async function renameTerminal(card, mode, title) {
-    if (titleBusy || anyCard(card.id) !== card) return;
+    if (bridge?.remote || titleBusy || anyCard(card.id) !== card) return;
     if (mode === 'manual' && !validTerminalTitle(title)) throw new Error('Use a name of 1 to 100 characters without controls.');
     titleBusy = true;
     const s = sessions.get(card.id), previous = { title: card.title, titleMode: card.titleMode, titleRevision: card.titleRevision };
@@ -1473,6 +1495,75 @@ function loadWorkspace(board, epoch) {
     }
     revealCanvas(canvasStates.find(canvas => canvas.id === board.activeCanvas) || canvasStates[0], { restoreKeyboard: false });
 }
+
+// A browser updates layout without recreating its terminal emulators or sharing focus/selection.
+function remoteWorkspace(board, epoch) {
+    titleEpoch = epoch;
+    rememberCanvas();
+    const previousCanvas = activeCanvas;
+    const present = new Set(board.cards.map(card => card.id));
+    for (const id of sessions.keys()) if (!present.has(id)) dispose(id);
+    const cards = new Map(board.cards.map(card => {
+        const previous = sessions.get(card.id)?.card;
+        if (!previous) return [card.id, card];
+        for (const key of Object.keys(previous)) delete previous[key];
+        Object.assign(previous, card);
+        return [card.id, previous];
+    }));
+    const items = new Map(board.items.map(item => [item.id, item]));
+    for (const id of [...itemViews.keys()]) disposeItem(id);
+    const wasExtended = canvasExtended;
+    canvasExtended = Array.isArray(board.canvases) && board.canvases.length > 0;
+    const definitions = canvasExtended ? board.canvases : [{ id: canvasStates[0].id, name: 'Canvas 1', camera: board.camera,
+        cardIds: board.cards.map(card => card.id), itemIds: board.items.map(item => item.id) }];
+    canvasStates = definitions.map((definition, index) => {
+        // Desktop owns membership and geometry; browser navigation remains local to each canvas.
+        const canvas = canvasStates.find(canvas => canvas.id === definition.id)
+            || (!wasExtended && index === 0 ? canvasStates[0] : canvasState(definition));
+        canvas.id = definition.id; canvas.name = definition.name;
+        Object.assign(canvas.board, { name: board.name, cards: definition.cardIds.map(id => cards.get(id)),
+            items: definition.itemIds.map(id => items.get(id)) });
+        const ids = new Set([...canvas.board.cards, ...canvas.board.items].map(item => item.id));
+        canvas.selection = new Set([...canvas.selection].filter(id => ids.has(id)));
+        if (!ids.has(canvas.selected)) canvas.selected = null;
+        if (!canvas.board.cards.some(card => card.id === canvas.focused)) canvas.focused = null;
+        return canvas;
+    });
+    setWorkspaceTerminalTheme(board.terminalTheme);
+    for (const canvas of canvasStates) {
+        activeCanvas = canvas; workspace = canvas.board;
+        for (const card of workspace.cards) {
+            const s = sessions.get(card.id);
+            if (!s) mount(card);
+            else {
+                s.canvas = canvas;
+                if (s.terminal) s.terminal.options.fontSize = terminalFontSize(card);
+                renderCardGeometry(card); recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
+                s.element.querySelector('.card-title').textContent = card.title;
+                s.element.querySelector('.card-title').setAttribute('aria-label', `Rename terminal: ${card.title}`);
+            }
+        }
+        workspace.items.forEach(mountItem);
+    }
+    $('#workspace-name').value = board.name;
+    revealCanvas(canvasStates.find(canvas => canvas.id === previousCanvas.id)
+        || canvasStates.find(canvas => canvas.id === board.activeCanvas) || canvasStates[0], { restoreKeyboard: false });
+    refresh();
+}
+
+function remoteTerminals(terminals) {
+    for (const terminal of terminals) {
+        const s = sessions.get(terminal.id), card = anyCard(terminal.id);
+        if (!s || !card) continue;
+        if (terminal.running && s.remoteGeneration !== terminal.generation) s.terminal?.reset();
+        s.remoteGeneration = terminal.generation;
+        s.terminal?.resize(terminal.cols, terminal.rows);
+        // Keep desktop columns even when Focus view or a narrower browser would propose another size.
+        const screen = s.element.querySelector('.terminal-body .xterm');
+        if (screen) screen.style.width = `${Math.ceil(terminal.cols * terminalFontSize(card) * 0.61)}px`;
+        setStatus(card, terminal.running ? 'running' : 'idle');
+    }
+}
 async function canReplace() {
     if (canvasMutation || boardBusy() || imageImports || formBusy || duplicateBusy) return false;
     if (canvasStates.length === 1 && !workspace.cards.length && !workspace.items.length) return true;
@@ -1661,6 +1752,14 @@ $('#update').onclick = () => run(async () => {
 window.addEventListener('resize', () => { if (ready) renderCamera(); });
 if (bridge) {
     bridge.onEvent(event => {
+        if (bridge.remote && event.type === 'remote-workspace' && ready) remoteWorkspace(event.workspace, event.titleEpoch);
+        if (bridge.remote && event.type === 'remote-terminals' && ready) remoteTerminals(event.terminals);
+        if (bridge.remote && event.type === 'remote-disconnected') {
+            for (const s of sessions.values()) if (s.terminal) s.terminal.options.disableStdin = true;
+            const banner = $('#remote-banner');
+            if (banner) banner.textContent = event.message;
+            toast(event.message);
+        }
         const s = sessions.get(event.id);
         if (event.type === 'title' && s && event.titleEpoch === titleEpoch) {
             if (s.namingPending) {
@@ -1715,6 +1814,21 @@ if (bridge) {
         }
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
         loadWorkspace(initial.workspace, initial.titleEpoch); ready = true; markAppReady(); renderStyleToolbar();
+        if (bridge.remote) {
+            document.body.classList.add('remote-client');
+            $('#workspace-name').readOnly = true;
+            $('#save-state').lastChild.textContent = 'Desktop owns workspace';
+            $('#runtime-label').textContent = `Browser · ${initial.role === 'control' ? 'Controller' : 'Read-only viewer'}`;
+            const banner = document.createElement('div'); banner.id = 'remote-banner'; banner.className = 'remote-banner';
+            banner.setAttribute('role', 'status');
+            banner.textContent = initial.role === 'control' ? 'Controller · type in running terminals. Workspace and sizes follow desktop.' : 'Read-only viewer · workspace and sizes follow desktop.';
+            document.body.append(banner);
+            remoteTerminals(initial.terminals || []);
+            for (const [id, output] of Object.entries(initial.output || {})) {
+                const s = sessions.get(id);
+                if (s?.terminal) { s.replaying = true; s.terminal.write(output, () => { s.replaying = false; }); }
+            }
+        }
         if (initial.warning) toast(initial.warning);
         if (initial.agentSetup) await openAgentSetup({ offer: true });
     });

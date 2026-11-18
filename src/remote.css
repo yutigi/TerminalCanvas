@@ -1,0 +1,25 @@
+/* Browser access styling is isolated from the established desktop layout. */
+.remote-running { color: #c8ecb5; background: #303b2b; }
+#remote-address { display: block; padding: 0 10px 8px; color: #a7bb9b; font: 10px/1.5 Consolas, monospace; overflow-wrap: anywhere; }
+#remote-dialog { width: 580px; }
+#remote-control-token, #remote-view-token { font-family: Consolas, monospace; }
+.remote-login { color: #c8d1dc; background: #15191f; font: 16px/1.6 system-ui, sans-serif; margin: 0; }
+.remote-login main { width: min(480px, calc(100% - 48px)); margin: 10vh auto; }
+.remote-login h1 { font-size: 28px; color: #c8ecb5; }
+.remote-login input { display: block; box-sizing: border-box; width: 100%; padding: 12px; margin: 8px 0 16px; }
+.remote-login button { padding: 10px 20px; cursor: pointer; }
+#pair-error { color: #eea39a; }
+.remote-client .create-toolbar, .remote-client #style-toolbar,
+.remote-client .card-resize, .remote-client .card-account,
+.remote-client .card-actions button:not([data-action="focus"]),
+.remote-client .terminal-placeholder button,
+.remote-client #profile-list, .remote-client #add-terminal, .remote-client #empty-add,
+.remote-client #open-workspace, .remote-client #new-workspace, .remote-client #save,
+.remote-client #export-workspace, .remote-client #clean-images, .remote-client #arrange,
+.remote-client #undo, .remote-client #redo,
+.remote-client .canvas-controls { display: none !important; }
+.remote-client .canvas-item, .remote-client .line-hit { pointer-events: none; }
+.remote-client .card-header { cursor: default; }
+.remote-client .terminal-body { overflow: auto; }
+.remote-client .terminal-body .xterm { min-height: 100%; }
+.remote-client .remote-banner { position: fixed; z-index: 100; bottom: 35px; right: 12px; padding: 8px 12px; max-width: 65vw; background: #303b2b; color: #c8ecb5; border: 1px solid #5b6b50; border-radius: 6px; font: 12px/1.5 system-ui, sans-serif; }

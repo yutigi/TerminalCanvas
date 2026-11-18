@@ -74,15 +74,15 @@ window.captureLayout = async function (scene) {
     const rect = box => [box.x, box.y, box.width, box.height].map(n => Math.round(n * 1000) / 1000);
     const elements = {};
     for (const selector of selectors) {
-        // New canvas and Find terminal actions use stable IDs, preserving historical icon indices.
-        const matches = [...document.querySelectorAll(selector)].filter(element => selector !== '.icon-button'
-            || (!element.closest('.canvas-controls') && element.id !== 'find-terminal'));
-        matches.forEach((element, index) => {
+        // Hidden controls do not shift visible identities; new actions use stable IDs.
+        let index = 0;
+        document.querySelectorAll(selector).forEach(element => {
+            if (selector === '.icon-button' && (element.closest('.canvas-controls') || element.id === 'find-terminal')) return;
             const style = getComputedStyle(element);
             if (!element.getClientRects().length || style.visibility === 'hidden') return;
             const box = element.getBoundingClientRect();
             if (!box.width || !box.height) return;
-            elements[`${selector}[${index}]`] = {
+            elements[`${selector}[${index++}]`] = {
                 rect: rect(box), background: style.backgroundColor, color: style.color,
                 icons: Array.from(element.children).flatMap(child => {
                     const svg = child.matches('svg') ? child : child.querySelector(':scope > svg');

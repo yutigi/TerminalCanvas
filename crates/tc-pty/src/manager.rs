@@ -281,6 +281,7 @@ impl Config {
 struct Session {
     name_homes: [std::path::PathBuf; 2],
     name_session: Option<tc_core::session::SessionMetadata>,
+    size: (u16, u16),
     generation: u64,
     process: Box<dyn Process>,
     integration: Option<Integration>,
@@ -499,6 +500,11 @@ impl TerminalManager {
         self.sessions.contains_key(id)
     }
 
+    /// The generation and actual PTY dimensions, for additional views of a desktop terminal.
+    pub fn view(&self, id: &str) -> Option<(u64, u16, u16)> {
+        self.sessions.get(id).map(|s| (s.generation, s.size.0, s.size.1))
+    }
+
     pub fn process_id(&self, id: &str) -> Option<u32> {
         self.sessions.get(id)?.process.pid()
     }
@@ -694,6 +700,7 @@ impl TerminalManager {
         let session = Session {
             name_session: None,
             name_homes,
+            size: (cols, rows),
             generation: key.generation,
             process,
             integration,
@@ -1098,7 +1105,11 @@ impl TerminalManager {
     pub fn resize(&mut self, id: &str, cols: &Value, rows: &Value) -> Result<()> {
         let (cols, rows) = dimensions(cols, rows)?;
         match self.sessions.get_mut(id) {
-            Some(session) => session.process.resize(cols, rows).map_err(Error::from),
+            Some(session) => {
+                session.process.resize(cols, rows)?;
+                session.size = (cols, rows);
+                Ok(())
+            }
             None => Ok(()),
         }
     }

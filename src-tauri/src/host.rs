@@ -159,6 +159,7 @@ struct State {
     filename: Option<PathBuf>,
     inputs: HashMap<String, InputOrder>,
     launches: crate::launches::Launches,
+    mirror: Option<crate::remote_mirror::Mirror>,
 }
 
 #[derive(Default)]
@@ -197,6 +198,7 @@ pub struct Host {
     writes: SerialQueue,
     assets: SerialQueue,
     events: Mutex<Option<Events>>,
+    remote_events: tokio::sync::broadcast::Sender<Value>,
     quitting: AtomicBool,
 }
 
@@ -268,6 +270,7 @@ impl Host {
             filename: None,
             inputs: HashMap::new(),
             launches: crate::launches::Launches::new(),
+            mirror: None,
         };
         let host = Arc::new(Host {
             state: sender,
@@ -279,6 +282,7 @@ impl Host {
             writes: SerialQueue::new("tc-workspace-writes"),
             assets: SerialQueue::new("tc-assets"),
             events: Mutex::new(None),
+            remote_events: tokio::sync::broadcast::channel(64).0,
             quitting: AtomicBool::new(false),
         });
         let weak = Arc::downgrade(&host);
@@ -304,6 +308,14 @@ impl Host {
                     None => break,
                 }
                 host.dispatch(&mut state);
+                if let Some(mirror) = &mut state.mirror {
+                    mirror.sync(
+                        state.recovery.board(),
+                        state.recovery.epoch(),
+                        &state.manager,
+                        &host.remote_events,
+                    );
+                }
             }
         });
         host
@@ -393,7 +405,7 @@ impl Host {
         });
     }
 
-    fn publish_title(&self, state: &State, card: &tc_core::workspace::Card) {
+    fn publish_title(&self, state: &mut State, card: &tc_core::workspace::Card) {
         // The naming change and its recovery write are queued in the same actor turn.
         let (file, text, emitter) = (
             self.paths.recovery(),
@@ -407,8 +419,12 @@ impl Host {
                 emit(json!({ "type": "error", "message": format!("Could not save terminal title: {error}") }));
             }
         });
-        self.emit(json!({ "type": "title", "id": card.id, "title": card.title,
-            "titleMode": card.title_mode, "titleRevision": card.title_revision, "titleEpoch": state.recovery.epoch() }));
+        let event = json!({ "type": "title", "id": card.id, "title": card.title,
+            "titleMode": card.title_mode, "titleRevision": card.title_revision, "titleEpoch": state.recovery.epoch() });
+        if let Some(mirror) = &mut state.mirror {
+            mirror.observe(&event, &self.remote_events);
+        }
+        self.emit(event);
     }
 
     async fn with_state<R: Send + 'static>(&self, task: impl FnOnce(&Host, &mut State) -> R + Send + 'static) -> R {
@@ -489,7 +505,11 @@ impl Host {
                     Err(error) => self.emit_error(None, format!("Could not save session recovery: {error}")),
                 }
             }
-            self.emit(serde_json::to_value(&event).expect("events serialize"));
+            let event = serde_json::to_value(&event).expect("events serialize");
+            if let Some(mirror) = &mut state.mirror {
+                mirror.observe(&event, &self.remote_events);
+            }
+            self.emit(event);
         }
     }
 
@@ -1121,6 +1141,38 @@ impl Host {
     /// The folder `tc-asset` serves images from.
     pub fn assets_folder(&self) -> PathBuf {
         self.paths.assets()
+    }
+
+    /// Attaches to live state without desktop initialization, recovery reset, or input reset.
+    pub async fn remote_attach(&self) -> (Value, tokio::sync::broadcast::Receiver<Value>) {
+        self.with_state(|host, state| {
+            let mirror = state.mirror.get_or_insert_with(crate::remote_mirror::Mirror::new);
+            let events = host.remote_events.subscribe();
+            let mut snapshot = mirror.snapshot(state.recovery.board(), &state.manager);
+            snapshot["profiles"] = json!(PROFILES);
+            snapshot["home"] = json!(host.home);
+            snapshot["platform"] = json!(node_platform(host.os));
+            snapshot["titleEpoch"] = json!(state.recovery.epoch());
+            (snapshot, events)
+        })
+        .await
+    }
+
+    pub async fn remote_detach(&self) {
+        self.with_state(|_, state| state.mirror = None).await;
+    }
+
+    /// WebSocket order is already serial. It must not share the desktop bridge's sequence map.
+    /// Recheck revocation inside the actor so queued input cannot outlive its authorization.
+    pub async fn remote_input(&self, id: String, data: String, active: Arc<AtomicBool>) -> CommandResult {
+        self.with_state(move |_, state| {
+            if !active.load(Ordering::Acquire) {
+                return Err("Session revoked.".into());
+            }
+            state.manager.write(&id, &data).map_err(message)?;
+            Ok(json!({ "ok": true }))
+        })
+        .await
     }
 
     /// For tests: the number of running terminals.
