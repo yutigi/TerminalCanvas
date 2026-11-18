@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { launch, until, key, screenshot, root, psQuote, hasOutputLine } = require('./harness.cjs');
 const { startTerminal, input } = require('./support.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 180000 };
@@ -22,7 +23,9 @@ test('native background canvases retain processes, backpressure, output, cwd and
     assert.deepEqual(await h.page.evaluate(() => [...sessions.values()].map(s => s.terminal.options.theme.background)), ['#faf7f0', '#15191f']);
     await until(async () => (await h.state()).host.terminals.every(card => card.cwd), 'Shell folders did not become available.');
     // More than the 256,000-unit high-water mark; fewer than 5,000 visual lines of scrollback.
-    await input(h.page, first.id, `Set-Location -LiteralPath ${psQuote(root + '\\src')}; for ($i=0; $i -lt 600; $i++) { [Console]::WriteLine(('BG{0:D4}:' -f $i) + ('x' * 480)) }; [Console]::WriteLine('BACKGROUND_OUTPUT_COMPLETE')\r`);
+    // The relocated test kit includes tests, but does not ship the renderer's src directory.
+    const backgroundCwd = path.join(root, 'tests');
+    await input(h.page, first.id, `Set-Location -LiteralPath ${psQuote(backgroundCwd)}; for ($i=0; $i -lt 600; $i++) { [Console]::WriteLine(('BG{0:D4}:' -f $i) + ('x' * 480)) }; [Console]::WriteLine('BACKGROUND_OUTPUT_COMPLETE')\r`);
     try {
         await until(async () => hasOutputLine(await h.output(first.id), 'BACKGROUND_OUTPUT_COMPLETE'), 'Hidden output stalled under backpressure.', 30000);
     } catch (error) {
@@ -30,7 +33,7 @@ test('native background canvases retain processes, backpressure, output, cwd and
         t.diagnostic((await h.output(first.id)).slice(-2500));
         throw error;
     }
-    await until(async () => (await h.state()).host.terminals.find(card => card.id === first.id).cwd?.endsWith('src'), 'Hidden cwd polling stopped.');
+    await until(async () => (await h.state()).host.terminals.find(card => card.id === first.id).cwd === backgroundCwd, 'Hidden cwd polling stopped.');
     await until(async () => await h.page.evaluate(id => sessions.get(id).terminal._core._renderService._isPaused, first.id), 'Hidden xterm painting did not pause.');
     const state = await h.state();
     assert.equal(state.host.running, 2);
