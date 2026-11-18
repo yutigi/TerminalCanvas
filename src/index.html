@@ -32,7 +32,7 @@
         <button class="nav-item" id="clean-images" title="Delete stored images that this workspace no longer uses"><span data-icon="trash"></span>Clean up images</button>
         <div class="section-heading"><span class="section-label">LAUNCH A TERMINAL</span><span class="tiny-label">+</span></div>
         <div id="profile-list" class="profile-list"></div>
-        <div class="section-heading terminal-heading"><span class="section-label">ON THIS CANVAS</span><span id="outline-count" class="tiny-label">00</span></div>
+        <div class="section-heading terminal-heading"><span class="section-label">ON THIS CANVAS</span><button id="find-terminal" class="icon-button" aria-label="Find terminal" aria-haspopup="dialog" aria-controls="terminal-switcher" aria-keyshortcuts="Control+Shift+P Meta+Shift+P" title="Find terminal (Ctrl+Shift+P / Command+Shift+P)"><span data-icon="search"></span></button><span id="outline-count" class="tiny-label">00</span></div>
         <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find a terminal…" aria-label="Find a terminal"><kbd>/</kbd></label>
         <div id="outline" class="outline"><p class="outline-empty">Your terminals will appear here.</p></div>
         <div class="sidebar-bottom">
@@ -94,6 +94,14 @@
             <p id="account-error" class="form-error" role="alert" hidden></p>
             <div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Save</button></div>
         </form>
+    </dialog>
+    <dialog id="terminal-switcher" aria-labelledby="switcher-title" aria-describedby="switcher-help">
+        <div class="switcher-heading"><h2 id="switcher-title">Find terminal</h2><button id="switcher-close" class="icon-button" aria-label="Cancel terminal search"><span data-icon="x"></span></button></div>
+        <label class="field-label" for="switcher-query">Title, folder, or profile</label>
+        <input id="switcher-query" type="text" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="switcher-results" autocomplete="off" spellcheck="false" autofocus placeholder="Search terminals…">
+        <p id="switcher-status" class="field-hint" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div id="switcher-results" role="listbox" aria-label="Matching terminals"></div>
+        <p id="switcher-help" class="field-hint">↑ ↓ choose · Enter reveals · Esc cancels. After revealing, press Enter again to type; a stopped terminal gets its Start or Resume button.</p>
     </dialog>
     <dialog id="info-dialog"><div class="dialog-heading"><span id="info-icon" class="dialog-symbol" data-icon="help"></span><button class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div><h2 id="info-title"></h2><div id="info-content"></div><div class="dialog-footer"><button class="button primary" data-close>Got it</button></div></dialog>
     <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-description" class="dialog-description"></p><div class="dialog-footer"><button id="confirm-cancel" class="button">Cancel</button><button id="confirm-ok" class="button danger">Continue</button></div></dialog>
