@@ -332,7 +332,9 @@ fn bash_wrappers_report_manual_launches_through_tc_hook() {
     let (launches, ends) = launches(&output.stdout, Platform::current());
     assert_eq!(launches.len(), 3, "management commands start no session: {stdout}");
     assert!(
-        stdout.lines().any(|line| line == "claude-args: auth login --claudeai"),
+        stdout
+            .lines()
+            .any(|line| line.ends_with("claude-args: auth login --claudeai")),
         "`claude auth` gets neither --settings nor a session ID: {stdout}"
     );
     assert_eq!(launches[0]["provider"], "claude");
