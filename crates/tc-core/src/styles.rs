@@ -27,7 +27,16 @@ string_enum! {
 }
 
 /// Item types that keep a color.
-pub const COLORED_TYPES: [&str; 5] = ["text", "note", "shape", "frame", "line"];
+pub const COLORED_TYPES: [&str; 6] = ["text", "note", "shape", "frame", "line", "terminal"];
+
+string_enum! {
+    /// A built-in xterm palette. Cards may explicitly select Current over a workspace default.
+    pub enum TerminalTheme {
+        Current = "current",
+        Midnight = "midnight",
+        Paper = "paper",
+    }
+}
 /// Item types that keep a text size.
 pub const TEXT_TYPES: [&str; 3] = ["text", "note", "shape"];
 /// How deeply groups may nest.
