@@ -24,6 +24,7 @@ function clipboardItems() {
     const items = copyableItems(), inside = new Set(items.map(item => item.id));
     return items.map(item => {
         const copy = cloneData(item);
+        delete copy.hook; // Pasted connectors must never inherit automation.
         if (copy.type === 'line') {
             const points = linePoints(item);
             for (const end of ['start', 'end']) if (copy[end].id && !inside.has(copy[end].id)) copy[end] = { ...points[end] };

@@ -10,8 +10,8 @@ use serde_json::Value;
 use tc_core::Platform;
 use tc_pty::integration::prepare;
 use tc_pty::shell::{
-    POWERSHELL_BOOTSTRAP, bash_source, claude_hook_command, claude_settings, codex_hook_config, encode_command,
-    powershell_args, powershell_source,
+    POWERSHELL_BOOTSTRAP, bash_source, claude_hook_command, claude_settings, encode_command, powershell_args,
+    powershell_source,
 };
 
 fn golden(name: &str) -> String {
@@ -66,7 +66,17 @@ const BASH_CLAUDE_COMMANDS: &str = "    # Claude's management commands, such as 
 
 /// Keep the frozen Node oracle intact and make the new launch-only behavior explicit.
 fn with_codex_hook(source: String, windows: bool) -> String {
-    with_claude_commands(with_codex_start_hook(source, windows), windows)
+    let source = with_claude_commands(with_codex_start_hook(source, windows), windows);
+    if windows {
+        source
+    } else {
+        source
+            .replace("__tc_cwd() { printf", "__tc_cwd() { local tc_status=$?; printf")
+            .replace(
+                "; }\nif [[ $(declare -p PROMPT_COMMAND",
+                "; printf '\\033]777;tc-ready;1\\007'; return \"$tc_status\"; }\nif [[ $(declare -p PROMPT_COMMAND",
+            )
+    }
 }
 
 fn with_claude_commands(source: String, windows: bool) -> String {
@@ -93,7 +103,11 @@ fn with_codex_start_hook(source: String, windows: bool) -> String {
                 "    __tc_emit @{ type = 'launch';",
                 &format!(
                     "    if ($provider -eq 'codex') {{ $prefix = @('-c', {}) }}\n    __tc_emit @{{ type = 'launch';",
-                    tc_pty::shell::ps_quote(&codex_hook_config(true))
+                    tc_pty::shell::codex_hook_arguments(true)
+                        .iter()
+                        .map(|arg| tc_pty::shell::ps_quote(arg))
+                        .collect::<Vec<_>>()
+                        .join(", '-c', ")
                 ),
             )
             .replace(
@@ -107,7 +121,11 @@ fn with_codex_start_hook(source: String, windows: bool) -> String {
                 "    \"$TC_HOOK\" emit launch",
                 &format!(
                     "    if [ \"$provider\" = codex ]; then prefix=(-c {}); fi\n    \"$TC_HOOK\" emit launch",
-                    tc_pty::shell::sh_quote(&codex_hook_config(false))
+                    tc_pty::shell::codex_hook_arguments(false)
+                        .iter()
+                        .map(|arg| tc_pty::shell::sh_quote(arg))
+                        .collect::<Vec<_>>()
+                        .join(" -c ")
                 ),
             )
             .replace("\"$executable\" \"$@\"", "\"$executable\" \"${prefix[@]}\" \"$@\"")
@@ -146,6 +164,18 @@ fn claude_settings_keep_the_utf8_bridge_and_run_tc_hook() {
             assert_eq!(hook_command(expected), electron);
             assert_eq!(command, format!("'{hook}' record claude"));
             rust["hooks"]["SessionStart"][0]["hooks"][0]["command"] = electron.into();
+        }
+        for event in ["UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"] {
+            let hook = rust["hooks"]
+                .as_object_mut()
+                .unwrap()
+                .remove(event)
+                .expect("lifecycle hook installed");
+            assert_eq!(
+                hook[0]["hooks"][0]["command"],
+                tc_pty::shell::lifecycle_command("claude", windows)
+            );
+            assert_eq!(hook[0]["hooks"][0]["timeout"], 5);
         }
         assert_eq!(&rust, expected, "{platform}: everything but the command is unchanged");
     }

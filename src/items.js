@@ -116,9 +116,11 @@ function mountLine(item) {
         handle.addEventListener('pointerdown', event => { event.stopPropagation(); dragEndpoint(event, item, end, handle); });
         return handle;
     });
-    group.append(hit, stroke, head, ...handles);
+    const pulse = svgNode('path', 'pointer-pulse'), label = svgNode('text', 'pointer-label'), title = svgNode('title');
+    pulse.setAttribute('pathLength', '1');
+    group.append(title, hit, stroke, pulse, head, label, ...handles);
     $('#line-layer').append(group);
-    const view = { element: group, hit, stroke, head, handles };
+    const view = { element: group, hit, stroke, head, handles, pulse, label, title };
     itemViews.set(item.id, view);
     hit.addEventListener('pointerdown', event => pointerOnElement(event, item.id, hit));
     renderLine(item);
@@ -155,6 +157,7 @@ function renderLine(item) {
         const angle = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
         view.head.setAttribute('transform', `translate(${end.x} ${end.y}) rotate(${angle})`);
     }
+    renderPointerLine(item, view, start, end);
     view.element.classList.toggle('attached', !!(item.start.id || item.end.id));
     [start, end].forEach((point, index) => { view.handles[index].setAttribute('cx', String(point.x)); view.handles[index].setAttribute('cy', String(point.y)); });
 }
@@ -254,6 +257,7 @@ function resizeItem(event, item, handle) {
     }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
 }
 function dragEndpoint(event, line, which, handle) {
+    if (line.hook) return toast('Remove the hook before reconnecting this arrow.');
     if (event.button !== 0 || focused) return;
     const other = which === 'start' ? 'end' : 'start';
     const original = line[which];
@@ -407,6 +411,7 @@ async function cleanUpImages() {
 // The style toolbar edits the color of selected items and the text size of those that hold text.
 const selectedItems = types => [...selection].map(findItem).filter(item => item && types.includes(item.type));
 function renderStyleToolbar() {
+    renderPointerControls();
     const bar = $('#style-toolbar');
     const colored = ready && !focused ? selectedItems(COLORED_TYPES) : [];
     const texts = colored.filter(item => TEXT_TYPES.includes(item.type));

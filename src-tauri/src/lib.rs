@@ -8,6 +8,7 @@ mod e2e;
 pub mod host;
 pub mod launches;
 pub mod platform;
+pub mod pointers;
 pub mod protocol;
 pub mod updates;
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
@@ -76,6 +77,7 @@ actions! {
     create_card => "create-card",
     claude_accounts => "claude-accounts",
     autosave => "autosave",
+    pointer_configure => "pointer-configure",
     save => "save",
     save_as => "save-as",
     export => "export",
@@ -282,6 +284,7 @@ pub fn run() {
             create_card,
             claude_accounts,
             autosave,
+            pointer_configure,
             save,
             save_as,
             export,

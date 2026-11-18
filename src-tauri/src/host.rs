@@ -140,6 +140,7 @@ struct State {
     filename: Option<PathBuf>,
     inputs: HashMap<String, InputOrder>,
     launches: crate::launches::Launches,
+    pointers: crate::pointers::Pointers,
 }
 
 /// Where events for the UI go.
@@ -174,6 +175,35 @@ fn message(error: impl std::fmt::Display) -> String {
 
 fn field<'a>(payload: Option<&'a Value>, key: &str) -> Option<&'a Value> {
     payload?.as_object()?.get(key)
+}
+
+/// Layout autosaves cannot create or re-arm automation. Only pointer-configure changes it.
+fn pointer_snapshot(board: &Workspace, raw: &Value) -> Value {
+    let mut raw = raw.clone();
+    if let Some(fields) = raw.as_object_mut() {
+        if board.hooks_paused {
+            fields.insert("hooksPaused".into(), json!(true));
+        } else {
+            fields.remove("hooksPaused");
+        }
+        if let Some(items) = fields.get_mut("items").and_then(Value::as_array_mut) {
+            for item in items {
+                let hook = board
+                    .items
+                    .iter()
+                    .find(|current| item["id"].as_str() == Some(&current.id))
+                    .and_then(|current| current.hook.as_ref());
+                if let Some(fields) = item.as_object_mut() {
+                    if let Some(hook) = hook {
+                        fields.insert("hook".into(), json!(hook));
+                    } else {
+                        fields.remove("hook");
+                    }
+                }
+            }
+        }
+    }
+    raw
 }
 
 /// `name.replace(/[^\w -]/g, '') || 'Workspace'`
@@ -233,6 +263,7 @@ impl Host {
             filename: None,
             inputs: HashMap::new(),
             launches: crate::launches::Launches::new(),
+            pointers: crate::pointers::Pointers::default(),
         };
         let host = Arc::new(Host {
             state: sender,
@@ -314,7 +345,13 @@ impl Host {
     /// Sends the manager's events to the UI. Directory and session metadata the host observes is
     /// saved for recovery right away.
     fn dispatch(&self, state: &mut State) {
+        for event in state.pointers.reconcile(state.recovery.board(), &state.manager) {
+            self.emit(event);
+        }
         for event in state.manager.take_events() {
+            if self.dispatch_pointer(state, &event) {
+                continue;
+            }
             // Requests, and the output logs of the terminals they opened.
             match &event {
                 TerminalEvent::Launch {
@@ -357,6 +394,108 @@ impl Host {
             }
             self.emit(serde_json::to_value(&event).expect("events serialize"));
         }
+    }
+
+    fn dispatch_pointer(&self, state: &mut State, event: &TerminalEvent) -> bool {
+        let (source, report) = match event {
+            TerminalEvent::Hook {
+                id,
+                generation,
+                inbox,
+                request_id,
+                report,
+            } => {
+                if !state.manager.pointer_report_current(id, *generation, report)
+                    || report.expires <= tc_core::pointers::now_ms()
+                {
+                    let _ = tc_core::pointers::answer(
+                        inbox,
+                        request_id,
+                        &json!({"error":"Stale lifecycle hook or terminal closed."}),
+                    );
+                    return true;
+                }
+                if report.kind == "trigger" {
+                    let events = state
+                        .pointers
+                        .fire(state.recovery.board(), id, report, &mut state.manager);
+                    let failed = events.iter().filter(|event| event["state"] == "failed").count();
+                    let matched = events.iter().filter(|event| event["type"] == "pointer").count();
+                    for event in events {
+                        self.emit(event);
+                    }
+                    let mut answer = json!({"matched":matched,"failed":failed});
+                    if failed > 0 {
+                        answer["error"] = json!("Some pointers failed; see the canvas for details.");
+                    }
+                    let _ = tc_core::pointers::answer(inbox, request_id, &answer);
+                    return true;
+                }
+                let (answer, events) = state
+                    .pointers
+                    .continuation(state.recovery.board(), id, report, &state.manager);
+                // If the CLI cannot receive the continuation, fail it rather than treating it as busy forever.
+                let delivered = tc_core::pointers::answer(inbox, request_id, &answer).is_ok();
+                for mut event in events {
+                    if !delivered && event["state"] == "firing" {
+                        event["state"] = json!("failed");
+                        event["message"] = json!("Could not return the queued prompt to the target hook.");
+                    }
+                    self.emit(event);
+                }
+                if !delivered {
+                    let mut failed = report.clone();
+                    failed.kind = "failed".into();
+                    state.manager.pointer_lifecycle(id, &failed, false);
+                    return true;
+                }
+                state
+                    .manager
+                    .pointer_lifecycle(id, report, delivered && answer.get("decision").is_some());
+                // Blocking Stop continues the same agent; its outgoing Stop pointers wait until
+                // that continuation really finishes rather than running the next step early.
+                if answer.get("decision").is_some() {
+                    return true;
+                }
+                (id, report.clone())
+            }
+            TerminalEvent::CommandExit { id, code } => (
+                id,
+                tc_core::pointers::Report {
+                    kind: "exit".into(),
+                    exit_code: Some(*code),
+                    token: String::new(),
+                    provider: String::new(),
+                    session_id: String::new(),
+                    message: String::new(),
+                    name: String::new(),
+                    stop_hook_active: false,
+                    expires: 0,
+                },
+            ),
+            TerminalEvent::Exit { id, status } => (
+                id,
+                tc_core::pointers::Report {
+                    kind: "exit".into(),
+                    exit_code: Some(status.code),
+                    token: String::new(),
+                    provider: String::new(),
+                    session_id: String::new(),
+                    message: String::new(),
+                    name: String::new(),
+                    stop_hook_active: false,
+                    expires: 0,
+                },
+            ),
+            _ => return false,
+        };
+        for event in state
+            .pointers
+            .fire(state.recovery.board(), source, &report, &mut state.manager)
+        {
+            self.emit(event);
+        }
+        matches!(event, TerminalEvent::Hook { .. } | TerminalEvent::CommandExit { .. })
     }
 
     /// Opens terminals that programs outside the canvas asked for. Requests wait until the UI is
@@ -429,6 +568,7 @@ impl Host {
         // between these steps and then be overwritten by this older snapshot.
         let saved = self
             .with_state(move |host, state| {
+                let raw = raw.as_ref().map(|raw| pointer_snapshot(state.recovery.board(), raw));
                 let board = state.recovery.persist(raw.as_ref()).map_err(message)?;
                 Ok::<_, String>(host.queue_save(host.paths.recovery(), &board, None))
             })
@@ -464,8 +604,11 @@ impl Host {
     /// Stops every terminal and waits until each has exited, for up to five seconds. Killing a
     /// terminal returns before its native cleanup finishes, so the host stays alive for it.
     async fn shutdown(&self) {
-        self.with_state(|_, state| state.manager.begin_shutdown(STOP_TIMEOUT))
-            .await;
+        self.with_state(|_, state| {
+            state.pointers = crate::pointers::Pointers::default();
+            state.manager.begin_shutdown(STOP_TIMEOUT);
+        })
+        .await;
         while self.with_state(|_, state| state.manager.stopping()).await > 0 {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -573,6 +716,16 @@ impl Host {
                 let (started, id, saved) = self
                     .with_state(move |host, state| {
                         let payload = payload.as_ref();
+                        if let Some(request) = field(payload, "launch")
+                            .and_then(Value::as_str)
+                            .filter(|id| id.starts_with("pointer-"))
+                            && !state.pointers.launch_allowed(request, state.recovery.board())
+                        {
+                            return Err(
+                                "Hook pointer was disarmed, removed, or expired before the terminal could start."
+                                    .to_owned(),
+                            );
+                        }
                         let card = state
                             .recovery
                             .remember_card(field(payload, "card").unwrap_or(&Value::Null))
@@ -612,7 +765,11 @@ impl Host {
             "launch-result" => {
                 let result = crate::launches::parse_result(payload)?;
                 let answered = self
-                    .with_state(move |_, state| {
+                    .with_state(move |host, state| {
+                        if let Some(event) = state.pointers.launch_finished(&result.request, result.error.as_deref()) {
+                            host.emit(event);
+                            return true;
+                        }
                         let warning = result
                             .card
                             .as_deref()
@@ -632,7 +789,25 @@ impl Host {
             "stop" => {
                 if let Some(id) = field(payload, "id").and_then(Value::as_str) {
                     let id = id.to_owned();
-                    self.with_state(move |_, state| state.manager.stop(&id)).await;
+                    let remove = field(payload, "removePointers").and_then(Value::as_bool) == Some(true);
+                    let saved = self
+                        .with_state(move |host, state| {
+                            state.manager.stop(&id);
+                            if !remove {
+                                return Ok(None);
+                            }
+                            let mut raw = state.recovery.board().to_value();
+                            raw["items"].as_array_mut().expect("validated items").retain(|item| {
+                                item.get("hook").is_none() || (item["start"]["id"] != id && item["end"]["id"] != id)
+                            });
+                            let board = state.recovery.accept(&raw).map_err(message)?.clone();
+                            host.dispatch(state);
+                            Ok::<_, String>(Some(host.queue_save(host.paths.recovery(), &board, None)))
+                        })
+                        .await?;
+                    if let Some(saved) = saved {
+                        saved.await?;
+                    }
                 }
                 Ok(json!({ "ok": true }))
             }
@@ -642,6 +817,46 @@ impl Host {
                 let default = (!default.is_empty()).then(|| PathBuf::from(default));
                 let path = self.platform.pick_folder(default).await;
                 Ok(json!({ "path": path.map(|path| path.to_string_lossy().into_owned()) }))
+            }
+            "pointer-configure" => {
+                let payload = payload.cloned().ok_or("Invalid hook pointer configuration.")?;
+                let saved = self
+                    .with_state(move |host, state| {
+                        let snapshot = pointer_snapshot(state.recovery.board(), &payload["workspace"]);
+                        let mut raw = state.recovery.merge(&snapshot).map_err(message)?.to_value();
+                        if let Some(paused) = payload.get("paused") {
+                            if !paused.is_boolean() {
+                                return Err("Invalid global hook pause.".to_owned());
+                            }
+                            raw["hooksPaused"] = paused.clone();
+                        } else {
+                            let id = payload["id"].as_str().ok_or("Invalid hook pointer ID.")?;
+                            let item = raw["items"]
+                                .as_array_mut()
+                                .and_then(|items| items.iter_mut().find(|item| item["id"] == id))
+                                .ok_or("The hook pointer arrow was removed.")?;
+                            if payload["hook"].is_null() {
+                                item.as_object_mut().expect("validated item").remove("hook");
+                            } else {
+                                item["hook"] = payload["hook"].clone();
+                            }
+                        }
+                        let board = state.recovery.accept(&raw).map_err(message)?.clone();
+                        host.dispatch(state);
+                        Ok::<_, String>(host.queue_save(host.paths.recovery(), &board, None))
+                    })
+                    .await?;
+                if let Err(error) = saved.await {
+                    self.with_state(|host, state| {
+                        let mut raw = state.recovery.board().to_value();
+                        raw["hooksPaused"] = json!(true);
+                        let _ = state.recovery.accept(&raw);
+                        host.dispatch(state);
+                        host.emit(json!({"type":"pointers-paused", "message":"Could not save hook configuration. All hooks have been paused."}));
+                    }).await;
+                    return Err(error);
+                }
+                Ok(json!({"ok":true}))
             }
             "autosave" => {
                 self.flush(payload).await?;
@@ -654,6 +869,7 @@ impl Host {
                     .with_state(move |host, state| {
                         state.manager.snapshot();
                         host.dispatch(state);
+                        let raw = pointer_snapshot(state.recovery.board(), &raw);
                         let board = state.recovery.accept(&raw).map_err(message)?.clone();
                         let target = if use_filename { state.filename.clone() } else { None };
                         Ok::<_, String>((board, target))
@@ -674,7 +890,10 @@ impl Host {
                     .with_state(move |host, state| {
                         state.manager.snapshot();
                         host.dispatch(state);
-                        let merged = state.recovery.merge(&board.to_value()).map_err(message)?;
+                        let merged = state
+                            .recovery
+                            .merge(&pointer_snapshot(state.recovery.board(), &board.to_value()))
+                            .map_err(message)?;
                         Ok::<_, String>(host.queue_save(file, &merged, None))
                     })
                     .await?;
@@ -688,7 +907,11 @@ impl Host {
                     .with_state(move |host, state| {
                         state.manager.snapshot();
                         host.dispatch(state);
-                        state.recovery.accept(&raw).cloned().map_err(message)
+                        state
+                            .recovery
+                            .accept(&pointer_snapshot(state.recovery.board(), &raw))
+                            .cloned()
+                            .map_err(message)
                     })
                     .await?;
                 let name = format!("{} (portable).terminalcanvas", file_stem(&board.name));
@@ -707,7 +930,10 @@ impl Host {
                     .with_state(move |host, state| {
                         state.manager.snapshot();
                         host.dispatch(state);
-                        let merged = state.recovery.merge(&board.to_value()).map_err(message)?;
+                        let merged = state
+                            .recovery
+                            .merge(&pointer_snapshot(state.recovery.board(), &board.to_value()))
+                            .map_err(message)?;
                         Ok::<_, String>(host.queue_save(target, &merged, Some(&embedded.assets)))
                     })
                     .await?;
@@ -754,6 +980,7 @@ impl Host {
                     state.manager.stop_all();
                     host.dispatch(state);
                     state.manager.forget();
+                    state.pointers = crate::pointers::Pointers::default();
                     state.recovery.reset(opened);
                 })
                 .await;
@@ -766,6 +993,7 @@ impl Host {
                     state.manager.stop_all();
                     host.dispatch(state);
                     state.manager.forget();
+                    state.pointers = crate::pointers::Pointers::default();
                     state.filename = None;
                     state.recovery.reset(create_workspace());
                 })
@@ -804,6 +1032,7 @@ impl Host {
             if sequence < order.next {
                 return;
             }
+            state.manager.pointer_typed(&id);
             order.waiting.entry(sequence).or_insert(data);
             let mut ready = Vec::new();
             while let Some(data) = order.waiting.remove(&order.next) {

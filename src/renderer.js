@@ -580,7 +580,7 @@ function mount(card) {
         }
         if (action === 'close') {
             if (['running', 'starting'].includes(s.status) && !await confirmAction('Close this terminal?', 'Its running shell and child processes will be stopped. Terminal output is not saved.', 'Close terminal')) return;
-            await invoke('stop', { id: card.id });
+            await invoke('stop', { id: card.id, removePointers: true });
             removeCard(card);
         }
     }));
@@ -808,7 +808,8 @@ async function openRequestedTerminal(event) {
     }
     await whenBoardIdle();
     // A terminal opened beside another signs in to Claude as that terminal does.
-    if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
+    if (event.pointer) { if (event.claudeAccount) card.claudeAccount = event.claudeAccount; }
+    else if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
     workspace.cards.push(card); mount(card);
     if (parent && workspace.items.length < ITEM_LIMIT) {
         recordHistory();
@@ -958,6 +959,7 @@ $('#launch-form').onsubmit = event => {
     });
 };
 function loadWorkspace(board) {
+    pointerStates.clear();
     clearTimeout(autosaveTimer);
     if (editing) document.activeElement?.blur();
     workspace = board;
@@ -1115,6 +1117,7 @@ $('#update').onclick = () => run(async () => {
     clearTimeout(autosaveTimer); await invoke('close', workspace);
 });
 window.addEventListener('resize', () => { if (ready) renderCamera(); });
+installPointerControls();
 if (bridge) {
     bridge.onEvent(event => {
         const s = sessions.get(event.id);
@@ -1142,6 +1145,8 @@ if (bridge) {
         if (event.type === 'error') toast(event.message);
         if (event.type === 'update') showUpdate(event);
         if (event.type === 'launch') requestTerminal(event);
+        if (event.type === 'pointer') pointerEvent(event);
+        if (event.type === 'pointers-paused') { workspace.hooksPaused = true; renderLines(); renderPointerControls(); toast(event.message); }
         if (event.type === 'closing') run(async () => {
             if (event.running && !await confirmAction('Close Terminal Canvas?', `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
             clearTimeout(autosaveTimer); await invoke('close', workspace);

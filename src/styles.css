@@ -105,3 +105,22 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .terminal-card.keyboard-current:not(:focus-within){outline:calc(2px / var(--camera-zoom,1)) solid var(--accent);outline-offset:calc(4px / var(--camera-zoom,1));border-color:var(--accent)}.viewport.focus-mode .terminal-card.keyboard-current:not(:focus-within){outline-width:2px;outline-offset:4px}
 /* Claude account: a text control at the end of the card's folder row, and the dialog's hint. */
 .card-account{margin-left:auto;flex-shrink:0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:9px Consolas,monospace;color:#7d8a9c;border-radius:4px;padding:3px 6px}.card-account:hover{background:#2b323c;color:#dfe6ec}.card-account.set{color:#d6a181}.card-account-icon{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:4px;color:#8d98a9}.card-account-icon:hover{background:#3b4350;color:#dfe6ec}.card-account-icon.set{color:#d6a181}.card-account-icon svg{width:13px;height:13px}.account-signin{display:flex;align-items:center;gap:10px;margin-top:9px}.account-signin .field-hint{flex:1;margin:0;overflow-wrap:anywhere}.account-signin .button{flex-shrink:0;height:31px;font-size:10px}.field-hint code{font:9px Consolas,monospace;color:#b7c9aa;background:#232e22;padding:2px 5px;border-radius:4px}
+
+/* Hook pointers keep ordinary connectors unchanged. A static highlight replaces motion. */
+.pointer-label { fill: #b8dacf; font: 11px system-ui, sans-serif; text-anchor: middle; paint-order: stroke; stroke: #141c23; stroke-width: 4px; pointer-events: none; }
+.pointer-pulse { display: none; fill: none; stroke: #b9ffe5; stroke-width: 6px; stroke-linecap: round; pointer-events: none; }
+.hook-pointer .line-stroke { stroke-dasharray: 8 4; }
+.hook-pointer[data-pointer-state="idle"] { opacity: .55; }
+.hook-pointer[data-pointer-state="failed"] .line-stroke { stroke: #f28b91; }
+.hook-pointer[data-pointer-state="queued"] .line-stroke { stroke: #e3bd70; }
+.pointer-flash .pointer-pulse { display: block; stroke-dasharray: 0.08 0.92; animation: pointer-travel 1.2s ease-out both; }
+@keyframes pointer-travel { from { stroke-dashoffset: 1; opacity: 1; } to { stroke-dashoffset: 0; opacity: 0; } }
+#pointer-status { max-width: 220px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pointer-dialog { max-height: 90vh; overflow-y: auto; }
+#pointer-text { width: 100%; resize: vertical; min-height: 80px; color: inherit; background: #131b22; border: 1px solid #38434b; border-radius: 8px; padding: 10px; font: inherit; }
+.pointer-check { display: flex; align-items: center; gap: 9px; margin: 12px 0; font-size: 12px; }
+.pointer-check input { width: auto; }
+@media (prefers-reduced-motion: reduce) {
+    .pointer-flash .pointer-pulse { animation: none; display: none; }
+    .hook-pointer[data-pointer-state="firing"] .line-stroke { stroke: #b9ffe5; stroke-width: 4px; }
+}

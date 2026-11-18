@@ -23,6 +23,7 @@ use tc_core::js::{is_js_whitespace, utf16_len};
 use tc_core::session::{is_session_id, session_metadata};
 
 mod new_terminal;
+mod pointers;
 
 /// The most hook input read, in UTF-16 units as the JavaScript hook counted it.
 const INPUT_UNITS: usize = 65536;
@@ -36,6 +37,8 @@ fn main() -> ExitCode {
     let arg = |index: usize| args.get(index).map(String::as_str);
     match arg(0) {
         Some("emit") => emit(arg(1), arg(2), arg(3)),
+        Some("trigger") => pointers::run(&args[1..], false),
+        Some("lifecycle") => pointers::run(&args[1..], true),
         Some("new-terminal") => new_terminal::run(&args[1..]),
         Some("record") if arg(1).is_some() => {
             let _ = record(arg(1).unwrap_or_default());
@@ -43,7 +46,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options]"
+                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | trigger [name] | lifecycle <provider>"
             );
             ExitCode::from(2)
         }

@@ -21,6 +21,7 @@ tauri-plugin-updater.workspace = true
 tc-core.workspace = true
 tc-pty.workspace = true
 tokio.workspace = true
+uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "=0.39.1"

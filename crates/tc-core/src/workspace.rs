@@ -201,6 +201,7 @@ impl ItemKind {
 /// A board item: text, a sticky note, a shape, a frame, an image, or a line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
+    pub hook: Option<crate::pointers::Pointer>,
     pub id: String,
     pub kind: ItemKind,
     pub color: Option<Color>,
@@ -211,6 +212,7 @@ pub struct Item {
 /// A validated workspace in the current format.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workspace {
+    pub hooks_paused: bool,
     pub name: String,
     pub camera: Camera,
     pub cards: Vec<Card>,
@@ -249,6 +251,9 @@ impl Serialize for Workspace {
         map.serialize_entry("camera", &self.camera)?;
         map.serialize_entry("cards", &self.cards)?;
         map.serialize_entry("items", &self.items)?;
+        if self.hooks_paused {
+            map.serialize_entry("hooksPaused", &true)?;
+        }
         map.end()
     }
 }
@@ -330,6 +335,9 @@ impl Serialize for Item {
                 rect(&mut map, r)?;
                 map.serialize_entry("asset", asset)?;
             }
+        }
+        if let Some(hook) = &self.hook {
+            map.serialize_entry("hook", hook)?;
         }
         if let Some(color) = self.color {
             map.serialize_entry("color", &color)?;
@@ -609,7 +617,13 @@ pub fn validate_item(raw: &Value, version: u32) -> Result<Item> {
     };
     let (color, font_size) = style(raw, item_type)?;
     let groups = groups(raw, version)?;
+    let hook = raw
+        .get("hook")
+        .filter(|value| !value.is_null())
+        .map(crate::pointers::validate)
+        .transpose()?;
     Ok(Item {
+        hook,
         id,
         kind,
         color,
@@ -712,17 +726,26 @@ pub fn validate_workspace(raw: &Value) -> Result<Workspace> {
     if name.is_empty() {
         "Untitled workspace".clone_into(&mut name);
     }
-    Ok(Workspace {
+    let hooks_paused = match raw.get("hooksPaused") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return invalid("Invalid global hook pause."),
+    };
+    let board = Workspace {
+        hooks_paused,
         name,
         camera: Camera { x, y, z },
         cards,
         items,
-    })
+    };
+    crate::pointers::validate_graph(&board)?;
+    Ok(board)
 }
 
 /// The workspace a new window starts with.
 pub fn create_workspace() -> Workspace {
     Workspace {
+        hooks_paused: false,
         name: "My AI workspace".to_owned(),
         camera: Camera {
             x: 48.0,

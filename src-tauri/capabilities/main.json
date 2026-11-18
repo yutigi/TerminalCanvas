@@ -11,6 +11,7 @@
     "allow-create-card",
     "allow-claude-accounts",
     "allow-autosave",
+    "allow-pointer-configure",
     "allow-save",
     "allow-save-as",
     "allow-export",

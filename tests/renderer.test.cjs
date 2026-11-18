@@ -1976,3 +1976,55 @@ test('a terminal revealed from the keyboard clears the minimap and toolbars', as
     for (const box of overlays) assert.equal(vm.runInContext('Geometry', context).intersects(shown, box), false, JSON.stringify({ shown, box }));
     assert.ok(shown.x >= 24 && shown.y >= 24 && shown.x + shown.w <= 1100 - 24 && shown.y + shown.h <= 720 - 24, JSON.stringify(shown));
 });
+
+test('hook pointers configure and disarm through host validation, display status and strip automation from copied arrows', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });
+    const { context, elements, calls, onEvent } = await boot(board);
+    vm.runInContext('select("hook")', context);
+    assert.equal(elements.get('#pointer-configure').hidden, false);
+    elements.get('#pointer-configure').onclick();
+    assert.equal(elements.get('#pointer-dialog').open, true);
+    assert.equal(elements.get('#pointer-armed').checked, false);
+    elements.get('#pointer-text').value = 'Review the implementation';
+    elements.get('#pointer-event').value = 'stop'; elements.get('#pointer-action').value = 'prompt';
+    elements.get('#pointer-armed').checked = true;
+    elements.get('#pointer-form').dispatch('submit');
+    await new Promise(resolve => setImmediate(resolve));
+    const configured = calls.find(call => call.action === 'pointer-configure');
+    assert.equal(configured.payload.id, 'hook'); assert.equal(configured.payload.hook.armed, true);
+    assert.equal(json(context, 'workspace.items[0].hook.text'), 'Review the implementation');
+    assert.equal(elements.get('#pointers-pause').hidden, false);
+    onEvent({ type: 'pointer', id: 'hook', state: 'firing', message: 'Delivered.' });
+    assert.equal(json(context, 'itemViews.get("hook").element.dataset.pointerState'), 'firing');
+    assert.match(elements.get('#pointer-status').textContent, /Delivered/);
+    assert.equal(vm.runInContext('itemViews.get("hook").element.classList.contains("pointer-flash")', context), true);
+    assert.equal(vm.runInContext('clipboardItems()[0].hook', context), undefined);
+    elements.get('#pointer-toggle').onclick(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(json(context, 'workspace.items[0].hook.armed'), false);
+    elements.get('#pointers-pause').onclick(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(json(context, 'workspace.hooksPaused'), true);
+    assert.equal(elements.get('#pointers-pause').textContent, 'Resume hooks');
+});
+
+test('rejected hook configuration leaves the arrow plain and explains the host error', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });
+    const { context, elements } = await boot(board, { respond: action => action === 'pointer-configure' ? { error: 'Hook pointers cannot form a cycle.' } : null });
+    vm.runInContext('select("hook")', context); elements.get('#pointer-configure').onclick();
+    elements.get('#pointer-text').value = 'Review'; elements.get('#pointer-form').dispatch('submit');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(vm.runInContext('workspace.items[0].hook', context), undefined);
+    assert.equal(elements.get('#pointer-dialog').open, true);
+    assert.equal(elements.get('#pointer-error').textContent, 'Hook pointers cannot form a cycle.');
+});
+
+test('pointer configuration stays current through layout undo, and deleted automation does not return', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id }, hook: { event: 'stop', action: 'prompt', text: 'Review', armed: true } });
+    const { context } = await boot(board);
+    vm.runInContext('select("hook"); recordChange(() => workspace.items[0].color = "blue"); workspace.items[0].hook.armed = false; undo();', context);
+    assert.equal(json(context, 'workspace.items[0].hook.armed'), false);
+    vm.runInContext('recordChange(() => removeItems(["hook"])); undo()', context);
+    assert.equal(vm.runInContext('workspace.items[0].hook', context), undefined);
+});

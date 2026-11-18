@@ -4420,6 +4420,7 @@ dependencies = [
  "tc-core",
  "tc-pty",
  "tokio",
+ "uuid",
  "webview2-com",
  "windows",
 ]
