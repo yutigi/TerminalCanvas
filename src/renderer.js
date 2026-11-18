@@ -494,7 +494,7 @@ function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-account" hidden></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
     const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
@@ -823,18 +823,12 @@ async function openRequestedTerminal(event) {
     return { card, parent };
 }
 // A duplicate whose folder needs review still copies its source terminal's text size and account.
-let launchFontSize;
+let launchFontSize, launchAccount;
 function openLaunch(profileId = 'shell', { fontSize, claudeAccount } = {}) {
     if (!ready || document.querySelector('dialog[open]')) return;
-    launchFontSize = fontSize;
+    launchFontSize = fontSize; launchAccount = claudeAccount;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
-    fillAccountSelect($('#launch-account'), claudeAccount);
-    // Accounts may have been added since the last look; refresh unless a choice was made meanwhile.
-    const shown = $('#launch-account').value;
-    loadClaudeAccounts().then(() => {
-        if ($('#launch-dialog').open && $('#launch-account').value === shown) fillAccountSelect($('#launch-account'), shown);
-    }, () => {});
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
 }
 /* ---------- Claude accounts ---------- */
@@ -857,14 +851,14 @@ function fillAccountSelect(select, value) {
     for (const name of names) select.append(accountOption(name, name));
     select.value = value || '';
 }
+// Text only, at the end of the folder row, so the card header keeps its controls and layout.
 function renderAccount(card) {
     const s = sessions.get(card.id); if (!s) return;
-    const badge = s.element.querySelector('.card-account');
-    badge.textContent = card.claudeAccount || ''; badge.hidden = !card.claudeAccount;
-    badge.title = card.claudeAccount ? `Claude account: ${card.claudeAccount}` : '';
-    const button = s.element.querySelector('[data-action="account"]');
-    button.title = `Claude account: ${card.claudeAccount || 'Default'}`;
-    button.setAttribute('aria-label', button.title);
+    const button = s.element.querySelector('.card-account');
+    button.textContent = `Claude · ${card.claudeAccount || 'Default'}`;
+    button.classList.toggle('set', !!card.claudeAccount);
+    button.title = `Claude account: ${card.claudeAccount || 'Default'}. Click to change.`;
+    button.setAttribute('aria-label', `Claude account: ${card.claudeAccount || 'Default'}`);
 }
 async function openAccountDialog(card) {
     if (!ready || document.querySelector('dialog[open]')) return;
@@ -914,7 +908,7 @@ $('#launch-form').onsubmit = event => {
             const count = workspace.cards.length;
             const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
             if (launchFontSize) result.card.fontSize = launchFontSize;
-            if ($('#launch-account').value) result.card.claudeAccount = $('#launch-account').value;
+            if (launchAccount) result.card.claudeAccount = launchAccount;
             workspace.cards.push(result.card); mount(result.card); select(result.card.id); changed(); refresh();
             $('#launch-dialog').close();
             if (focused) setFocus(result.card.id);

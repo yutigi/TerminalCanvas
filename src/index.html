@@ -78,7 +78,6 @@
             <label class="field-label" for="terminal-title">Name</label><input id="terminal-title" name="title" maxlength="100" required placeholder="e.g. Backend · Claude">
             <label class="field-label" for="cwd">Project folder</label><div class="folder-field"><input id="cwd" name="cwd" maxlength="4096" placeholder="Your home directory"><button class="button" type="button" id="browse-folder"><span data-icon="folder"></span>Browse</button></div>
             <label class="field-label" for="command">Launch command <span>optional</span></label><input id="command" name="command" maxlength="2000" placeholder="Leave empty for a shell" spellcheck="false">
-            <label class="field-label" for="launch-account">Claude account <span>optional</span></label><select id="launch-account" name="claudeAccount"></select>
             <p class="field-hint">Runs in your local shell. AI tools must already be installed and signed in.</p>
             <p id="launch-error" class="form-error" role="alert" hidden></p>
             <div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary" id="launch-submit"><span data-icon="play"></span>Start terminal</button></div>
