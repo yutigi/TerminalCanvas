@@ -199,7 +199,14 @@ test('native terminal clipboard shortcuts paste once, preserve native fields, an
                 await new Promise(resolve => setTimeout(resolve, 100));
                 assert.deepEqual(await h.page.evaluate(() => window.__inputs), ['\x1b[200~' + large.replace('\n', '\r') + '\x1b[201~']);
             }
-            await h.page.evaluate(() => { const field = document.querySelector('#search'); field.value = 'outside terminal'; field.focus(); field.select(); window.__inputs = []; });
+            // Focus mode hides the sidebar. Reach its search through the keyboard before testing
+            // native field editing, so a failed focus() on a hidden input cannot leave keys in xterm.
+            await key(h.page, 'Control+Shift+e');
+            await key(h.page, '/');
+            assert.equal(await h.page.locator('#search').isVisible(), true);
+            assert.equal(await h.page.locator('#search').evaluate(field => document.activeElement === field), true);
+            assert.equal(await h.page.evaluate(() => !!focused), focus, 'Search preserves the terminal view');
+            await h.page.evaluate(() => { const field = document.querySelector('#search'); field.value = 'outside terminal'; field.select(); window.__inputs = []; });
             await key(h.page, 'Control+c');
             await until(async () => await clipboardRead(h.page) === 'outside terminal', 'Native text-field copy failed.');
             await clipboardWrite(h.page, 'native paste'); await key(h.page, 'Control+v');
