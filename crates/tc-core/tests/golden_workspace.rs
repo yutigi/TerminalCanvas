@@ -36,6 +36,11 @@ fn constants_match() {
     let mut constants = golden["constants"].clone();
     // The frozen Electron oracle still records the old terminal-count limit.
     constants["LIMITS"].as_object_mut().unwrap().shift_remove("cards");
+    // Terminal coloring extends the palette's consumers; leave the frozen Electron oracle intact.
+    constants["COLORED_TYPES"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("terminal"));
     let actual = json!({
         "VERSION": VERSION,
         "LIMITS": {

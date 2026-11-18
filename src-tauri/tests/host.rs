@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use tc_core::workspace::{create_card, create_workspace};
 use tc_pty::manager::{Backend, Config, EventSink, ExitStatus, Process, SessionEvent, SessionKey, SpawnRequest};
-use terminal_canvas::host::{BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform};
+use terminal_canvas::host::{AgentHome, BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform};
 
 #[derive(Default)]
 struct FakePlatform {
@@ -134,6 +134,13 @@ impl Harness {
     /// With `hook`, the host is told `tc-hook` is in the test folder; nothing runs it unless a
     /// terminal starts.
     fn with_hook(hook: bool) -> Self {
+        Self::build(hook, false)
+    }
+    /// With an agent home in the test folder that offers the setup on the first launch.
+    fn with_agents() -> Self {
+        Self::build(false, true)
+    }
+    fn build(hook: bool, agents: bool) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let folder = std::env::temp_dir().join(format!(
             "tc-host-{}-{}",
@@ -150,6 +157,11 @@ impl Harness {
             Paths {
                 data: folder.clone(),
                 hook: hook.then(|| folder.join("tc-hook")),
+                agents: agents.then(|| AgentHome {
+                    home: folder.join("home"),
+                    claude_config: None,
+                    first_launch: true,
+                }),
             },
             platform.clone(),
             Box::new(backend),
@@ -875,4 +887,73 @@ async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_ap
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn the_agent_setup_is_offered_once_and_installs_the_skill_where_agents_look() {
+    let h = Harness::new();
+    assert_eq!(
+        h.host.command("initialize", None).await.unwrap().get("agentSetup"),
+        None
+    );
+    assert_eq!(
+        h.host.command("agent-setup", Some(&json!({}))).await.unwrap_err(),
+        "Agent setup is unavailable: the home folder is unknown."
+    );
+
+    let h = Harness::with_agents();
+    let home = h.folder.join("home");
+    let setup = |payload: Value| {
+        let host = h.host.clone();
+        async move { host.command("agent-setup", Some(&payload)).await }
+    };
+    assert_eq!(h.host.command("initialize", None).await.unwrap()["agentSetup"], true);
+    // Listing changes nothing, so the offer stands.
+    let listed = setup(json!({})).await.unwrap();
+    assert_eq!(listed["targets"][0]["id"], "claude");
+    assert_eq!(listed["targets"][0]["status"], "missing");
+    assert_eq!(
+        listed["targets"][1]["folders"],
+        json!([home.join(".agents").join("skills").display().to_string()])
+    );
+    assert_eq!(h.host.command("initialize", None).await.unwrap()["agentSetup"], true);
+    for bad in [
+        json!({ "install": ["claude", "../elsewhere"] }),
+        json!({ "install": "claude" }),
+    ] {
+        assert_eq!(setup(bad).await.unwrap_err(), "Unknown agent setup target.");
+    }
+    assert!(!home.exists());
+
+    // Each Terminal Canvas Claude account gets its own copy.
+    h.host
+        .command("claude-accounts", Some(&json!({ "create": "Work" })))
+        .await
+        .unwrap();
+    let installed = setup(json!({ "install": ["claude"] })).await.unwrap();
+    assert_eq!(installed["installed"], json!(["claude"]));
+    assert_eq!(installed["targets"][0]["status"], "current");
+    assert_eq!(installed["targets"][1]["status"], "missing");
+    let skill = |skills: PathBuf| std::fs::read_to_string(skills.join("terminal-canvas").join("SKILL.md")).unwrap();
+    assert_eq!(skill(home.join(".claude").join("skills")), tc_core::skills::SKILL);
+    assert_eq!(
+        skill(h.folder.join("claude-accounts").join("Work").join("skills")),
+        tc_core::skills::SKILL
+    );
+    assert_eq!(
+        h.host.command("initialize", None).await.unwrap().get("agentSetup"),
+        None
+    );
+
+    // Declining the offer installs nothing and is not offered again.
+    let h = Harness::with_agents();
+    h.host
+        .command("agent-setup", Some(&json!({ "dismiss": true })))
+        .await
+        .unwrap();
+    assert_eq!(
+        h.host.command("initialize", None).await.unwrap().get("agentSetup"),
+        None
+    );
+    assert!(!h.folder.join("home").exists());
 }

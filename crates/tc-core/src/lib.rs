@@ -48,6 +48,7 @@ pub mod osc;
 pub mod plain;
 pub mod recovery;
 pub mod session;
+pub mod skills;
 pub mod styles;
 pub mod titles;
 pub mod workspace;

@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use crate::js::{has_c0_control, serialize_number, trim, truthy, utf16_len};
 use crate::session::{SessionMetadata, session_metadata};
-use crate::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES, terminal_font_size};
+use crate::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES, TerminalTheme, terminal_font_size};
 use crate::{Result, invalid};
 
 /// The current workspace format. Formats 1 and 2 are migrated on load.
@@ -135,6 +135,10 @@ pub struct Card {
     pub h: f64,
     /// Text size in CSS pixels. `None` is the default, `terminal_font_size::DEFAULT`.
     pub font_size: Option<u8>,
+    /// An absent color preserves the original frame; profile badges are independent.
+    pub color: Option<Color>,
+    /// `None` inherits the workspace theme; Current is an explicit override.
+    pub theme: Option<TerminalTheme>,
     /// The Claude Code account the terminal's shell runs as (see [`crate::accounts`]). `None`
     /// leaves the shell's own `CLAUDE_CONFIG_DIR`, normally `~/.claude`.
     pub claude_account: Option<String>,
@@ -218,6 +222,8 @@ pub struct Workspace {
     pub camera: Camera,
     pub cards: Vec<Card>,
     pub items: Vec<Item>,
+    /// `None` uses Current and omits the field when serializing.
+    pub terminal_theme: Option<TerminalTheme>,
 }
 
 impl Workspace {
@@ -246,12 +252,15 @@ impl Serialize for Number {
 
 impl Serialize for Workspace {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(5))?;
+        let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("version", &VERSION)?;
         map.serialize_entry("name", &self.name)?;
         map.serialize_entry("camera", &self.camera)?;
         map.serialize_entry("cards", &self.cards)?;
         map.serialize_entry("items", &self.items)?;
+        if let Some(theme) = self.terminal_theme {
+            map.serialize_entry("terminalTheme", &theme)?;
+        }
         map.end()
     }
 }
@@ -283,6 +292,12 @@ impl Serialize for Card {
         }
         if let Some(account) = &self.claude_account {
             map.serialize_entry("claudeAccount", account)?;
+        }
+        if let Some(color) = self.color {
+            map.serialize_entry("color", &color)?;
+        }
+        if let Some(theme) = self.theme {
+            map.serialize_entry("theme", &theme)?;
         }
         if !self.groups.is_empty() {
             map.serialize_entry("groups", &self.groups)?;
@@ -484,6 +499,17 @@ fn terminal_font(value: Option<&Value>) -> Option<u8> {
 
 /* ---------- Validation ---------- */
 
+fn terminal_theme(value: Option<&Value>) -> Result<Option<TerminalTheme>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .and_then(TerminalTheme::parse)
+            .map(Some)
+            .ok_or_else(|| crate::Error::Invalid("Unsupported terminal theme.".into())),
+    }
+}
+
 /// Validates a terminal card from a workspace in `version`'s format.
 pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
     if field(Some(card), "type").and_then(Value::as_str) != Some("terminal") {
@@ -514,6 +540,8 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
         .and_then(Value::as_str)
         .and_then(crate::accounts::name);
     let groups = groups(card, version)?;
+    let (color, _) = style(card, "terminal")?;
+    let theme = terminal_theme(field(raw, "theme"))?;
     Ok(Card {
         id,
         profile,
@@ -533,6 +561,8 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
         w,
         h,
         font_size,
+        color,
+        theme,
         claude_account,
         groups,
     })
@@ -728,11 +758,14 @@ pub fn validate_workspace(raw: &Value) -> Result<Workspace> {
     if name.is_empty() {
         "Untitled workspace".clone_into(&mut name);
     }
+    let terminal_theme =
+        terminal_theme(field(Some(raw), "terminalTheme"))?.filter(|theme| *theme != TerminalTheme::Current);
     Ok(Workspace {
         name,
         camera: Camera { x, y, z },
         cards,
         items,
+        terminal_theme,
     })
 }
 
@@ -747,6 +780,7 @@ pub fn create_workspace() -> Workspace {
         },
         cards: Vec::new(),
         items: Vec::new(),
+        terminal_theme: None,
     }
 }
 

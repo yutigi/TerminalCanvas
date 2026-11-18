@@ -34,7 +34,9 @@ const paths = {
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
     redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
     trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -52,6 +54,63 @@ let workspace, profiles = [], selected, focused, hand = false, autosaveTimer, to
 let ready = false, formBusy = false, duplicateBusy = false, activeDrags = 0;
 let topCardZIndex = 0;
 let minimapVisible = true, minimapLayout, minimapDrag;
+// UI preferences belong to this webview profile, never to a workspace or its undo history.
+const SIDEBAR_PREFERENCE_KEY = 'terminal-canvas.sidebar.v1';
+const sidebarSections = { workspace: '#workspace-section', profiles: '#profile-list', outline: '#outline-section' };
+const sidebarPreferences = { collapsed: false, workspace: false, profiles: false, outline: false };
+try {
+    const saved = JSON.parse(window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY));
+    for (const key of Object.keys(sidebarPreferences)) {
+        if (typeof saved?.[key] === 'boolean') sidebarPreferences[key] = saved[key];
+    }
+} catch { /* Missing, malformed, or unavailable storage keeps the expanded defaults. */ }
+// Focus hides the sidebar temporarily; the toggle and search can reveal it for this Focus visit.
+let focusSidebarRevealed = false;
+function saveSidebarPreferences() {
+    try { window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, JSON.stringify(sidebarPreferences)); }
+    catch { /* A blocked or full store must not prevent using the sidebar. */ }
+}
+function renderSidebar() {
+    const width = viewport.clientWidth, height = viewport.clientHeight;
+    const sidebar = $('#sidebar'), toggle = $('#sidebar-toggle');
+    const collapsed = sidebarPreferences.collapsed || (!!focused && !focusSidebarRevealed);
+    if (collapsed && sidebar.contains(document.activeElement)) toggle.focus();
+    sidebar.hidden = collapsed;
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Hide sidebar');
+    toggle.title = `${collapsed ? 'Show' : 'Hide'} sidebar (Ctrl/Cmd+Shift+B)`;
+    for (const [name, selector] of Object.entries(sidebarSections)) {
+        const content = $(selector), disclosure = $(`#${name}-toggle`);
+        const hidden = sidebarPreferences[name];
+        if (hidden && content.contains(document.activeElement)) disclosure.focus();
+        disclosure.setAttribute('aria-expanded', String(!hidden));
+        // Keep the workspace count in its original place when expanded, and in the heading when hidden.
+        if (name === 'workspace') {
+            const parent = hidden ? disclosure : $('#canvas-nav');
+            if ($('#card-count').parentElement !== parent) parent.append($('#card-count'));
+        }
+        content.hidden = hidden;
+    }
+    if (!ready) return;
+    // Changing the available width must preserve the world point at the viewport's center.
+    workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + (viewport.clientWidth - width) / 2));
+    workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + (viewport.clientHeight - height) / 2));
+    renderCamera();
+    requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
+}
+function setSidebarCollapsed(collapsed) {
+    sidebarPreferences.collapsed = collapsed;
+    if (focused) focusSidebarRevealed = !collapsed;
+    renderSidebar(); saveSidebarPreferences();
+}
+$('#sidebar-toggle').onclick = () => setSidebarCollapsed(!$('#sidebar').hidden);
+for (const name of Object.keys(sidebarSections)) {
+    $(`#${name}-toggle`).onclick = () => {
+        sidebarPreferences[name] = !sidebarPreferences[name];
+        renderSidebar(); saveSidebarPreferences();
+    };
+}
+renderSidebar();
 // `selection` holds every selected terminal and item; `selected` is the primary one.
 let selection = new Set(), activeTool = 'select', editing = null;
 // The terminal reached with the keyboard, highlighted while the keyboard is on the board rather than in it.
@@ -115,6 +174,7 @@ function renderMinimap() {
         const status = sessions.get(card.id)?.status;
         node.className = `minimap-card${selection.has(card.id) ? ' selected' : ''}${['running', 'starting'].includes(status) ? ' running' : ''}`;
         node.style.setProperty('--profile-color', profiles.find(profile => profile.id === card.profile).color);
+        applyItemStyle(card, node);
         node.title = card.title;
         positionMinimapElement(node, minimapLayout.cards[index]);
         return node;
@@ -202,6 +262,7 @@ function refresh() {
         const s = sessions.get(card.id);
         const button = document.createElement('button');
         button.className = `outline-item ${selection.has(card.id) ? 'selected' : ''} ${s.status === 'running' ? 'running' : ''}`;
+        applyItemStyle(card, button);
         button.append(mark(profiles.find(p => p.id === card.profile)));
         const label = document.createElement('span'); label.className = 'label'; label.textContent = card.title;
         const dot = document.createElement('span'); dot.className = 'state-dot'; dot.title = s.status;
@@ -421,10 +482,12 @@ function zoom(factor, point = { x: viewport.clientWidth / 2, y: viewport.clientH
     cam.z = z; renderCamera(); changed();
 }
 function setFocus(id, { type = true } = {}) {
+    if (!!focused !== !!id) focusSidebarRevealed = false;
     focused = id;
     viewport.classList.toggle('focus-mode', !!id);
     $('#exit-focus').hidden = !id;
     for (const [key, s] of sessions) s.element.classList.toggle('focused', key === id);
+    renderSidebar();
     renderCamera(); renderStyleToolbar();
     if (id) select(id, { type });
     else if (revealOnReturn) {
@@ -440,6 +503,36 @@ function fitTerminal(s) {
     if (size && Number.isFinite(size.cols) && Number.isFinite(size.rows)) s.terminal.resize(Math.max(2, Math.min(500, size.cols)), Math.max(1, Math.min(300, size.rows)));
 }
 const terminalFontSize = card => card.fontSize ?? TERMINAL_FONT.DEFAULT;
+const themeIds = window.TerminalCanvasItemStyles.TERMINAL_THEMES;
+const terminalTheme = card => window.TerminalCanvasThemes[card.theme || workspace.terminalTheme || 'current'];
+function renderTerminalAppearance(card) {
+    const s = sessions.get(card.id); if (!s) return;
+    applyItemStyle(card, s.element);
+    const theme = terminalTheme(card);
+    s.element.style.setProperty('--terminal-background', theme.background);
+    // Updating options preserves the xterm instance, buffer, selection, and PTY.
+    if (s.terminal) s.terminal.options.theme = { ...theme };
+}
+function renderThemeControls() { $('#workspace-theme').value = workspace?.terminalTheme || 'current'; }
+function setTerminalTheme(theme, global = false) {
+    if (!ready || boardBusy() || (theme !== '' && !themeIds.includes(theme))) return;
+    const cards = global ? workspace.cards : selectedItems(['terminal']);
+    if (!global && !cards.length) return;
+    recordChange(() => {
+        if (global) {
+            if (theme && theme !== 'current') workspace.terminalTheme = theme;
+            else delete workspace.terminalTheme;
+        } else for (const card of cards) {
+            // An explicit Current overrides a non-Current workspace default.
+            if (theme) card.theme = theme;
+            else delete card.theme;
+        }
+        for (const card of cards) renderTerminalAppearance(card);
+    });
+    renderThemeControls(); renderStyleToolbar(); changed();
+}
+$('#workspace-theme').onchange = () => { setTerminalTheme($('#workspace-theme').value, true); renderThemeControls(); };
+$('#terminal-theme').onchange = () => { setTerminalTheme($('#terminal-theme').value); renderStyleToolbar(); };
 // xterm measures the new cell size immediately, so the refit gives a running program its new rows and columns.
 function setTerminalFontSize(card, size) {
     const next = Math.max(TERMINAL_FONT.MIN, Math.min(TERMINAL_FONT.MAX, Math.round(size)));
@@ -501,7 +594,7 @@ function mount(card) {
     el.querySelector('.card-title').onclick = () => openTitleDialog(card);
     const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
-    recoveryInfo(card); renderAccount(card);
+    recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
             fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: terminalFontSize(card), lineHeight: 1.3,
@@ -514,7 +607,7 @@ function mount(card) {
                     run(() => invoke('open-link', uri));
                 }
             },
-            theme: { background: '#15191f', foreground: '#c8d1dc', cursor: '#c8ecb5', selectionBackground: '#52694e80', black: '#29313d', red: '#e59a91', green: '#b5d69a', yellow: '#dfc68c', blue: '#94b5e8', magenta: '#baa0da', cyan: '#91cbc7', white: '#d5dce5', brightBlack: '#667486', brightRed: '#f0b2a9', brightGreen: '#c8ecb5', brightYellow: '#f1dbab', brightBlue: '#b2cdff', brightMagenta: '#d8bcf6', brightCyan: '#b1e4df', brightWhite: '#f0f4fa' }
+            theme: { ...terminalTheme(card) }
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
         s.terminal.onData(data => {
@@ -528,7 +621,7 @@ function mount(card) {
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
             if (event.altKey || event.isComposing) return true;
-            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e'].includes(key)))) return false;
+            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'b'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
             // Ctrl/Cmd+0 resets the text size; Ctrl+- and Ctrl+= still reach the shell (Ctrl+- is readline undo).
             // Digit0 covers layouts whose 0 needs Shift. Numpad0 is matched by its key only: without
@@ -836,7 +929,7 @@ async function duplicateTerminal(source) {
         const result = await invoke('duplicate-directory', source);
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (result.warning) {
-            openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount });
+            openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount, color: source.color, theme: source.theme });
             $('#cwd').value = result.cwd;
             $('#launch-error').textContent = result.warning;
             $('#launch-error').hidden = false;
@@ -845,6 +938,8 @@ async function duplicateTerminal(source) {
         const { card } = await invoke('create-card', { profile: 'shell', titleMode: 'automatic', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (source.fontSize) card.fontSize = source.fontSize;
+        if (source.color) card.color = source.color;
+        if (source.theme) card.theme = source.theme;
         if (source.claudeAccount) card.claudeAccount = source.claudeAccount;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
@@ -902,11 +997,11 @@ async function openRequestedTerminal(event) {
     await start(card, undefined, event.request);
     return { card, parent };
 }
-// A duplicate whose folder needs review still copies its source terminal's text size and account.
-let launchFontSize, launchAccount;
-function openLaunch(profileId = 'shell', { fontSize, claudeAccount } = {}) {
+// Folder review preserves a duplicate's text size, appearance, and account.
+let launchFontSize, launchAccount, launchColor, launchTheme;
+function openLaunch(profileId = 'shell', { fontSize, claudeAccount, color, theme } = {}) {
     if (!ready || document.querySelector('dialog[open]')) return;
-    launchFontSize = fontSize; launchAccount = claudeAccount;
+    launchFontSize = fontSize; launchAccount = claudeAccount; launchColor = color; launchTheme = theme;
     launchTitleEdited = false;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
@@ -1016,6 +1111,83 @@ async function openAccountSignIn(beside, name) {
     await start(card);
 }
 $('#account-dialog').addEventListener('close', () => { accountCard = null; });
+// The agent setup installs the Terminal Canvas skill where AI agents load skills for every session.
+// The first launch offers it once; Set up agents in the sidebar offers it again at any time.
+const AGENT_STATUS = { current: 'INSTALLED', outdated: 'UPDATE', missing: 'NOT INSTALLED' };
+let agentChoices = new Map(), agentBusy = false, agentOffer = false;
+function renderAgentTargets(targets) {
+    agentChoices = new Map();
+    const anyDetected = targets.some(target => target.detected.length);
+    const rows = targets.map(target => {
+        const row = document.createElement('label'); row.className = 'agent-target';
+        const box = document.createElement('input'); box.type = 'checkbox'; box.value = target.id;
+        // Preselect what this computer uses and does not have yet; with no agent found, everything.
+        box.checked = target.status !== 'current' && (!anyDetected || target.detected.length > 0);
+        agentChoices.set(target.id, { box, target });
+        const copy = document.createElement('span'); copy.className = 'agent-target-copy';
+        const name = document.createElement('span'); name.className = 'agent-target-name';
+        const title = document.createElement('span'); title.textContent = target.name;
+        const status = document.createElement('span'); status.className = `agent-target-status ${target.status}`; status.textContent = AGENT_STATUS[target.status] || '';
+        name.append(title, status);
+        const found = document.createElement('span'); found.className = 'agent-target-detail';
+        found.textContent = target.detected.length ? `Found on this computer: ${target.detected.join(', ')}.` : 'Not found on this computer yet.';
+        const folders = document.createElement('span'); folders.className = 'agent-target-detail';
+        target.folders.forEach((folder, index) => {
+            const code = document.createElement('code'); code.textContent = folder;
+            if (index) folders.append(document.createElement('br'));
+            folders.append(code);
+        });
+        copy.append(name, found, folders); row.append(box, copy);
+        return row;
+    });
+    $('#agent-targets').replaceChildren(...rows);
+}
+async function openAgentSetup({ offer = false } = {}) {
+    if (!ready || agentBusy || document.querySelector('dialog[open]')) return;
+    const { targets } = await invoke('agent-setup', {});
+    if (document.querySelector('dialog[open]')) return;
+    agentOffer = offer;
+    renderAgentTargets(targets);
+    $('#agent-error').hidden = true; $('#agent-install').disabled = false;
+    $('#agent-dialog').showModal();
+}
+// The footer's gear opens the Settings menu; Escape, a click elsewhere, or choosing an item closes it.
+function setSettingsMenu(open) {
+    $('#settings-menu').hidden = !open;
+    $('#settings').setAttribute('aria-expanded', String(open));
+    if (open) $('#agent-setup').focus();
+}
+$('#settings').onclick = () => setSettingsMenu($('#settings-menu').hidden);
+$('#settings-menu').addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation();
+    setSettingsMenu(false); $('#settings').focus();
+});
+document.addEventListener('pointerdown', event => {
+    if (!$('#settings-menu').hidden && !event.target.closest?.('#settings-menu,#settings')) setSettingsMenu(false);
+}, true);
+$('#agent-setup').onclick = () => { setSettingsMenu(false); run(() => openAgentSetup()); };
+$('#agent-form').onsubmit = event => {
+    event.preventDefault(); if (agentBusy) return;
+    const chosen = [...agentChoices.values()].filter(choice => choice.box.checked);
+    if (!chosen.length) { $('#agent-dialog').close(); return; }
+    agentBusy = true; $('#agent-install').disabled = true;
+    run(async () => {
+        try {
+            await invoke('agent-setup', { install: chosen.map(choice => choice.target.id) });
+            agentOffer = false; $('#agent-dialog').close();
+            toast(`Terminal Canvas skill installed for ${chosen.map(choice => choice.target.name).join(' and ')}. Agent sessions started from now on can open linked terminals and hand work over.`);
+        } catch (error) {
+            $('#agent-error').textContent = error.message; $('#agent-error').hidden = false;
+        } finally { agentBusy = false; $('#agent-install').disabled = false; }
+    });
+};
+// Closing the first-launch offer without installing declines it, so it is not offered again.
+$('#agent-dialog').addEventListener('close', () => {
+    if (!agentOffer) return;
+    agentOffer = false;
+    run(() => invoke('agent-setup', { dismiss: true }));
+});
 $('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); if (!launchTitleEdited) $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
 $('#launch-form').onsubmit = event => {
@@ -1027,6 +1199,8 @@ $('#launch-form').onsubmit = event => {
             const count = workspace.cards.length;
             const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), titleMode: launchTitleEdited && $('#terminal-title').value.trim() ? 'manual' : 'automatic', cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
             if (launchFontSize) result.card.fontSize = launchFontSize;
+            if (launchColor) result.card.color = launchColor;
+            if (launchTheme) result.card.theme = launchTheme;
             if (launchAccount) result.card.claudeAccount = launchAccount;
             workspace.cards.push(result.card); mount(result.card); select(result.card.id); changed(); refresh();
             $('#launch-dialog').close();
@@ -1046,6 +1220,7 @@ function loadWorkspace(board, epoch) {
     workspace = board;
     workspace.items = Array.isArray(board.items) ? board.items : [];
     clearHistory();
+    renderThemeControls();
     // The browser preview stores unvalidated layouts, which may still use format 2's single group.
     for (const e of [...workspace.cards, ...workspace.items]) {
         if (e.group && !e.groups) e.groups = [e.group];
@@ -1129,15 +1304,20 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
-    if (!ready || document.querySelector('dialog[open]')) return;
+    if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
     // A held Enter never presses a terminal's buttons: Enter on the board moves focus to a stopped
     // terminal's Start or Resume button, and only a separate press may start it.
     if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
     if (event.ctrlKey || event.metaKey) {
         const key = event.key.toLowerCase();
+        if (key === 'b' && event.shiftKey && !event.altKey) {
+            event.preventDefault();
+            if (!event.repeat) $('#sidebar-toggle').click();
+            return;
+        }
         if (key === 's') { event.preventDefault(); run(save); }
         if (key === 'o') { event.preventDefault(); $('#open-workspace').click(); }
         if (key === 'd' && event.shiftKey && !event.altKey && !event.repeat && !event.target.closest('input,select,textarea:not(.xterm-helper-textarea),[contenteditable="true"]')) {
@@ -1161,8 +1341,13 @@ document.addEventListener('keydown', event => {
     if (direction && event.altKey && !event.shiftKey && !event.target.closest('input,textarea,select,.xterm,[contenteditable="true"]')) {
         event.preventDefault(); navigateTerminals(direction); return;
     }
-    if (event.altKey || event.target.closest('input,textarea,select,.xterm')) return;
-    if (event.key === '/') { event.preventDefault(); $('#search').focus(); return; }
+    if (event.altKey || event.target.closest('input,textarea,select,.xterm,[contenteditable="true"]')) return;
+    if (event.key === '/') {
+        event.preventDefault();
+        sidebarPreferences.outline = false;
+        setSidebarCollapsed(false);
+        $('#search').focus(); return;
+    }
     // A focused button, link, or the minimap keeps Enter for itself.
     if (event.key === 'Enter' && !event.shiftKey && !event.repeat && !event.target.closest('button,a[href],[contenteditable="true"],#minimap-map')) {
         if (findCard(focused || selected)) { event.preventDefault(); enterTerminal(focused || selected); }
@@ -1248,5 +1433,6 @@ if (bridge) {
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
         loadWorkspace(initial.workspace, initial.titleEpoch); ready = true; markAppReady(); renderStyleToolbar();
         if (initial.warning) toast(initial.warning);
+        if (initial.agentSetup) await openAgentSetup({ offer: true });
     });
 } else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');

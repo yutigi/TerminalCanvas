@@ -1,4 +1,12 @@
 @import url('./typography.css');
+.sidebar-section{display:contents}
+.section-disclosure{padding:0;text-align:left;flex-shrink:0}
+.workspace-disclosure{display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.workspace-disclosure .badge{letter-spacing:normal;font-weight:400}
+.section-disclosure:hover{color:var(--accent)}
+.section-disclosure:hover .section-label{color:inherit}
+.section-disclosure[aria-expanded="false"] .disclosure-mark{transform:rotate(-90deg)}
+.board-icon:hover{background:#303b2d}
 .minimap{position:absolute;right:20px;bottom:25px;width:220px;padding:10px;background:#1c2128f5;border:1px solid #39404a;border-radius:9px;box-shadow:0 8px 25px #0004;z-index:10;cursor:default;user-select:none}
 .minimap-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:8px;letter-spacing:1px;color:#a6b39c}
 .minimap-heading span:last-child{font-size:9px;letter-spacing:0;color:#768192}
@@ -98,6 +106,22 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .item-frame.colored.selected{border-color:var(--accent)}
 .item-frame.colored.selected .frame-title{color:var(--accent)}
 .canvas-line.selected{color:var(--accent)}
+/* Card accents identify a task; profile badges continue to identify its shell/tool. */
+.terminal-card.colored{border-color:var(--item-color)}
+.terminal-card.colored .card-header{background:color-mix(in srgb,var(--item-color) 20%,#242a32)}
+.terminal-card.colored .card-title{color:#f0f4fa}
+.terminal-card.colored .card-status{color:#c8d1dc}
+.terminal-card.colored.running .card-status{color:#c8ecb5}
+.terminal-card.colored.selected{outline:calc(2px / var(--camera-zoom,1)) solid var(--accent);outline-offset:calc(3px / var(--camera-zoom,1))}
+.viewport.focus-mode .terminal-card.colored.selected{outline-width:2px;outline-offset:3px}
+.outline-item.colored{box-shadow:inset 3px 0 var(--item-color)}
+.minimap-card.colored{background:color-mix(in srgb,var(--item-color) 28%,#242a32);border-color:var(--item-color)}
+.minimap-card.colored.selected{outline:1px solid var(--accent);outline-offset:1px}
+.terminal-body{background:var(--terminal-background,#15191f)}
+.terminal-body .xterm-viewport{scrollbar-color:#414b59 var(--terminal-background,#15191f)}
+.theme-control{display:flex;align-items:center;gap:6px;font-size:10px;color:#b4bfcf;white-space:nowrap}
+.theme-control select{max-width:145px;height:26px;padding:0 5px;border:1px solid #536174;border-radius:4px;background:#21262d;color:#d5dce5;font:inherit}
+.theme-control select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .item-text.size-small{font-size:12px}.item-text.size-large{font-size:24px}.item-text.size-huge{font-size:36px}
 .item-note.size-small{font-size:11px}.item-note.size-large{font-size:20px}.item-note.size-huge{font-size:30px}
 .item-shape.size-small{font-size:11px}.item-shape.size-large{font-size:19px}.item-shape.size-huge{font-size:28px}
@@ -106,3 +130,4 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 /* Claude account: a text control at the end of the card's folder row, and the dialog's hint. */
 .card-account{margin-left:auto;flex-shrink:0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:9px Consolas,monospace;color:#7d8a9c;border-radius:4px;padding:3px 6px}.card-account:hover{background:#2b323c;color:#dfe6ec}.card-account.set{color:#d6a181}.card-account-icon{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:4px;color:#8d98a9}.card-account-icon:hover{background:#3b4350;color:#dfe6ec}.card-account-icon.set{color:#d6a181}.card-account-icon svg{width:13px;height:13px}.account-signin{display:flex;align-items:center;gap:10px;margin-top:9px}.account-signin .field-hint{flex:1;margin:0;overflow-wrap:anywhere}.account-signin .button{flex-shrink:0;height:31px;font-size:10px}.field-hint code{font:9px Consolas,monospace;color:#b7c9aa;background:#232e22;padding:2px 5px;border-radius:4px}
 button.card-title{min-width:0;padding:0;text-align:left;color:inherit;cursor:text;border-radius:3px}button.card-title:hover{color:#dfe6ec}button.card-title:focus-visible{outline:2px solid #92ad7a;outline-offset:3px}
+.footer-button{display:inline-grid;place-items:center;width:22px;height:22px;margin-right:-6px;border-radius:4px;color:#808b9b}.footer-button:hover,.footer-button[aria-expanded="true"]{background:#2b313a;color:#dfe6ec}.footer-button svg{width:13px;height:13px}.settings-menu{position:fixed;right:14px;bottom:37px;z-index:110;min-width:250px;padding:6px;background:#1f242c;border:1px solid #3e4751;border-radius:9px;box-shadow:0 14px 45px #0007}.settings-menu-label{font-size:8px;letter-spacing:1.3px;color:#6f7a8a;padding:6px 9px 7px}.settings-menu [role="menuitem"]{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;padding:8px 9px;border-radius:6px;font-size:11px;color:#d5dbe4}.settings-menu [role="menuitem"]:hover,.settings-menu [role="menuitem"]:focus-visible{background:#2b323c;outline:none}.settings-menu [role="menuitem"] svg{width:14px;height:14px;color:var(--accent);margin-top:1px}.settings-menu small{display:block;font-size:9px;color:#7d889a;margin-top:4px}.agent-targets{display:flex;flex-direction:column;gap:8px}.agent-target{display:flex;align-items:flex-start;gap:11px;padding:12px;border:1px solid #303945;border-radius:8px;background:#171c22;cursor:pointer}.agent-target:hover{border-color:#46515f}.agent-target input{flex-shrink:0;width:15px;height:15px;margin:1px 0 0;padding:0;accent-color:var(--accent)}.agent-target-copy{flex:1;min-width:0}.agent-target-name{display:flex;align-items:center;gap:8px;font-size:11px;color:#d5dbe4}.agent-target-status{margin-left:auto;font-size:8px;letter-spacing:.8px;border-radius:4px;padding:3px 6px;background:#262c35;color:#8995a6;white-space:nowrap}.agent-target-status.current{background:#2a3428;color:#b9d79e}.agent-target-status.outdated{background:#3b3226;color:#e2bd84}.agent-target-detail{font-size:9px;line-height:1.7;color:#69778a;margin-top:5px;overflow-wrap:anywhere}.agent-target-detail code{font:9px Consolas,monospace;color:#9fb08f}
