@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Terminal Canvas · Browser access</title>
+    <link rel="stylesheet" href="/remote.css">
+    <script src="/remote-login.js" defer></script>
+</head>
+<body class="remote-login">
+    <main>
+        <h1>Connect to your canvas</h1>
+        <p>Start browser access in the desktop app, then enter its controller or viewer token.</p>
+        <form id="pair-form">
+            <label for="pair-token">Access token</label>
+            <input id="pair-token" type="password" autocomplete="off" spellcheck="false" required maxlength="64">
+            <button id="pair-submit" type="submit">Connect</button>
+        </form>
+        <p id="pair-error" role="alert"></p>
+        <p>Loopback access only. Sessions expire after 12 hours and can be revoked from the desktop.</p>
+    </main>
+</body>
+</html>

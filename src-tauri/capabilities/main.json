@@ -33,6 +33,11 @@
     "allow-input",
     "allow-resize",
     "allow-ack",
-    "allow-update-install"
+    "allow-update-install",
+    "allow-remote-start",
+    "allow-remote-stop",
+    "allow-remote-status",
+    "allow-remote-rotate",
+    "allow-remote-revoke"
   ]
 }

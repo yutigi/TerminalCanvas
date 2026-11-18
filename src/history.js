@@ -9,7 +9,7 @@ const cloneData = value => JSON.parse(JSON.stringify(value));
 // newest step can be discarded, so older cleared stacks are not kept.
 let clearedRedo = { step: null, redo: [] };
 // Board commands wait for a drag to finish, so the drag's undo step and theirs cannot interleave.
-const boardBusy = () => activeDrags > 0;
+const boardBusy = () => activeDrags > 0 || !!window.terminalCanvas?.remote;
 // Steps store each item as JSON text. An unchanged item reuses the previous step's string, so a step
 // only costs memory for the items that changed.
 let sharedItemJson = new Map();
