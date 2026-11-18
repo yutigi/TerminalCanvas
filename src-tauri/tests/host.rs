@@ -200,6 +200,80 @@ impl Drop for Harness {
 }
 
 #[tokio::test]
+async fn remote_attachment_preserves_desktop_state_sequences_and_event_delivery() {
+    let h = Harness::new();
+    h.host.command("initialize", None).await.unwrap();
+    let card = h.start().await;
+    let id = card["id"].as_str().unwrap().to_owned();
+    h.host.input(&id, "desktop-first".into(), 0);
+    let (snapshot, mut remote_events) = h.host.remote_attach().await;
+    assert_eq!(snapshot["workspace"]["cards"][0]["id"], card["id"]);
+    assert_eq!(snapshot["terminals"][0]["running"], true);
+    assert_eq!(snapshot["terminals"][0]["cols"], 80);
+    let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    h.host.remote_input(id.clone(), "remote".into(), active).await.unwrap();
+    h.host.remote_attach().await;
+    h.host.input(&id, "desktop-second".into(), 1);
+    h.host.running().await;
+    let (key, events, process) = h.launches.lock().unwrap()[0].clone();
+    assert_eq!(
+        process.lock().unwrap().writes,
+        ["desktop-first", "remote", "desktop-second"]
+    );
+    events(key, SessionEvent::Output("shared-output".into()));
+    h.host.running().await;
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["data"] == "shared-output")
+    );
+    let received = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = remote_events.recv().await.unwrap();
+            if event["type"] == "data" {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(received["data"], "shared-output");
+    let (snapshot, _) = h.host.remote_attach().await;
+    assert_eq!(snapshot["output"][&id], "shared-output");
+    h.host.resize(&id, &json!(92), &json!(31));
+    let (snapshot, _) = h.host.remote_attach().await;
+    assert_eq!(snapshot["terminals"][0]["cols"], 92);
+    assert_eq!(snapshot["terminals"][0]["rows"], 31);
+    h.host.remote_detach().await;
+    h.host.input(&id, "desktop-after-stop".into(), 2);
+    h.host.running().await;
+    assert_eq!(process.lock().unwrap().writes.last().unwrap(), "desktop-after-stop");
+}
+
+#[tokio::test]
+async fn remote_input_rechecks_revocation_and_uses_the_existing_utf16_limit() {
+    let h = Harness::new();
+    let card = h.start().await;
+    let id = card["id"].as_str().unwrap().to_owned();
+    let revoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    assert_eq!(
+        h.host
+            .remote_input(id.clone(), "unsafe".into(), revoked)
+            .await
+            .unwrap_err(),
+        "Session revoked."
+    );
+    let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    assert_eq!(
+        h.host.remote_input(id, "🚀".repeat(32769), active).await.unwrap_err(),
+        "Input exceeds 64 KB."
+    );
+    assert!(h.launches.lock().unwrap()[0].2.lock().unwrap().writes.is_empty());
+}
+
+#[tokio::test]
 async fn clipboard_limits_count_utf16_and_os_failures_reach_the_renderer() {
     let h = Harness::new();
     *h.platform.clipboard.lock().unwrap() = "first\nsecond".into();

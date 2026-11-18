@@ -53,6 +53,53 @@ even without command-line flags. Release builds reject the `e2e` feature.
 
 On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text is selected. Windows behavior is tested with real native key events, clipboard IPC, and PowerShell. On macOS, these shortcuts were checked by hand in the native app. Linux desktop behavior has not been validated.
 
+### Browser access (first phase)
+
+View the live canvas and type into its running terminals from a browser **on the same computer**:
+
+1. Start Terminal Canvas, open **Browser access · Off** at the bottom of the sidebar, and choose a
+   port. Leave it at `0` to select an available port, or choose a fixed port from 1 to 65535.
+2. Click **Start**. The dialog shows `http://127.0.0.1:<port>` and separate controller/viewer tokens.
+   Open that exact URL in a browser and enter the appropriate token. The sidebar keeps showing the
+   connected-client count while access is running.
+3. Use the controller token to type into running terminals, including paste and terminal interrupts.
+   Only one remote controller can connect at once. The desktop can still type; simultaneous input
+   reaches the shell in arrival order. Viewer tokens allow additional read-only windows, up to
+   eight sessions in total. Use another browser or a private browser profile for a different token;
+   tabs in one profile share their login cookie. Each client keeps its own focus, selection, pan, and zoom.
+4. Keep workspace editing, terminal start/stop, folder/file dialogs, image import/cleanup, and
+   updates in the desktop app. Browser output uses the desktop's PTY dimensions and scrolls when
+   necessary. Browser clipboard shortcuts use that browser's permission-controlled clipboard.
+5. **Revoke sessions** disconnects every browser without changing the tokens. **Rotate tokens**
+   also invalidates both tokens. **Stop access** stops listening and disconnects everyone. Starting
+   again generates fresh tokens. Reload a disconnected browser to reconnect or enter a new token.
+
+Browser access is off by default on every launch, including debug, test, and E2E builds. It never
+starts from an environment variable, saved setting, command-line argument, or remote request.
+Tokens are generated from OS randomness and kept only in memory. Login uses a same-origin POST;
+tokens never appear in URLs or browser storage. HttpOnly, SameSite=Strict cookies expire after
+12 hours. At most five failed login attempts are allowed per rolling minute, across all browsers.
+Stopping or revoking sessions invalidates queued shell input as well as active connections.
+
+This phase binds only IPv4 loopback and checks the exact Host and Origin. It rejects direct
+LAN/VPN access and arbitrary file paths, and keeps browser CSP separate from the unchanged desktop
+CSP. Terminal output is replayed from a bounded, memory-only buffer collected while browser access
+is running (2 MiB across terminals); older output and output before enabling access are unavailable.
+Slow clients disconnect and can reload for a fresh snapshot; they never acknowledge or stall the
+desktop's PTY output. Replay is a recent output stream, not an exact screen snapshot; full-screen
+programs may need a redraw after attachment. Treat controller tokens like access to your shells, and viewer tokens like
+access to terminal output and the workspace.
+
+**iPhone/iPad and Tailscale:** direct access at a Tailscale `100.x` address or a LAN address is not
+implemented in this phase. Installing Tailscale does not change that: `127.0.0.1` on an iPhone
+refers to the phone. Do not publish this HTTP endpoint through a proxy, Tailscale Serve/Funnel,
+or port forwarding; exact Host/Origin checks intentionally reject those URLs. A later phase must
+add explicit interface selection and TLS (or an explicitly configured encrypted VPN), before
+documenting the remote-device setup. QR pairing, touch gestures, a mobile extra-keys bar, and
+iPhone/iPad Safari validation remain open under [issue #39](https://github.com/yutigi/TerminalCanvas/issues/39).
+This PR does not provide background sessions (#35) or multiple canvases (#30); browsers attach
+to the one running desktop canvas, and closing the desktop still stops its terminals.
+
 Paste accepts plain text up to 1 MB (1,048,576 UTF-16 code units), the same limit as copying, and uses xterm to normalize line endings and respect bracketed-paste mode. Long pastes are sent in ordered pieces, and keys pressed afterward, Ctrl + C included, follow the whole paste. The limit keeps that wait bounded when a program reads its input slowly; the card's stop control ends a program that stops reading. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
 
 ![The in-app shortcut guide explaining selection-aware copy, paste, and interrupt.](docs/images/terminal-clipboard-shortcuts.png)
@@ -231,6 +278,11 @@ For Windows E2E, install PowerShell 7 as well as the built-in Windows shells, bu
 process; the test build supplies it through the native API on elevated Windows. Test workspace/webview files stay under `.cache/tauri-smoke-profile` or
 `.cache/tauri-restoration-profile`. Controlled local CLI substitutes do not contact providers.
 Clipboard tests preserve native formats, and test-only PowerShell shells skip user profiles and disable file history/predictions to keep the fixtures isolated. Native screenshots are saved as `.cache/tauri-*.png`.
+
+The browser-access E2E test also requires Microsoft Edge. After building the isolated app and hook,
+run `node --test tests/e2e/remote-browser.test.cjs` for its focused controller/viewer check. It saves
+`.cache/tauri-remote-browser-controller.png` and `.cache/tauri-remote-browser-desktop.png`; the Windows
+CI screenshot artifact includes these. A local pass does not replace the ten complete native E2E runs.
 
 `tests/reference/node-host/` contains frozen, standalone compatibility oracles, not an application
 host. They use Node built-ins only, are invoked only by the golden capture, and are excluded from

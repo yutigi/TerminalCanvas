@@ -76,7 +76,7 @@ class KeyboardTerminal {
     writeln() {}
     dispose() {}
 }
-async function boot(workspace, { initialized = true, respond, terminals = false, clipboard = { text: '' }, readClipboard, platform = 'win32', ...windowOverrides } = {}) {
+async function boot(workspace, { initialized = true, respond, terminals = false, clipboard = { text: '' }, readClipboard, platform = 'win32', remote = false, ...windowOverrides } = {}) {
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
@@ -85,6 +85,8 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     const calls = [];
     let onEvent;
     const bridge = {
+        remote,
+        role: 'control',
         async invoke(action, payload) {
             calls.push({ action, payload });
             const response = respond?.(action, payload);
@@ -98,6 +100,7 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     };
     const documentListeners = new Map();
     const document = Object.assign(new Element(), {
+        body: new Element(),
         querySelector: selector => selector === 'dialog[open]' ? [...elements.values()].find(e => e.open) : elements.get(selector),
         querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener(type, fn) { documentListeners.set(type, fn); Element.prototype.addEventListener.call(this, type, fn); }
     });
@@ -118,6 +121,39 @@ test('restored AI sessions offer Resume and a fresh shell without launching anyt
     assert.match(vm.runInContext('[...sessions.values()][0].element.querySelector(\'[data-action="start"]\').innerHTML', context), /Resume session/);
     assert.match(vm.runInContext('[...sessions.values()][0].element.querySelector(\'.placeholder-copy\').textContent', context), /Saved Claude Code session/);
     assert.deepEqual(calls.map(c => c.action), ['initialize']);
+});
+
+test('browser layout updates preserve terminal emulators, local camera, and desktop dimensions', async () => {
+    const workspace = createWorkspace(), card = createCard(); workspace.cards.push(card);
+    const { context, bridge, onEvent, calls } = await boot(workspace, { remote: true, terminals: true });
+    const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+    const camera = json(context, 'workspace.camera');
+    const board = structuredClone(workspace); board.name = 'Changed on desktop'; board.cards[0].x = 421;
+    board.camera = { x: 999, y: 999, z: 2 };
+    onEvent({ type: 'remote-workspace', workspace: board });
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context), terminal);
+    assert.equal(json(context, 'workspace.cards[0].x'), 421);
+    assert.deepEqual(json(context, 'workspace.camera'), camera);
+    onEvent({ type: 'remote-terminals', terminals: [{ id: card.id, running: true, generation: 1, cols: 110, rows: 37 }] });
+    assert.equal(terminal.cols, 110); assert.equal(terminal.rows, 37);
+    vm.runInContext('fitTerminal(sessions.get(workspace.cards[0].id)); changed()', context);
+    assert.equal(terminal.cols, 110);
+    assert.deepEqual(calls.map(c => c.action), ['initialize']);
+    const sent = []; bridge.input = (id, data) => sent.push([id, data]);
+    terminal.dataHandler('automatic-query-response');
+    assert.equal(sent.length, 0);
+    vm.runInContext('sessions.get(workspace.cards[0].id).userInput = true', context);
+    terminal.dataHandler('typed');
+    assert.deepEqual(sent, [[card.id, 'typed']]);
+    bridge.role = 'view'; terminal.dataHandler('blocked');
+    assert.equal(sent.length, 1);
+});
+
+test('a rejected browser connection reports the error before the remote banner exists', async () => {
+    const { onEvent, elements, context } = await boot(createWorkspace(), { remote: true, initialized: false });
+    assert.doesNotThrow(() => onEvent({ type: 'remote-disconnected', message: 'Only one controller can connect.' }));
+    assert.equal(elements.get('#toast').textContent, 'Only one controller can connect.');
+    assert.equal(vm.runInContext('ready', context), false);
 });
 
 test('host metadata updates the renderer model and folder display without running commands', async () => {

@@ -8,9 +8,11 @@
     <link rel="stylesheet" href="vendor/xterm.css">
     <link rel="stylesheet" href="./styles.css">
     <link id="platform-chrome" rel="stylesheet" href="./chrome.css" media="not all">
+    <link rel="stylesheet" href="./remote.css">
     <script src="vendor/xterm.js" defer></script>
     <script src="vendor/addon-fit.js" defer></script>
     <script src="./bridge.js" defer></script>
+    <script src="./remote-bridge.js" defer></script>
     <script src="./minimap.js" defer></script>
     <script src="./canvas-geometry.js" defer></script>
     <script src="./terminal-pointer.js" defer></script>
@@ -19,6 +21,7 @@
     <script src="./history.js" defer></script>
     <script src="./clipboard.js" defer></script>
     <script src="./renderer.js" defer></script>
+    <script src="./remote-ui.js" defer></script>
 </head>
 <body>
     <aside class="sidebar">
@@ -36,6 +39,8 @@
         <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find a terminal…" aria-label="Find a terminal"><kbd>/</kbd></label>
         <div id="outline" class="outline"><p class="outline-empty">Your terminals will appear here.</p></div>
         <div class="sidebar-bottom">
+            <button class="nav-item" id="remote-settings" hidden>Browser access · Off</button>
+            <small id="remote-address" hidden></small>
             <button id="plugins" class="plugin-card"><span class="plugin-symbol" data-icon="puzzle"></span><span>Room to grow<small>WebCanvas integration planned</small></span><span data-icon="arrow-up-right"></span></button>
             <button class="nav-item" id="help"><span data-icon="help"></span>Guide & shortcuts<span data-icon="arrow-up-right"></span></button>
             <div class="local-label"><i class="status-dot"></i>No cloud workspace sync<span id="app-version">v0.2.0</span></div>

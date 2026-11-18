@@ -9,6 +9,8 @@ pub mod host;
 pub mod launches;
 pub mod platform;
 pub mod protocol;
+pub mod remote;
+mod remote_mirror;
 pub mod updates;
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
 compile_error!("The e2e feature must never be enabled in release builds.");
@@ -28,6 +30,7 @@ use tc_pty::PtyBackend;
 use tc_pty::manager::{Backend, Config};
 
 use host::{Host, Paths};
+use remote::Remote;
 use updates::Updates;
 
 /// Only the app's own pages: `tauri://localhost` on macOS and Linux, `http://tauri.localhost` on Windows.
@@ -117,6 +120,24 @@ async fn initialize(
 async fn update_install(webview: Webview, updates: State<'_, Arc<Updates>>) -> Result<Value, String> {
     authorized(&webview)?;
     updates.install().await
+}
+
+macro_rules! remote_actions {
+    ($($name:ident => $action:literal),* $(,)?) => { $(
+        #[tauri::command]
+        async fn $name(webview: Webview, remote: State<'_, Remote>, request: Request<'_>) -> Result<Value, String> {
+            authorized(&webview)?;
+            remote.command($action, payload(&request).as_ref()).await
+        }
+    )* };
+}
+
+remote_actions! {
+    remote_start => "remote-start",
+    remote_stop => "remote-stop",
+    remote_status => "remote-status",
+    remote_rotate => "remote-rotate",
+    remote_revoke => "remote-revoke",
 }
 
 /// The image arrives as the raw IPC body, not as a JSON array of numbers.
@@ -304,6 +325,11 @@ pub fn run() {
             resize,
             ack,
             update_install,
+            remote_start,
+            remote_stop,
+            remote_status,
+            remote_rotate,
+            remote_revoke,
             #[cfg(feature = "e2e")]
             e2e_state,
             #[cfg(feature = "e2e")]
@@ -343,6 +369,15 @@ pub fn run() {
             let backend: Box<dyn Backend> = Box::new(e2e::TestBackend(PtyBackend));
             let host = Host::new(paths, platform, backend, Config::from_environment());
             app.manage(Arc::clone(&host));
+            let resolver = app.asset_resolver();
+            app.manage(Remote::new(
+                Arc::clone(&host),
+                Arc::new(move |path| {
+                    resolver
+                        .get(path.to_owned())
+                        .map(|asset| (asset.bytes, asset.mime_type))
+                }),
+            ));
             let updates = Updates::new(app.handle());
             app.manage(Arc::clone(&updates));
             create_window(app, &host)?;
