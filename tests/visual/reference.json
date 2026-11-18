@@ -5,12 +5,28 @@
     "legacyTolerance": 1.5,
     "engineTolerance": 0.5,
     "intended": {
+        "empty": {
+            "reason": "Find terminal adds an independent sidebar action without moving the existing controls.",
+            "added": ["#find-terminal[0]"]
+        },
+        "launch": {
+            "reason": "Find terminal remains visible behind the launch dialog as an independent sidebar action.",
+            "added": ["#find-terminal[0]"]
+        },
         "card": {
-            "reason": "The Claude account icon is the first card action; the title gives up its 26px width and the 3px gap.",
-            "added": [".card-account-icon[0]"],
+            "reason": "Find terminal adds an independent sidebar action. The Claude account icon is the first card action; the title gives up its 26px width and the 3px gap.",
+            "added": [".card-account-icon[0]", "#find-terminal[0]"],
             "resized": {
                 ".card-title[0]": [0, 0, -29, 0]
             }
+        },
+        "board": {
+            "reason": "Find terminal adds an independent sidebar action without moving the existing controls.",
+            "added": ["#find-terminal[0]"]
+        },
+        "style": {
+            "reason": "Find terminal adds an independent sidebar action without moving the existing controls.",
+            "added": ["#find-terminal[0]"]
         }
     }
 }

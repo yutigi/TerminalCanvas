@@ -64,14 +64,15 @@ window.captureLayout = async function (scene) {
         '.style-toolbar .swatch', '.style-toolbar .size-button', 'footer', '#launch-dialog',
         '.dialog-heading', '.eyebrow', 'h2', '.dialog-description', '.field-label',
         '#profile', '#terminal-title', '#cwd', '#command', '#browse-folder',
-        '.field-hint', '.dialog-footer', '.dialog-footer button', '.icon-button',
+        '.field-hint', '.dialog-footer', '.dialog-footer button', '.icon-button', '#find-terminal',
         '.terminal-card', '.card-header', '.card-title', '.card-directory', '.card-account-icon',
         '.terminal-placeholder .button', '.minimap', '.canvas-item',
     ];
     const rect = box => [box.x, box.y, box.width, box.height].map(n => Math.round(n * 1000) / 1000);
     const elements = {};
     for (const selector of selectors) {
-        document.querySelectorAll(selector).forEach((element, index) => {
+        // Capture the new sidebar action by stable ID so it cannot renumber existing icon buttons.
+        Array.from(document.querySelectorAll(selector)).filter(element => selector !== '.icon-button' || element.id !== 'find-terminal').forEach((element, index) => {
             const style = getComputedStyle(element);
             if (!element.getClientRects().length || style.visibility === 'hidden') return;
             const box = element.getBoundingClientRect();
