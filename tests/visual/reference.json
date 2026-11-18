@@ -5,16 +5,20 @@
     "legacyTolerance": 1.5,
     "engineTolerance": 0.5,
     "intended": {
+        "empty": {
+            "reason": "Find terminal adds an independent sidebar action without moving the existing controls.",
+            "added": ["#find-terminal[0]"]
+        },
         "card": {
-            "reason": "The Claude account icon takes 26px and a 3px gap. The accessible rename button adds 2px to the title height and stays vertically centered.",
-            "added": [".card-account-icon[0]"],
+            "reason": "Find terminal adds an independent sidebar action. The Claude account icon takes 26px and a 3px gap. The accessible rename button adds 2px to the title height and stays vertically centered.",
+            "added": [".card-account-icon[0]", "#find-terminal[0]"],
             "resized": {
                 ".card-title[0]": [0, -1, -29, 2]
             }
         },
         "launch": {
-            "reason": "The automatic-title hint adds 41px after the Name input. With whole-pixel line boxes, the dialog grows 40px and recenters by 20px; the close icon also rounds its old normal line box.",
-            "added": ["#automatic-title-hint[0]"],
+            "reason": "Find terminal remains visible behind the dialog. The automatic-title hint adds 41px after the Name input. With whole-pixel line boxes, the dialog grows 40px and recenters by 20px; the close icon also rounds its old normal line box.",
+            "added": ["#automatic-title-hint[0]", "#find-terminal[0]"],
             "resized": {
                 "#launch-dialog[0]": [0, -20, 0, 40],
                 ".dialog-heading[0]": [0, -20, 0, 0],
@@ -36,6 +40,14 @@
                 ".dialog-footer button[1]": [0, 20, 0, 0],
                 ".icon-button[0]": [0, -21, 0, 0]
             }
+        },
+        "board": {
+            "reason": "Find terminal adds an independent sidebar action without moving the existing controls.",
+            "added": ["#find-terminal[0]"]
+        },
+        "style": {
+            "reason": "Find terminal adds an independent sidebar action without moving the existing controls.",
+            "added": ["#find-terminal[0]"]
         }
     }
 }

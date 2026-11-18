@@ -167,6 +167,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl + Shift + P / Command + Shift + P | Open the terminal switcher, including while typing in a terminal |
 | Ctrl/Cmd + Shift + B | Hide / show sidebar, including inside terminals |
 | Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |
 | Enter, outside a terminal | Type in the selected terminal (a stopped one gets its Start button) |
@@ -194,6 +195,21 @@ Single-key and board shortcuts apply only when focus is outside a terminal or te
 The keyboard is either on the canvas or typing in one terminal. Selecting a terminal from the
 keyboard never types in it, and a terminal you type in receives every key except the app's
 Ctrl + Shift shortcuts, Alt + arrow keys included, so shells and full-screen programs keep them.
+
+**Find terminal:** press **Ctrl + Shift + P** (**Command + Shift + P** on macOS), or use the search
+button beside **ON THIS CANVAS**. The dialog focuses its query. Search by the displayed title,
+folder, or profile; words match together without regard to case. An empty query shows all terminals
+in sidebar order, initially highlighting the selected terminal. Folder/profile details and stable
+card IDs distinguish duplicate titles. Title, folder, creation, and removal updates keep the query
+and active terminal where possible; a removed result falls back to its next surviving row.
+
+Use **↑/↓** to choose a result, then **Enter** to reveal and highlight it at the current zoom.
+The keyboard stays on the canvas; press **Enter again** to type, or to focus a stopped terminal's
+Start/Resume button. In Focus view, confirmation changes the focused terminal and reveals it on
+the canvas when Focus ends. **Esc** or the dialog's close button cancels without changing selection
+or camera, restoring the previous input/button (or the canvas if it is gone or hidden). Dialog
+keystrokes stay out of shells. **Ctrl + P** remains available to terminal programs; **/** still
+focuses sidebar search and **Ctrl + Shift + F** still toggles Focus. Search works locally without AI.
 
 - **Alt + ←/→/↑/↓** on the canvas selects the nearest terminal that way. It works from the
   canvas itself, the sidebar, and the toolbars, but not inside a text field. With the minimap
