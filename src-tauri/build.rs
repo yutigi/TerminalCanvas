@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "initialize",
     "create_card",
     "claude_accounts",
+    "agent_setup",
     "autosave",
     "save",
     "save_as",

@@ -66,12 +66,25 @@ pub trait Platform: Send + Sync + 'static {
     fn close_window(&self);
 }
 
+/// Where AI agents look for user-wide skills, for the agent setup (see [`tc_core::skills`]).
+#[derive(Debug, Clone)]
+pub struct AgentHome {
+    /// The user's home folder.
+    pub home: PathBuf,
+    /// The `CLAUDE_CONFIG_DIR` shells inherit, if set.
+    pub claude_config: Option<PathBuf>,
+    /// Whether the first launch offers the setup.
+    pub first_launch: bool,
+}
+
 /// Where the host keeps its files: the folder the Electron build used, so they carry over.
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub data: PathBuf,
     /// The `tc-hook` sidecar. Without it, shells run without AI session capture.
     pub hook: Option<PathBuf>,
+    /// Where the agent setup installs the skill. Without it, the setup is unavailable.
+    pub agents: Option<AgentHome>,
 }
 
 impl Paths {
@@ -91,6 +104,10 @@ impl Paths {
     /// Where programs outside the canvas ask for new terminals (see [`tc_core::launch`]).
     pub fn launch_requests(&self) -> PathBuf {
         tc_core::launch::app_inbox(&self.data)
+    }
+    /// Present once the user has installed the skill or declined the first-launch offer.
+    pub fn agent_setup(&self) -> PathBuf {
+        self.data.join("agent-setup.json")
     }
 }
 
@@ -517,6 +534,8 @@ impl Host {
                 if self.paths.hook.is_none() {
                     warnings.push(HELPER_MISSING.to_owned());
                 }
+                let offer_setup = self.paths.agents.as_ref().is_some_and(|agents| agents.first_launch)
+                    && !self.paths.agent_setup().exists();
                 let restored = workspace.clone();
                 self.with_state(move |_, state| {
                     state.recovery.reset(restored);
@@ -529,6 +548,9 @@ impl Host {
                 // One line each, the workspace first: the UI shows them together.
                 if !warnings.is_empty() {
                     result["warning"] = json!(warnings.join("\n"));
+                }
+                if offer_setup {
+                    result["agentSetup"] = json!(true);
                 }
                 Ok(result)
             }
@@ -556,6 +578,75 @@ impl Host {
                         result["created"] = json!(created);
                     }
                     Ok(result)
+                })
+                .await
+                .map_err(message)?
+            }
+            // Lists where the Terminal Canvas skill goes; with `install`, first installs it to those
+            // targets; with `dismiss`, records that the first-launch offer was declined.
+            "agent-setup" => {
+                let agents = self
+                    .paths
+                    .agents
+                    .clone()
+                    .ok_or("Agent setup is unavailable: the home folder is unknown.")?;
+                let install = match field(payload, "install") {
+                    None => Vec::new(),
+                    Some(Value::Array(ids)) if ids.len() <= tc_core::skills::TARGETS.len() => ids
+                        .iter()
+                        .map(|id| {
+                            id.as_str()
+                                .and_then(|id| tc_core::skills::TARGETS.into_iter().find(|known| *known == id))
+                                .ok_or_else(|| "Unknown agent setup target.".to_owned())
+                        })
+                        .collect::<Result<_, _>>()?,
+                    Some(_) => return Err("Unknown agent setup target.".into()),
+                };
+                let done = !install.is_empty() || field(payload, "dismiss") == Some(&json!(true));
+                let (accounts, marker) = (self.paths.claude_accounts(), self.paths.agent_setup());
+                tokio::task::spawn_blocking(move || {
+                    let targets = || {
+                        let names = tc_core::accounts::list(&accounts).unwrap_or_default();
+                        let folders: Vec<PathBuf> = names
+                            .iter()
+                            .map(|name| tc_core::accounts::folder(&accounts, name))
+                            .collect();
+                        tc_core::skills::targets(&agents.home, agents.claude_config.as_deref(), &folders)
+                    };
+                    let mut failed = None;
+                    for target in targets().iter().filter(|target| install.contains(&target.id)) {
+                        if let Err(error) = tc_core::skills::install(target) {
+                            failed.get_or_insert(error);
+                        }
+                    }
+                    let save = || {
+                        marker
+                            .parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .and_then(|()| atomic::write(&marker, b"{\"offered\":true}\n", Access::Default))
+                    };
+                    if done && let Err(error) = save() {
+                        failed.get_or_insert(format!("Could not save the agent setup: {error}"));
+                    }
+                    // Folders as text: a path that is not Unicode is still shown, approximately.
+                    let targets: Vec<Value> = targets()
+                        .into_iter()
+                        .map(|target| {
+                            let folders: Vec<String> = target
+                                .folders
+                                .iter()
+                                .map(|folder| folder.display().to_string())
+                                .collect();
+                            json!({
+                                "id": target.id, "name": target.name, "folders": folders,
+                                "detected": target.detected, "status": target.status,
+                            })
+                        })
+                        .collect();
+                    match failed {
+                        Some(error) => Err(error),
+                        None => Ok(json!({ "targets": targets, "installed": install })),
+                    }
                 })
                 .await
                 .map_err(message)?

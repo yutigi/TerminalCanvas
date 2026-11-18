@@ -596,7 +596,11 @@ mod tests {
     fn host() -> Arc<Host> {
         let data = std::env::temp_dir().join(format!("tc-remote-{}", uuid::Uuid::new_v4()));
         Host::new(
-            Paths { data, hook: None },
+            Paths {
+                data,
+                hook: None,
+                agents: None,
+            },
             Arc::new(NoPlatform),
             Box::new(NoBackend),
             Config::from_environment(),

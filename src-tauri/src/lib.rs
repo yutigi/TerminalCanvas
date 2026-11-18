@@ -29,7 +29,7 @@ use tauri::{LogicalSize, Manager, RunEvent, State, Url, Webview, WebviewUrl, Web
 use tc_pty::PtyBackend;
 use tc_pty::manager::{Backend, Config};
 
-use host::{Host, Paths};
+use host::{AgentHome, Host, Paths};
 use remote::Remote;
 use updates::Updates;
 
@@ -78,6 +78,7 @@ macro_rules! actions {
 actions! {
     create_card => "create-card",
     claude_accounts => "claude-accounts",
+    agent_setup => "agent-setup",
     autosave => "autosave",
     save => "save",
     save_as => "save-as",
@@ -302,6 +303,7 @@ pub fn run() {
             initialize,
             create_card,
             claude_accounts,
+            agent_setup,
             autosave,
             save,
             save_as,
@@ -358,16 +360,36 @@ pub fn run() {
                 )?;
                 profile
             };
+            // Test runs install the skill only inside their profile and never offer the setup.
+            let config = Config::from_environment();
+            // The setup installs where shells' agents look: the shells' home and CLAUDE_CONFIG_DIR.
+            #[cfg(not(feature = "e2e"))]
+            let agents = (!config.home.is_empty()).then(|| AgentHome {
+                home: PathBuf::from(&config.home),
+                claude_config: config
+                    .env
+                    .get(tc_core::accounts::ENV)
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from),
+                first_launch: true,
+            });
+            #[cfg(feature = "e2e")]
+            let agents = Some(AgentHome {
+                home: data.join("home"),
+                claude_config: None,
+                first_launch: false,
+            });
             let paths = Paths {
                 data,
                 hook: sidecar("tc-hook"),
+                agents,
             };
             let platform = Arc::new(platform::TauriPlatform::new(app.handle().clone()));
             #[cfg(not(feature = "e2e"))]
             let backend: Box<dyn Backend> = Box::new(PtyBackend);
             #[cfg(feature = "e2e")]
             let backend: Box<dyn Backend> = Box::new(e2e::TestBackend(PtyBackend));
-            let host = Host::new(paths, platform, backend, Config::from_environment());
+            let host = Host::new(paths, platform, backend, config);
             app.manage(Arc::clone(&host));
             let resolver = app.asset_resolver();
             app.manage(Remote::new(
