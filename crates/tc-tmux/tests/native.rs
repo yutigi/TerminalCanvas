@@ -278,6 +278,21 @@ fn pipe_protocol_osc_sizing_subscriptions_and_detach_survival() {
         "103x31"
     );
     reply(&mut client, Command::resize_window(first, 97, 29).unwrap());
+    // tmux clamps even manual sizes to a control client's per-window advertisement.
+    assert_eq!(
+        server
+            .run(&[
+                "display-message",
+                "-p",
+                "-t",
+                &first.to_string(),
+                "#{window_width}x#{window_height}"
+            ])
+            .trim(),
+        "91x27"
+    );
+    // Clearing only this window's cap exposes its requested manual size.
+    reply(&mut client, Command::clear_window_size(first));
     assert_eq!(
         server
             .run(&[
@@ -289,6 +304,18 @@ fn pipe_protocol_osc_sizing_subscriptions_and_detach_survival() {
             ])
             .trim(),
         "97x29"
+    );
+    assert_eq!(
+        server
+            .run(&[
+                "display-message",
+                "-p",
+                "-t",
+                &second.to_string(),
+                "#{window_width}x#{window_height}"
+            ])
+            .trim(),
+        "103x31"
     );
     drop(client);
     assert_eq!(

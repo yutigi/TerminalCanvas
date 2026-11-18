@@ -157,6 +157,7 @@ impl Command {
         )
     }
 
+    /// Set the manual size, still capped by any control client's per-window size.
     pub fn resize_window(window: WindowId, cols: u16, rows: u16) -> Result<Self, InvalidArgument> {
         if cols == 0 || rows == 0 {
             return Err(InvalidArgument("Terminal dimensions must be positive."));
@@ -174,6 +175,7 @@ impl Command {
         ))
     }
 
+    /// Advertise a per-window client size, which also caps manual window resizing.
     pub fn window_size(window: WindowId, cols: u16, rows: u16) -> Result<Self, InvalidArgument> {
         if cols == 0 || rows == 0 {
             return Err(InvalidArgument("Terminal dimensions must be positive."));
@@ -182,6 +184,11 @@ impl Command {
             "refresh-client",
             &["-C".into(), format!("{window}:{cols}x{rows}")],
         ))
+    }
+
+    /// Remove this control client's per-window size cap without detaching the client.
+    pub fn clear_window_size(window: WindowId) -> Self {
+        Self::build("refresh-client", &["-C".into(), format!("{window}:")])
     }
 
     pub fn pause_after(seconds: u16) -> Self {
@@ -263,5 +270,22 @@ mod tests {
         );
         assert!(Command::resize_window("@1".parse().unwrap(), 0, 24).is_err());
         assert!(Command::window_size("@1".parse().unwrap(), 80, 0).is_err());
+    }
+
+    #[test]
+    fn client_window_size_can_be_set_and_cleared_independently_of_manual_size() {
+        let window = "@12".parse().unwrap();
+        assert_eq!(
+            Command::window_size(window, 91, 27).unwrap().as_str(),
+            "refresh-client '-C' '@12:91x27'"
+        );
+        assert_eq!(
+            Command::resize_window(window, 97, 29).unwrap().as_str(),
+            "resize-window '-t' '@12' '-x' '97' '-y' '29'"
+        );
+        assert_eq!(
+            Command::clear_window_size(window).as_str(),
+            "refresh-client '-C' '@12:'"
+        );
     }
 }

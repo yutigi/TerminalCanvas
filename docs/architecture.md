@@ -78,6 +78,11 @@ Submitting never blocks the host; a full queue returns `WouldBlock`. Consumers m
 and retry queued input in order. Dropping the client releases blocked workers, ends/reaps only the
 attached tmux client, and leaves its server/windows alive.
 
+Per-window control-client sizes (`refresh-client -C @window:WxH`) also cap manual
+`resize-window` requests. Clear that client's cap with `refresh-client -C @window:` before
+expecting a larger manual size. The native probe checks the clamp, removal of one window's cap,
+and preservation of the other window's independent size.
+
 All connections require an explicit absolute socket path. Native probes create owner-only
 temporary profiles, pass `-S` to every subprocess, ignore user tmux configuration, and clean up
 only their own server/profile. They are explicitly ignored in normal workspace tests and run
