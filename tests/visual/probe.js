@@ -71,12 +71,14 @@ window.captureLayout = async function (scene) {
     const rect = box => [box.x, box.y, box.width, box.height].map(n => Math.round(n * 1000) / 1000);
     const elements = {};
     for (const selector of selectors) {
-        document.querySelectorAll(selector).forEach((element, index) => {
+        // Hidden controls do not participate in layout or shift visible controls' identities.
+        let index = 0;
+        document.querySelectorAll(selector).forEach(element => {
             const style = getComputedStyle(element);
             if (!element.getClientRects().length || style.visibility === 'hidden') return;
             const box = element.getBoundingClientRect();
             if (!box.width || !box.height) return;
-            elements[`${selector}[${index}]`] = {
+            elements[`${selector}[${index++}]`] = {
                 rect: rect(box), background: style.backgroundColor, color: style.color,
                 icons: Array.from(element.children).flatMap(child => {
                     const svg = child.matches('svg') ? child : child.querySelector(':scope > svg');

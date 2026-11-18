@@ -36,12 +36,25 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
         args: ['--disable-background-networking', '--disable-component-update', '--no-first-run'] });
     t.after(() => browser.close());
     const controllerContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const controller = await controllerContext.newPage(), browserErrors = [];
+    const controller = await controllerContext.newPage(), browserErrors = [], browserConsole = [];
     controller.on('pageerror', error => browserErrors.push(error.message));
+    controller.on('console', message => {
+        if (message.type() === 'error') browserConsole.push(message.text());
+    });
     await controller.goto(access.url);
     await controller.locator('#pair-token').fill(access.controlToken);
     await controller.locator('#pair-submit').click();
-    await controller.waitForFunction(() => typeof ready !== 'undefined' && ready && window.terminalCanvas.remote);
+    try {
+        await controller.waitForFunction(() => typeof ready !== 'undefined' && ready && window.terminalCanvas.remote);
+    } catch (error) {
+        t.diagnostic(JSON.stringify({ browserErrors, browserConsole, state: await controller.evaluate(() => ({
+            ready: typeof ready === 'undefined' ? 'undefined' : ready,
+            remote: window.terminalCanvas?.remote,
+            toast: document.querySelector('#toast')?.textContent,
+            loginError: document.querySelector('#pair-error')?.textContent
+        })) }));
+        throw error;
+    }
     await controller.waitForFunction(id => sessions.get(id)?.status === 'running', card.id);
     assert.equal(await controller.evaluate(() => window.terminalCanvas.role), 'control');
     const conflicting = await controllerContext.newPage();

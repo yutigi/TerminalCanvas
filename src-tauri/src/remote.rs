@@ -358,6 +358,7 @@ fn static_path(path: &str) -> Option<&str> {
     match path {
         "/" | "/index.html" => Some("index.html"),
         "/styles.css"
+        | "/typography.css"
         | "/chrome.css"
         | "/bridge.js"
         | "/remote-bridge.js"
@@ -368,6 +369,7 @@ fn static_path(path: &str) -> Option<&str> {
         | "/canvas-geometry.js"
         | "/terminal-pointer.js"
         | "/item-styles.js"
+        | "/terminal-themes.js"
         | "/items.js"
         | "/history.js"
         | "/clipboard.js"
@@ -669,6 +671,23 @@ mod tests {
         security.revoke();
         assert!(!active.load(Ordering::Acquire));
         assert!(security.sessions.is_empty());
+    }
+
+    #[test]
+    fn renderer_dependencies_are_explicitly_allowlisted() {
+        let html = include_str!("../../src/index.html");
+        for attribute in ["src=\"", "href=\""] {
+            for reference in html.split(attribute).skip(1) {
+                let asset = reference.split('"').next().unwrap().trim_start_matches("./");
+                let path = format!("/{asset}");
+                assert_eq!(static_path(&path), Some(asset), "Renderer dependency: {asset}");
+            }
+        }
+        for reference in include_str!("../../src/styles.css").split("url('").skip(1) {
+            let asset = reference.split('\'').next().unwrap().trim_start_matches("./");
+            let path = format!("/{asset}");
+            assert_eq!(static_path(&path), Some(asset), "Stylesheet dependency: {asset}");
+        }
     }
 
     #[tokio::test]
