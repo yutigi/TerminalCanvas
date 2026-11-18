@@ -5,11 +5,11 @@ let canvasStates = [], activeCanvas = null, canvasExtended = false, canvasMutati
 function canvasState({ id = newId(), name = 'Canvas 1', camera = { x: 48, y: 48, z: 1 }, cards = [], items = [], selected, focused } = {}) {
     return { id, name, board: { version: 3, name: '', camera, cards, items }, selected, focused,
         selection: new Set(selected ? [selected] : []), history: { undo: [], redo: [] },
-        clearedRedo: { step: null, redo: [] }, sharedItemJson: new Map(), activity: '', typing: false };
+        clearedRedo: { step: null, redo: [] }, sharedItemJson: new Map(), activity: '', typing: false, focusSidebarRevealed: false };
 }
 function rememberCanvas() {
     if (!activeCanvas) return;
-    Object.assign(activeCanvas, { selected, focused, selection, keyboardCurrent, revealOnReturn,
+    Object.assign(activeCanvas, { selected, focused, selection, keyboardCurrent, revealOnReturn, focusSidebarRevealed,
         history: { undo: boardHistory.undo, redo: boardHistory.redo }, clearedRedo, sharedItemJson,
         typing: document.activeElement?.closest?.('.canvas-manager') ? activeCanvas.typing : !!document.activeElement?.closest?.('.xterm') });
 }
@@ -61,6 +61,7 @@ function markCanvasActivity(s, activity) {
     renderCanvases();
 }
 function revealCanvas(canvas, { restoreKeyboard = true } = {}) {
+    const typing = canvas.typing;
     activeCanvas = canvas; workspace = canvas.board; canvas.activity = '';
     selected = canvas.selected || null; selection = canvas.selection; keyboardCurrent = canvas.keyboardCurrent || null;
     revealOnReturn = canvas.revealOnReturn || null;
@@ -70,11 +71,15 @@ function revealCanvas(canvas, { restoreKeyboard = true } = {}) {
     const visibleItems = new Set(workspace.items.map(item => item.id));
     for (const [id, view] of itemViews) view.element.style.display = visibleItems.has(id) ? '' : 'none';
     focused = canvas.focused || null;
+    focusSidebarRevealed = canvas.focusSidebarRevealed;
     viewport.classList.toggle('focus-mode', !!focused); $('#exit-focus').hidden = !focused;
     for (const [id, s] of sessions) s.element.classList.toggle('focused', s.canvas === canvas && id === focused);
+    // The saved camera already belongs to this canvas's Focus/sidebar state. Reapplying
+    // the chrome must not compensate it again on every trip between canvases.
+    renderSidebar({ preserveCenter: false });
     renderCamera(); renderLines(); applySelection(false); renderHistoryButtons(); renderCanvases();
     if (restoreKeyboard) {
-        if (canvas.typing && sessions.get(focused || selected)?.status === 'running') sessions.get(focused || selected).terminal?.focus();
+        if (typing && sessions.get(focused || selected)?.status === 'running') sessions.get(focused || selected).terminal?.focus();
         else viewport.focus({ preventScroll: true });
     }
     requestAnimationFrame(() => {

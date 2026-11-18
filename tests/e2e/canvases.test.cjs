@@ -83,6 +83,7 @@ test('native recovery restores every canvas, last active canvas, order, items an
         assert.equal(await reopened.page.evaluate(() => sessions.size), 2);
         await reopened.page.selectOption('#canvas-list', saved.canvases[1].id);
         assert.equal(await reopened.page.evaluate(() => focused), saved.canvases[1].focused);
-        assert.deepEqual(await reopened.page.evaluate(() => workspace.camera), { x: 11, y: 22, z: .65 });
+        assert.deepEqual(await reopened.page.evaluate(() => workspace.camera), saved.canvases[1].camera);
+        assert.equal(await reopened.page.locator('#sidebar').isVisible(), false, 'Restoring a focused canvas also restores its automatic sidebar hiding.');
     } finally { await reopened.dispose(); }
 });
