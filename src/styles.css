@@ -111,6 +111,22 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .item-frame.colored.selected{border-color:var(--accent)}
 .item-frame.colored.selected .frame-title{color:var(--accent)}
 .canvas-line.selected{color:var(--accent)}
+/* Card accents identify a task; profile badges continue to identify its shell/tool. */
+.terminal-card.colored{border-color:var(--item-color)}
+.terminal-card.colored .card-header{background:color-mix(in srgb,var(--item-color) 20%,#242a32)}
+.terminal-card.colored .card-title{color:#f0f4fa}
+.terminal-card.colored .card-status{color:#c8d1dc}
+.terminal-card.colored.running .card-status{color:#c8ecb5}
+.terminal-card.colored.selected{outline:calc(2px / var(--camera-zoom,1)) solid var(--accent);outline-offset:calc(3px / var(--camera-zoom,1))}
+.viewport.focus-mode .terminal-card.colored.selected{outline-width:2px;outline-offset:3px}
+.outline-item.colored{box-shadow:inset 3px 0 var(--item-color)}
+.minimap-card.colored{background:color-mix(in srgb,var(--item-color) 28%,#242a32);border-color:var(--item-color)}
+.minimap-card.colored.selected{outline:1px solid var(--accent);outline-offset:1px}
+.terminal-body{background:var(--terminal-background,#15191f)}
+.terminal-body .xterm-viewport{scrollbar-color:#414b59 var(--terminal-background,#15191f)}
+.theme-control{display:flex;align-items:center;gap:6px;font-size:10px;color:#b4bfcf;white-space:nowrap}
+.theme-control select{max-width:145px;height:26px;padding:0 5px;border:1px solid #536174;border-radius:4px;background:#21262d;color:#d5dce5;font:inherit}
+.theme-control select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .item-text.size-small{font-size:12px}.item-text.size-large{font-size:24px}.item-text.size-huge{font-size:36px}
 .item-note.size-small{font-size:11px}.item-note.size-large{font-size:20px}.item-note.size-huge{font-size:30px}
 .item-shape.size-small{font-size:11px}.item-shape.size-large{font-size:19px}.item-shape.size-huge{font-size:28px}
