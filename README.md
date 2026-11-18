@@ -209,6 +209,36 @@ Shell variables, activated environments, terminal scrollback, running commands, 
 
 The supported resume commands and Claude hook input are described in the [Codex CLI reference](https://developers.openai.com/codex/cli/reference), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Claude hooks reference](https://code.claude.com/docs/en/hooks). Only per-launch settings and files under the app's user-data directory are created; global CLI configuration is not edited.
 
+## tmux protocol spike (issue #35, phase 1)
+
+`crates/tc-tmux` is a development-only protocol spike, not an app feature yet. Closing Terminal
+Canvas still stops its terminals; no background-running toggle or session attachment UI is shipped
+in this phase. The crate has no desktop runtime dependency and never falls back to the default server.
+
+| Platform | Phase 1 |
+| --- | --- |
+| macOS / Linux | Native tmux protocol probes on an explicit private socket |
+| Windows | Pure Rust protocol tests; real tmux checks unavailable locally |
+| Windows via WSL / SSH hosts | Deferred; no transport or path translation implemented |
+
+Install native tmux with `brew install tmux` or your Linux package manager. The candidate minimum
+is **tmux 3.3+**, because 3.2 lacks per-window control-client sizing. Discovery checks `PATH`,
+`/opt/homebrew/bin`, `/usr/local/bin`, and `/usr/bin`; library callers may supply `Options.binary`.
+The native test override is `TC_TMUX_BINARY`. CI probes both the runner's current tmux and a
+checksum-pinned 3.3a build. These probes have not been run on this Windows development machine.
+
+```sh
+cargo test -p tc-tmux
+# Native macOS/Linux only; creates and cleans up disposable private servers, never the default:
+cargo test -p tc-tmux --test native -- --ignored --nocapture --test-threads=1
+```
+
+The probes check raw OSC 7/777 and UTF-8 output, literal hex input, subscriptions, independent
+window sizes, reply correlation, pause/continue, and shell PID/history survival after detaching
+and reattaching the library client. They do not establish desktop recovery or lossless flood
+handling. tmux's pause discards protocol output; continuing starts at the current offset, so a
+future backend must resynchronize from pane history. See [the process-layer findings](docs/architecture.md#tmux-control-mode-spike).
+
 ## Development and validation
 
 | Command | Purpose |
