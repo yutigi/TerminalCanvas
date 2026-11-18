@@ -84,6 +84,10 @@ impl Paths {
     pub fn integration(&self) -> PathBuf {
         self.data.join("shell-integration")
     }
+    /// One folder per Claude Code account (see [`tc_core::accounts`]).
+    pub fn claude_accounts(&self) -> PathBuf {
+        self.data.join(tc_core::accounts::DIR)
+    }
     /// Where programs outside the canvas ask for new terminals (see [`tc_core::launch`]).
     pub fn launch_requests(&self) -> PathBuf {
         tc_core::launch::app_inbox(&self.data)
@@ -204,7 +208,8 @@ pub fn validate_link(payload: Option<&Value>) -> Result<String, String> {
 }
 
 impl Host {
-    pub fn new(paths: Paths, platform: Arc<dyn Platform>, backend: Box<dyn Backend>, config: Config) -> Arc<Host> {
+    pub fn new(paths: Paths, platform: Arc<dyn Platform>, backend: Box<dyn Backend>, mut config: Config) -> Arc<Host> {
+        config.claude_accounts = Some(paths.claude_accounts());
         let (sender, mut messages) = tokio::sync::mpsc::unbounded_channel();
         let events = sender.clone();
         let sink: EventSink = Arc::new(move |key, event| {
@@ -517,6 +522,33 @@ impl Host {
                 Ok(result)
             }
             "create-card" => Ok(json!({ "card": create_card(payload.unwrap_or(&Value::Null)).map_err(message)? })),
+            // Lists the Claude Code accounts; with `create`, first adds that account.
+            "claude-accounts" => {
+                let root = self.paths.claude_accounts();
+                let create = match field(payload, "create") {
+                    Some(name) => Some(tc_core::accounts::validate_name(Some(name)).map_err(message)?),
+                    None => None,
+                };
+                tokio::task::spawn_blocking(move || {
+                    let created = create
+                        .map(|name| tc_core::accounts::create(&root, &name))
+                        .transpose()
+                        .map_err(|error| format!("Could not add the Claude account: {error}"))?;
+                    let accounts = tc_core::accounts::list(&root)
+                        .map_err(|error| format!("Could not list Claude accounts: {error}"))?;
+                    let signed_in: Map<String, Value> = accounts
+                        .iter()
+                        .filter_map(|name| Some((name.clone(), json!(tc_core::accounts::signed_in(&root, name)?))))
+                        .collect();
+                    let mut result = json!({ "accounts": accounts, "signedIn": signed_in });
+                    if let Some(created) = created {
+                        result["created"] = json!(created);
+                    }
+                    Ok(result)
+                })
+                .await
+                .map_err(message)?
+            }
             "duplicate-directory" => {
                 let raw = payload.cloned().unwrap_or(Value::Null);
                 let request = self

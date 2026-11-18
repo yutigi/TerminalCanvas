@@ -132,6 +132,9 @@ pub struct Card {
     pub h: f64,
     /// Text size in CSS pixels. `None` is the default, `terminal_font_size::DEFAULT`.
     pub font_size: Option<u8>,
+    /// The Claude Code account the terminal's shell runs as (see [`crate::accounts`]). `None`
+    /// leaves the shell's own `CLAUDE_CONFIG_DIR`, normally `~/.claude`.
+    pub claude_account: Option<String>,
     /// Outermost first. Empty when ungrouped.
     pub groups: Vec<String>,
 }
@@ -268,6 +271,9 @@ impl Serialize for Card {
         map.serialize_entry("h", &Number(self.h))?;
         if let Some(size) = self.font_size {
             map.serialize_entry("fontSize", &size)?;
+        }
+        if let Some(account) = &self.claude_account {
+            map.serialize_entry("claudeAccount", account)?;
         }
         if !self.groups.is_empty() {
             map.serialize_entry("groups", &self.groups)?;
@@ -494,6 +500,10 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
     let w = size("w", 400.0, 2400.0)?;
     let h = size("h", 280.0, 1800.0)?;
     let font_size = terminal_font(field(raw, "fontSize"));
+    // Like the text size, an unusable account name falls back to the default account.
+    let claude_account = field(raw, "claudeAccount")
+        .and_then(Value::as_str)
+        .and_then(crate::accounts::name);
     let groups = groups(card, version)?;
     Ok(Card {
         id,
@@ -507,6 +517,7 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
         w,
         h,
         font_size,
+        claude_account,
         groups,
     })
 }
@@ -854,6 +865,37 @@ mod tests {
                 validated.cards.iter().map(|card| card.font_size).collect::<Vec<_>>(),
                 [Some(18), None]
             );
+            let saved: Value = serde_json::from_str(&validated.to_file_string(None)).unwrap();
+            assert_eq!(validate_workspace(&saved).unwrap(), validated);
+        }
+    }
+
+    #[test]
+    fn claude_accounts_are_kept_when_valid_and_dropped_otherwise() {
+        let card = |account: Value| {
+            let mut raw = json!(create_card(&json!({})).unwrap());
+            raw["fontSize"] = json!(16);
+            raw["claudeAccount"] = account;
+            raw["groups"] = json!(["g"]);
+            validate_card(&raw, VERSION).unwrap()
+        };
+        assert_eq!(card(json!(" Work ")).claude_account.as_deref(), Some("Work"));
+        for account in [json!(""), json!("a/b"), json!("con"), json!(5), json!(null)] {
+            let validated = card(account.clone());
+            assert_eq!(validated.claude_account, None, "{account}");
+            assert!(!json!(validated).as_object().unwrap().contains_key("claudeAccount"));
+        }
+        let saved = json!(card(json!("Work")));
+        let keys: Vec<&str> = saved.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys[keys.len() - 3..], ["fontSize", "claudeAccount", "groups"]);
+        for version in [1, 2, 3] {
+            let mut board = create_workspace().to_value();
+            board["version"] = json!(version);
+            let mut raw = json!(create_card(&json!({})).unwrap());
+            raw["claudeAccount"] = json!("Work");
+            board["cards"] = json!([raw]);
+            let validated = validate_workspace(&board).unwrap();
+            assert_eq!(validated.cards[0].claude_account.as_deref(), Some("Work"));
             let saved: Value = serde_json::from_str(&validated.to_file_string(None)).unwrap();
             assert_eq!(validate_workspace(&saved).unwrap(), validated);
         }

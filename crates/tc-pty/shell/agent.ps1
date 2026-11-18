@@ -10,6 +10,8 @@ function global:__tc_agent($provider, $arguments) {
         if (-not $executable) { $executable = (Get-Command -Name $provider -CommandType ExternalScript -ErrorAction Stop | Select-Object -First 1).Source }
     }
     catch { __tc_emit @{ type = 'warning'; message = 'The AI tool is unavailable. Install it on PATH, or stop this terminal and use Start fresh shell. The saved ID is retained.' }; Write-Error ($provider + ' is unavailable.'); return }
+    # Claude's management commands, such as `claude auth login`, start no session and reject --settings.
+    if ($provider -eq 'claude' -and $arguments.Count -gt 0 -and $arguments[0] -cin @('agents', 'attach', 'auth', 'auto-mode', 'doctor', 'gateway', 'import', 'install', 'logs', 'mcp', 'plugin', 'plugins', 'purge', 'respawn', 'rm', 'setup-token', 'stop', 'kill', 'ultrareview', 'update', 'upgrade')) { & $executable @arguments; return }
     $env:TC_LAUNCH_TOKEN = [guid]::NewGuid().ToString()
     $sessionId = $null
     $prefix = @()

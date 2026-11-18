@@ -65,7 +65,7 @@ window.captureLayout = async function (scene) {
         '.dialog-heading', '.eyebrow', 'h2', '.dialog-description', '.field-label',
         '#profile', '#terminal-title', '#cwd', '#command', '#browse-folder',
         '.field-hint', '.dialog-footer', '.dialog-footer button', '.icon-button',
-        '.terminal-card', '.card-header', '.card-title', '.card-directory',
+        '.terminal-card', '.card-header', '.card-title', '.card-directory', '.card-account-icon',
         '.terminal-placeholder .button', '.minimap', '.canvas-item',
     ];
     const rect = box => [box.x, box.y, box.width, box.height].map(n => Math.round(n * 1000) / 1000);

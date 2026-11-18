@@ -4,6 +4,8 @@ __tc_agent() {
     local executable session_id="" token previous="" argument code
     executable=$(type -P "$provider")
     if [ -z "$executable" ]; then printf '%s is unavailable. Install it on PATH, or use Start fresh to open a shell.\n' "$provider" >&2; return 127; fi
+    # Claude's management commands, such as `claude auth login`, start no session and reject --settings.
+    if [ "$provider" = claude ]; then case "$1" in agents|attach|auth|auto-mode|doctor|gateway|import|install|logs|mcp|plugin|plugins|purge|respawn|rm|setup-token|stop|kill|ultrareview|update|upgrade) "$executable" "$@"; return;; esac; fi
     token=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
     export TC_LAUNCH_TOKEN="$token"
     for argument in "$@"; do

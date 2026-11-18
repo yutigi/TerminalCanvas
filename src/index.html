@@ -83,6 +83,18 @@
             <div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary" id="launch-submit"><span data-icon="play"></span>Start terminal</button></div>
         </form>
     </dialog>
+    <dialog id="account-dialog">
+        <form id="account-form">
+            <div class="dialog-heading"><span class="dialog-symbol" data-icon="user"></span><button type="button" class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div>
+            <h2>Claude account</h2><p id="account-description" class="dialog-description">Choose the Claude Code sign-in this terminal uses.</p>
+            <label class="field-label" for="account-select">Account</label><select id="account-select"></select>
+            <div class="account-signin"><p id="account-status" class="field-hint" role="status"></p><button class="button" type="button" id="account-signin"></button></div>
+            <label class="field-label" for="account-name">Add an account <span>optional</span></label><div class="folder-field"><input id="account-name" maxlength="40" placeholder="e.g. Work" spellcheck="false" autocomplete="off"><button class="button" type="button" id="account-add"><span data-icon="plus"></span>Add</button></div>
+            <p class="field-hint">Each account keeps its own browser sign-in, settings, and session history, so you sign in once per account. A change takes effect the next time the terminal starts.</p>
+            <p id="account-error" class="form-error" role="alert" hidden></p>
+            <div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Save</button></div>
+        </form>
+    </dialog>
     <dialog id="info-dialog"><div class="dialog-heading"><span id="info-icon" class="dialog-symbol" data-icon="help"></span><button class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div><h2 id="info-title"></h2><div id="info-content"></div><div class="dialog-footer"><button class="button primary" data-close>Got it</button></div></dialog>
     <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-description" class="dialog-description"></p><div class="dialog-footer"><button id="confirm-cancel" class="button">Cancel</button><button id="confirm-ok" class="button danger">Continue</button></div></dialog>
     <div id="toast" class="toast" role="status" hidden></div>

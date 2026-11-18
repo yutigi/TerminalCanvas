@@ -33,7 +33,8 @@ const paths = {
     package: '<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 8v8l9 5 9-5V8m-9 5v8"/>',
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
     redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
-    trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
+    trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -493,12 +494,12 @@ function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = card.title;
     const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
-    recoveryInfo(card);
+    recoveryInfo(card); renderAccount(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
             fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: terminalFontSize(card), lineHeight: 1.3,
@@ -568,6 +569,7 @@ function mount(card) {
     el.querySelectorAll('[data-action]').forEach(button => button.onclick = () => run(async () => {
         const action = button.dataset.action;
         if (action === 'duplicate') await duplicateTerminal(card);
+        if (action === 'account') await openAccountDialog(card);
         if (action === 'focus') setFocus(focused ? null : card.id);
         if (action === 'start') await start(card);
         if (action === 'fresh' || action === 'fresh-shell') await start(card, 'fresh');
@@ -754,7 +756,7 @@ async function duplicateTerminal(source) {
         const result = await invoke('duplicate-directory', source);
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (result.warning) {
-            openLaunch('shell', { fontSize: source.fontSize });
+            openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount });
             $('#cwd').value = result.cwd;
             $('#launch-error').textContent = result.warning;
             $('#launch-error').hidden = false;
@@ -763,6 +765,7 @@ async function duplicateTerminal(source) {
         const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (source.fontSize) card.fontSize = source.fontSize;
+        if (source.claudeAccount) card.claudeAccount = source.claudeAccount;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
         await start(card);
@@ -804,6 +807,8 @@ async function openRequestedTerminal(event) {
         parent = null;
     }
     await whenBoardIdle();
+    // A terminal opened beside another signs in to Claude as that terminal does.
+    if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
     workspace.cards.push(card); mount(card);
     if (parent && workspace.items.length < ITEM_LIMIT) {
         recordHistory();
@@ -817,15 +822,119 @@ async function openRequestedTerminal(event) {
     await start(card, undefined, event.request);
     return { card, parent };
 }
-// A duplicate whose folder needs review still copies its source terminal's text size.
-let launchFontSize;
-function openLaunch(profileId = 'shell', { fontSize } = {}) {
+// A duplicate whose folder needs review still copies its source terminal's text size and account.
+let launchFontSize, launchAccount;
+function openLaunch(profileId = 'shell', { fontSize, claudeAccount } = {}) {
     if (!ready || document.querySelector('dialog[open]')) return;
-    launchFontSize = fontSize;
+    launchFontSize = fontSize; launchAccount = claudeAccount;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
 }
+/* ---------- Claude accounts ---------- */
+// Each account is a separate Claude Code configuration folder the host sets as CLAUDE_CONFIG_DIR
+// when the card's shell starts. A card without `claudeAccount` uses the shell's usual sign-in.
+// `claudeSignedIn` maps an account to the email it signed in with, for display only.
+let claudeAccounts = [], claudeSignedIn = {}, accountCard = null, accountBusy = false;
+async function loadClaudeAccounts(create) {
+    const result = await invoke('claude-accounts', create === undefined ? {} : { create });
+    claudeAccounts = Array.isArray(result?.accounts) ? result.accounts.filter(name => typeof name === 'string') : [];
+    claudeSignedIn = result?.signedIn && typeof result.signedIn === 'object' ? result.signedIn : {};
+    return result || {};
+}
+function renderAccountStatus() {
+    const name = $('#account-select').value, email = name && typeof claudeSignedIn[name] === 'string' ? claudeSignedIn[name] : '';
+    $('#account-status').textContent = !name ? 'Uses the sign-in your shell already has.'
+        : email ? `Signed in as ${email}.` : 'Not signed in yet. Sign in once with your browser; the sign-in is kept for this account.';
+    $('#account-signin').innerHTML = icon('user') + (email ? 'Sign in again' : 'Sign in with browser');
+    $('#account-signin').disabled = !name || accountBusy;
+}
+function accountOption(label, value) {
+    const option = document.createElement('option'); option.value = value; option.textContent = label;
+    return option;
+}
+function fillAccountSelect(select, value) {
+    select.replaceChildren(accountOption('Default (your usual Claude sign-in)', ''));
+    const names = [...claudeAccounts];
+    if (value && !names.includes(value)) names.push(value);
+    for (const name of names) select.append(accountOption(name, name));
+    select.value = value || '';
+}
+// The header icon opens the account dialog; the folder row names the account.
+function renderAccount(card) {
+    const s = sessions.get(card.id); if (!s) return;
+    const button = s.element.querySelector('.card-account');
+    button.textContent = `Claude · ${card.claudeAccount || 'Default'}`;
+    button.classList.toggle('set', !!card.claudeAccount);
+    button.title = `Claude account: ${card.claudeAccount || 'Default'}. Click to change.`;
+    button.setAttribute('aria-label', `Claude account: ${card.claudeAccount || 'Default'}`);
+    const header = s.element.querySelector('.card-account-icon');
+    header.title = `Claude account: ${card.claudeAccount || 'Default'}`;
+    header.setAttribute('aria-label', header.title);
+    header.classList.toggle('set', !!card.claudeAccount);
+}
+async function openAccountDialog(card) {
+    if (!ready || document.querySelector('dialog[open]')) return;
+    try { await loadClaudeAccounts(); } catch (error) { toast(error.message); }
+    if (findCard(card.id) !== card || document.querySelector('dialog[open]')) return;
+    accountCard = card;
+    $('#account-description').textContent = `Choose the Claude Code sign-in “${card.title}” uses.`;
+    fillAccountSelect($('#account-select'), card.claudeAccount); renderAccountStatus();
+    $('#account-name').value = ''; $('#account-error').hidden = true;
+    $('#account-dialog').showModal();
+}
+function addAccount() {
+    const name = $('#account-name').value.trim();
+    if (!name || accountBusy) return;
+    accountBusy = true; $('#account-add').disabled = true; renderAccountStatus();
+    run(async () => {
+        try {
+            const result = await loadClaudeAccounts(name);
+            fillAccountSelect($('#account-select'), result.created || name);
+            $('#account-name').value = ''; $('#account-error').hidden = true;
+        } catch (error) {
+            $('#account-error').textContent = error.message; $('#account-error').hidden = false;
+        } finally { accountBusy = false; $('#account-add').disabled = false; renderAccountStatus(); }
+    });
+}
+$('#account-add').onclick = addAccount;
+$('#account-name').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addAccount(); } });
+$('#account-select').onchange = renderAccountStatus;
+// Saves the dialog's choice on its card. Returns the card, or null when it was closed meanwhile.
+function applyAccountChoice() {
+    const card = accountCard, value = $('#account-select').value;
+    accountCard = null; $('#account-dialog').close();
+    if (!card || findCard(card.id) !== card) return null;
+    if ((card.claudeAccount || '') === value) return card;
+    if (value) card.claudeAccount = value; else delete card.claudeAccount;
+    renderAccount(card); changed();
+    const s = sessions.get(card.id);
+    if (['running', 'starting'].includes(s?.status)) toast(`“${card.title}” will use ${value ? `the Claude account “${value}”` : 'the default Claude sign-in'} the next time it starts.`);
+    return card;
+}
+$('#account-form').onsubmit = event => { event.preventDefault(); applyAccountChoice(); };
+// Browser sign-in, as Claude Code's own `claude auth login` does it, in a terminal beside the card
+// that runs as the account: the sign-in lands in that account's folder and stays there.
+$('#account-signin').onclick = () => {
+    const name = $('#account-select').value;
+    if (!name || accountBusy) return;
+    const card = applyAccountChoice();
+    run(() => openAccountSignIn(card, name));
+};
+async function openAccountSignIn(beside, name) {
+    await whenBoardIdle();
+    const size = { w: 660, h: 430 };
+    const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
+    const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
+    const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+    card.claudeAccount = name;
+    workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
+    if (focused) setFocus(card.id);
+    else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
+    toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
+    await start(card);
+}
+$('#account-dialog').addEventListener('close', () => { accountCard = null; });
 $('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
 $('#launch-form').onsubmit = event => {
@@ -837,6 +946,7 @@ $('#launch-form').onsubmit = event => {
             const count = workspace.cards.length;
             const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
             if (launchFontSize) result.card.fontSize = launchFontSize;
+            if (launchAccount) result.card.claudeAccount = launchAccount;
             workspace.cards.push(result.card); mount(result.card); select(result.card.id); changed(); refresh();
             $('#launch-dialog').close();
             if (focused) setFocus(result.card.id);

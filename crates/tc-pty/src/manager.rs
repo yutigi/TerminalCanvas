@@ -249,6 +249,9 @@ pub struct Config {
     pub hostname: String,
     /// The host's working directory, the last fallback for a duplicate.
     pub process_cwd: String,
+    /// The folder of Claude Code accounts (see [`tc_core::accounts`]). Without it, a card's
+    /// account is ignored and every shell keeps the inherited `CLAUDE_CONFIG_DIR`.
+    pub claude_accounts: Option<std::path::PathBuf>,
 }
 
 impl Config {
@@ -267,6 +270,7 @@ impl Config {
             process_cwd: std::env::current_dir()
                 .map(|cwd| cwd.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            claude_accounts: None,
         }
     }
 }
@@ -590,6 +594,20 @@ impl TerminalManager {
             };
             command.clear();
         }
+        // The account folder is created on first use, so a card keeps its account even when the
+        // folder was removed; Claude Code then asks to sign in again.
+        let account_folder = match (&card.claude_account, &self.config.claude_accounts) {
+            (Some(name), Some(root)) => {
+                let folder = tc_core::accounts::folder(root, name);
+                if let Err(error) = fs::create_dir_all(&folder) {
+                    return Err(Error::Invalid(format!(
+                        "Could not prepare the Claude account \"{name}\": {error}"
+                    )));
+                }
+                Some(folder)
+            }
+            _ => None,
+        };
         // Integration adds AI session capture, folder reports, and the launch request inbox. A
         // terminal whose integration files cannot be written still starts without them, and says so.
         let mut failure = None;
@@ -621,6 +639,13 @@ impl TerminalManager {
         // Lets a program outside this terminal name it as the parent of a new terminal.
         env.insert(tc_core::launch::CARD_ENV.into(), card.id.clone());
         env.remove("ELECTRON_RUN_AS_NODE");
+        if let Some(folder) = account_folder {
+            // Windows matches names case-insensitively, so an inherited `Claude_Config_Dir` goes too.
+            env.retain(|key, _| {
+                !(key == tc_core::accounts::ENV || windows && key.eq_ignore_ascii_case(tc_core::accounts::ENV))
+            });
+            env.insert(tc_core::accounts::ENV.into(), folder.to_string_lossy().into_owned());
+        }
         if windows {
             let prompt = env
                 .get("PROMPT")

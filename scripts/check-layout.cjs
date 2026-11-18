@@ -73,7 +73,7 @@ for (const name of ['legacy', 'chromium', 'webkit']) {
     }
 }
 const failures = [
-    ...compare(read('legacy'), read('chromium'), config.legacyTolerance).map(message => `Legacy: ${message}`),
+    ...compare(read('legacy'), read('chromium'), config.legacyTolerance, { intended: config.intended }).map(message => `Legacy: ${message}`),
     ...compare(read('chromium'), read('webkit'), config.engineTolerance).map(message => `WebKit: ${message}`),
     ...reportArrowFailures(read('legacy'), { requirePath: false }).map(message => `Legacy paint: ${message}`),
     ...reportArrowFailures(read('chromium')).map(message => `Chromium paint: ${message}`),

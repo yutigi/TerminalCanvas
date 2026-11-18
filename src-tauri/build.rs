@@ -13,6 +13,7 @@ const XTERM: [(&str, &str); 3] = [
 const COMMANDS: &[&str] = &[
     "initialize",
     "create_card",
+    "claude_accounts",
     "autosave",
     "save",
     "save_as",

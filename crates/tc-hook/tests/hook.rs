@@ -312,7 +312,7 @@ fn bash_wrappers_report_manual_launches_through_tc_hook() {
     .unwrap()
     .unwrap();
     let script = format!(
-        "{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\ncodex resume {ID}\necho codex-exit=$?\n",
+        "{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nclaude auth login --claudeai\ncodex resume {ID}\necho codex-exit=$?\n",
         integration.command.clone().unwrap()
     );
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
@@ -330,7 +330,13 @@ fn bash_wrappers_report_manual_launches_through_tc_hook() {
         String::from_utf8_lossy(&output.stderr)
     );
     let (launches, ends) = launches(&output.stdout, Platform::current());
-    assert_eq!(launches.len(), 3, "{stdout}");
+    assert_eq!(launches.len(), 3, "management commands start no session: {stdout}");
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.ends_with("claude-args: auth login --claudeai")),
+        "`claude auth` gets neither --settings nor a session ID: {stdout}"
+    );
     assert_eq!(launches[0]["provider"], "claude");
     let generated = launches[0]["sessionId"].as_str().unwrap();
     assert!(
@@ -453,7 +459,7 @@ mod windows {
         let settings = folder.join("settings with ' quote.json");
         let fake = tc_pty::shell::ps_quote(&folder.join("claude.cmd").to_string_lossy());
         let source = format!(
-            "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\nif ((Get-Command claude -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source -ine {fake}) {{ throw 'The controlled Claude stand-in did not resolve.' }}\n{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nprompt\n",
+            "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\nif ((Get-Command claude -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source -ine {fake}) {{ throw 'The controlled Claude stand-in did not resolve.' }}\n{}\nclaude\nclaude --resume {ID} --name 'name with spaces'\nWrite-Output 'MANAGEMENT:'\nclaude auth login --claudeai\nprompt\n",
             tc_pty::shell::powershell_source(&settings.to_string_lossy())
         );
         let output = powershell("powershell.exe", &source, &[], Some(&folder)).unwrap();
@@ -464,7 +470,13 @@ mod windows {
             String::from_utf8_lossy(&output.stderr)
         );
         let (launches, _) = launches(&output.stdout, Platform::Windows);
-        assert_eq!(launches.len(), 2, "{stdout}");
+        assert_eq!(launches.len(), 2, "management commands start no session: {stdout}");
+        let management = stdout.split("MANAGEMENT:").nth(1).unwrap().trim_start();
+        assert_eq!(
+            management.lines().next().unwrap().trim(),
+            "auth login --claudeai",
+            "`claude auth` gets neither --settings nor a session ID: {stdout}"
+        );
         assert!(tc_core::session::is_session_id(
             launches[0]["sessionId"].as_str().unwrap()
         ));

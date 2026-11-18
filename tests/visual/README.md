@@ -24,7 +24,10 @@ note with all text-size controls at 1000×680,
 1280×720, and 1440×840 content sizes. Control and icon bounds must agree
 between current Chromium and WebKit within 0.5 CSS pixels; colors must match.
 Current controls must remain within 1.5 CSS pixels of the previous JavaScript UI,
-allowing its fractional line boxes to become whole pixel boxes. Missing controls
+allowing its fractional line boxes to become whole pixel boxes. Deliberate changes
+since that UI are listed under `intended` in `reference.json`, each with its reason:
+controls added in a scene, and the exact bounds change of a control they move or
+resize. Only the comparison with the previous UI applies them. Missing controls
 and viewport mismatches fail the check. `--verify-regression` additionally renders
 the unmodified reference in WebKit and requires the strict parity check to fail.
 For current Chromium and WebKit, it also hides arrowhead fill deliberately and

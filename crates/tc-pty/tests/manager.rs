@@ -138,6 +138,7 @@ fn config(platform: Platform, env: &[(&str, &str)]) -> Config {
         home: cwd(),
         hostname: "TC-Host".into(),
         process_cwd: cwd(),
+        claude_accounts: None,
     }
 }
 
@@ -295,6 +296,34 @@ fn does_not_launch_until_started_and_sends_the_command_once() {
     assert_eq!(launch.env["TERMINAL_CANVAS"], "1");
     assert_eq!((launch.cols, launch.rows), (100, 30));
     assert_eq!(launch.cwd, cwd());
+}
+
+#[test]
+fn a_card_with_a_claude_account_runs_with_that_accounts_folder() {
+    let root = std::env::temp_dir().join(format!("tc-manager-accounts-{}", uuid::Uuid::new_v4()));
+    let mut config = config(
+        Platform::Windows,
+        &[("SystemRoot", r"C:\Windows"), ("claude_config_dir", r"C:\inherited")],
+    );
+    config.claude_accounts = Some(root.clone());
+    let mut h = harness_with(config, None);
+    let mut work = card(json!({ "profile": "claude" }));
+    work["claudeAccount"] = json!("Work");
+    h.start(&work).unwrap();
+    let env = h.launch(0).env;
+    let folder = root.join("Work");
+    assert_eq!(env["CLAUDE_CONFIG_DIR"], folder.to_string_lossy());
+    assert_eq!(
+        env.get("claude_config_dir"),
+        None,
+        "an inherited setting in any case is replaced"
+    );
+    assert!(folder.is_dir(), "the account folder is created on first use");
+    // Without an account, the shell keeps the inherited setting.
+    h.start(&card(json!({ "profile": "claude" }))).unwrap();
+    assert_eq!(h.launch(1).env["claude_config_dir"], r"C:\inherited");
+    assert_eq!(h.launch(1).env.get("CLAUDE_CONFIG_DIR"), None);
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

@@ -37,6 +37,7 @@ macro_rules! string_enum {
     };
 }
 
+pub mod accounts;
 pub mod assets;
 pub mod atomic;
 pub mod dirs;
