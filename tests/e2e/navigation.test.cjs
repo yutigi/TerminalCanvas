@@ -69,3 +69,51 @@ test('native Alt+arrow navigation selects terminals without typing, and Enter / 
     await key(h.page, 'Enter');
     assert.equal((await view()).typingIn, left.id);
 });
+
+test('native terminal switcher isolates shell keys, restores focus, and reveals duplicate titles without typing', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const left = await startTerminal(h.page, { title: 'Same title', x: 0, y: 0 });
+    const right = await startTerminal(h.page, { title: 'Same title', x: 2400, y: 0 });
+    await h.page.evaluate(id => {
+        setFocus(null); workspace.camera = { x: 120, y: 60, z: .65 }; renderCamera(); select(id);
+        $('#outline-toggle').click(); setSidebarCollapsed(true);
+    }, left.id);
+    await key(h.page, 'Control+Shift+p');
+    const query = h.page.locator('#switcher-query'), dialog = h.page.locator('#terminal-switcher');
+    await query.waitFor({ state: 'visible' });
+    assert.equal(await query.evaluate(node => document.activeElement === node), true);
+    assert.equal(await h.page.locator('#sidebar').isVisible(), false, 'the switcher works with the sidebar hidden');
+    await h.page.keyboard.type('SWITCHER_QUERY_MUST_STAY_LOCAL');
+    assert.equal(await h.page.locator('#switcher-status').textContent(), 'No matching terminals.');
+    await key(h.page, 'Enter');
+    assert.equal(await dialog.evaluate(node => node.open), true, 'no-match confirmation keeps the query open');
+    await key(h.page, 'Escape');
+    assert.equal(await h.page.evaluate(id => sessions.get(id).element.contains(document.activeElement), left.id), true);
+    await h.page.keyboard.type("Write-Output 'SWITCHER_RESTORED_OK'");
+    await key(h.page, 'Enter');
+    await until(async () => hasOutputLine(await h.output(left.id), 'SWITCHER_RESTORED_OK'), 'Cancellation did not restore shell input.');
+    assert.equal((await h.output()).includes('SWITCHER_QUERY_MUST_STAY_LOCAL'), false, 'query keystrokes leaked to a PTY');
+    await h.page.evaluate(() => setSidebarCollapsed(false));
+    assert.equal(await h.page.locator('#outline-section').isVisible(), false);
+    await h.page.locator('#find-terminal').click();
+    assert.equal(await dialog.evaluate(node => node.open), true, 'Find terminal stays available beside the collapsed section');
+    await h.page.keyboard.type('same title');
+    await key(h.page, 'ArrowDown');
+    assert.equal(await query.getAttribute('aria-activedescendant'), `switcher-option-${right.id}`);
+    assert.equal(await h.page.locator('[role="option"][aria-selected="true"]').count(), 1);
+    await screenshot(h.page, 'terminal-switcher');
+    await key(h.page, 'Enter');
+    const shown = await h.page.evaluate(id => {
+        const area = viewport.getBoundingClientRect(), rect = sessions.get(id).element.getBoundingClientRect();
+        return { selected, z: workspace.camera.z, board: document.activeElement === viewport,
+            highlighted: sessions.get(id).element.classList.contains('keyboard-current'),
+            visible: rect.left >= area.left && rect.right <= area.right && rect.top >= area.top && rect.bottom <= area.bottom };
+    }, right.id);
+    assert.deepEqual(shown, { selected: right.id, z: .65, board: true, highlighted: true, visible: true });
+    await key(h.page, 'Enter');
+    await h.page.keyboard.type("Write-Output 'SWITCHER_RIGHT_OK'");
+    await key(h.page, 'Enter');
+    await until(async () => hasOutputLine(await h.output(right.id), 'SWITCHER_RIGHT_OK'), 'Explicit Enter did not move typing into the chosen shell.');
+    assert.equal(hasOutputLine(await h.output(left.id), 'SWITCHER_RIGHT_OK'), false);
+    assert.deepEqual(h.errors, []);
+});
