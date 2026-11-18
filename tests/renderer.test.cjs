@@ -2469,3 +2469,74 @@ test('a terminal revealed from the keyboard clears the minimap and toolbars', as
     for (const box of overlays) assert.equal(vm.runInContext('Geometry', context).intersects(shown, box), false, JSON.stringify({ shown, box }));
     assert.ok(shown.x >= 24 && shown.y >= 24 && shown.x + shown.w <= 1100 - 24 && shown.y + shown.h <= 720 - 24, JSON.stringify(shown));
 });
+
+const AGENT_TARGETS = [
+    { id: 'claude', name: 'Claude Code', folders: ['C:\Users\me\.claude\skills'], detected: ['Claude Code'], status: 'missing' },
+    { id: 'agents', name: 'Codex, Gemini CLI, opencode, and other agents', folders: ['C:\Users\me\.agents\skills'], detected: [], status: 'missing' },
+];
+const agentRows = elements => elements.get('#agent-targets').children;
+const agentBox = row => row.children[0];
+
+test('the first launch offers the agent setup once and declining it is remembered', async () => {
+    const respond = (action, payload) => action === 'initialize'
+        ? { workspace: createWorkspace(), profiles: PROFILES, home: '', platform: 'win32', agentSetup: true }
+        : action === 'agent-setup' ? { targets: structuredClone(AGENT_TARGETS) } : null;
+    const { calls, elements } = await boot(createWorkspace(), { respond });
+    await flush();
+    assert.equal(elements.get('#agent-dialog').open, true);
+    assert.deepEqual(agentRows(elements).map(row => agentBox(row).value), ['claude', 'agents']);
+    assert.deepEqual(agentRows(elements).map(row => agentBox(row).checked), [true, false], 'what this computer uses is preselected');
+    assert.match(agentRows(elements)[1].children[1].children[1].textContent, /Not found/);
+    // Not now, the close button, and Escape all close the dialog; each declines the offer.
+    elements.get('#agent-dialog').close(); elements.get('#agent-dialog').dispatch('close'); await flush();
+    assert.deepEqual(structuredClone(calls.filter(c => c.action === 'agent-setup').map(c => c.payload)), [{}, { dismiss: true }]);
+    // Reopened from the sidebar, closing it records nothing more.
+    elements.get('#agent-setup').onclick(); await flush();
+    assert.equal(elements.get('#agent-dialog').open, true);
+    elements.get('#agent-dialog').close(); elements.get('#agent-dialog').dispatch('close'); await flush();
+    assert.deepEqual(structuredClone(calls.filter(c => c.action === 'agent-setup').map(c => c.payload)), [{}, { dismiss: true }, {}]);
+});
+
+test('Settings › Set up AI agents installs the skill where the user chose and reports failures in the dialog', async () => {
+    let fail = true;
+    const targets = structuredClone(AGENT_TARGETS);
+    targets[0].status = 'current'; targets[1].detected = ['Codex']; targets[1].status = 'outdated';
+    const respond = (action, payload) => action !== 'agent-setup' ? null
+        : payload.install && fail ? { error: 'Could not install the skill in C:\Users\me\.agents\skills\terminal-canvas\SKILL.md: Access is denied.' }
+            : { targets, installed: payload.install || [] };
+    const { calls, elements } = await boot(createWorkspace(), { respond });
+    assert.deepEqual(calls.map(c => c.action), ['initialize'], 'the setup is not offered after the first launch');
+    // The footer's gear opens the Settings menu, whose first item is the agent setup.
+    elements.get('#settings-menu').hidden = true; // as the markup starts it
+    elements.get('#settings').onclick();
+    assert.equal(elements.get('#settings-menu').hidden, false);
+    assert.equal(elements.get('#settings').attributes.get('aria-expanded'), 'true');
+    elements.get('#settings').onclick();
+    assert.equal(elements.get('#settings-menu').hidden, true, 'the gear also closes it');
+    elements.get('#settings').onclick();
+    elements.get('#settings-menu').dispatch('keydown', { key: 'Escape' });
+    assert.equal(elements.get('#settings-menu').hidden, true, 'Escape closes it');
+    elements.get('#settings').onclick();
+    elements.get('#agent-setup').onclick(); await flush();
+    assert.equal(elements.get('#settings-menu').hidden, true, 'choosing an item closes it');
+    assert.equal(elements.get('#settings').attributes.get('aria-expanded'), 'false');
+    assert.equal(elements.get('#agent-dialog').open, true);
+    assert.deepEqual(agentRows(elements).map(row => agentBox(row).checked), [false, true], 'installed copies are not preselected');
+    assert.equal(agentRows(elements)[1].children[1].children[0].children[1].textContent, 'UPDATE');
+    agentBox(agentRows(elements)[0]).checked = true;
+    elements.get('#agent-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(elements.get('#agent-dialog').open, true);
+    assert.equal(elements.get('#agent-error').hidden, false);
+    assert.match(elements.get('#agent-error').textContent, /Access is denied/);
+    fail = false;
+    elements.get('#agent-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(elements.get('#agent-dialog').open, false);
+    assert.deepEqual(structuredClone(calls.filter(c => c.action === 'agent-setup').map(c => c.payload)).slice(1), [{ install: ['claude', 'agents'] }, { install: ['claude', 'agents'] }]);
+    assert.match(elements.get('#toast').textContent, /installed for Claude Code and Codex, Gemini CLI, opencode, and other agents/);
+    // Nothing chosen only closes the dialog.
+    elements.get('#agent-setup').onclick(); await flush();
+    agentRows(elements).forEach(row => { agentBox(row).checked = false; });
+    elements.get('#agent-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(elements.get('#agent-dialog').open, false);
+    assert.equal(calls.filter(c => c.action === 'agent-setup').length, 4);
+});

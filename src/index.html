@@ -79,7 +79,8 @@
                 <button id="canvas-menu-find" type="button" role="menuitem" tabindex="-1"><span data-icon="search"></span>Find terminal…</button>
             </div>
         </section>
-        <footer><div><span class="footer-brand" data-icon="terminal"></span><span id="footer-hint">Drag to explore · Ctrl + scroll to zoom</span></div><div><span id="terminal-total">0 terminals</span><span class="bar-divider"></span><span id="runtime-label">Desktop workspace</span><i class="status-dot"></i></div></footer>
+        <footer><div><span class="footer-brand" data-icon="terminal"></span><span id="footer-hint">Drag to explore · Ctrl + scroll to zoom</span></div><div><span id="terminal-total">0 terminals</span><span class="bar-divider"></span><span id="runtime-label">Desktop workspace</span><i class="status-dot"></i><span class="bar-divider"></span><button id="settings" class="footer-button" title="Settings" aria-label="Settings" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"><span data-icon="settings"></span></button></div></footer>
+        <div id="settings-menu" class="settings-menu" role="menu" aria-label="Settings" hidden><div class="settings-menu-label">SETTINGS</div><button id="agent-setup" role="menuitem"><span data-icon="spark"></span><span>Set up AI agents…<small>Install the Terminal Canvas skill for Claude Code, Codex, and others</small></span></button></div>
     </main>
     <dialog id="launch-dialog">
         <form id="launch-form">
@@ -104,6 +105,16 @@
             <p class="field-hint">Each account keeps its own browser sign-in, settings, and session history, so you sign in once per account. A change takes effect the next time the terminal starts.</p>
             <p id="account-error" class="form-error" role="alert" hidden></p>
             <div class="dialog-footer"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Save</button></div>
+        </form>
+    </dialog>
+    <dialog id="agent-dialog">
+        <form id="agent-form">
+            <div class="dialog-heading"><span class="dialog-symbol" data-icon="spark"></span><button type="button" class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div>
+            <div class="eyebrow">TEACH YOUR AGENTS THE CANVAS</div><h2>Set up AI agents</h2><p class="dialog-description">Install the Terminal Canvas skill for every session. Agents then open terminals linked to their own on the canvas, run helpers side by side, and hand work over to a fresh Claude Code, Codex, or Gemini session.</p>
+            <div id="agent-targets" class="agent-targets" role="group" aria-label="Where to install the skill"></div>
+            <p class="field-hint">Writes one <code>terminal-canvas/SKILL.md</code> in each folder and leaves your other skills alone. Agents load it in sessions started afterward. Run this again from <strong>Settings</strong> (the gear at the bottom right) after an update.</p>
+            <p id="agent-error" class="form-error" role="alert" hidden></p>
+            <div class="dialog-footer"><button type="button" class="button" data-close>Not now</button><button type="submit" class="button primary" id="agent-install"><span data-icon="package"></span>Install skill</button></div>
         </form>
     </dialog>
     <dialog id="info-dialog"><div class="dialog-heading"><span id="info-icon" class="dialog-symbol" data-icon="help"></span><button class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div><h2 id="info-title"></h2><div id="info-content"></div><div class="dialog-footer"><button class="button primary" data-close>Got it</button></div></dialog>
