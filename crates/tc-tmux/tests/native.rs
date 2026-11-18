@@ -169,6 +169,32 @@ fn reply(client: &mut Client, command: Command) -> Vec<Vec<u8>> {
     lines.unwrap()
 }
 
+fn send_output(client: &mut Client, pane: PaneId, script: &str, marker: &[u8]) -> Vec<u8> {
+    // The marker must be assembled by the shell, so terminal echo cannot satisfy the wait.
+    assert!(!script.as_bytes().windows(marker.len()).any(|w| w == marker));
+    let request = client.submit(Command::send_keys(pane, script).unwrap()).unwrap();
+    let mut output = Vec::new();
+    let mut answered = false;
+    until(client, |event| {
+        match event {
+            ClientEvent::Protocol {
+                event: Event::Output { pane: id, bytes, .. },
+                ..
+            } if *id == pane => output.extend(bytes),
+            ClientEvent::Protocol {
+                request: Some(id),
+                event: Event::Reply { error, lines, .. },
+            } if *id == request => {
+                assert!(!error, "send-keys failed: {lines:?}");
+                answered = true;
+            }
+            _ => {}
+        }
+        answered && output.windows(marker.len()).any(|w| w == marker)
+    });
+    output
+}
+
 #[test]
 #[ignore = "requires native tmux and creates only a disposable private server"]
 fn pipe_protocol_osc_sizing_subscriptions_and_detach_survival() {
@@ -193,29 +219,17 @@ fn pipe_protocol_osc_sizing_subscriptions_and_detach_survival() {
     });
 
     // Real send-keys parsing must not interpret semicolons, braces or quotes as tmux commands.
-    // Disable echo before the payload so output evidence cannot be supplied by the shell's echo.
-    reply(&mut client, Command::send_keys(pane, "stty -echo\r").unwrap());
-    let script = "printf '\\033]7;file:///tmp\\007\\033]777;tc-ready\\007\\360\\237\\230\\200\\nTC_SPIKE_MARKER\\n'; printf '%s\\n' \"; #{session_name} ' $HOME\"\r";
-    let request = client.submit(Command::send_keys(pane, script).unwrap()).unwrap();
-    let mut output: Vec<u8> = Vec::new();
-    let mut answered = false;
-    until(&client, |event| {
-        match event {
-            ClientEvent::Protocol {
-                event: Event::Output { pane: id, bytes, .. },
-                ..
-            } if *id == pane => output.extend(bytes),
-            ClientEvent::Protocol {
-                request: Some(id),
-                event: Event::Reply { error: false, .. },
-            } if *id == request => answered = true,
-            _ => {}
-        }
-        answered
-            && output
-                .windows(b"TC_SPIKE_MARKER".len())
-                .any(|w| w == b"TC_SPIKE_MARKER")
-    });
+    // A send-keys reply acknowledges delivery, not shell execution. Wait for shell-produced
+    // evidence that echo is disabled before sending the payload; retain output on either side
+    // of the reply. Neither marker occurs verbatim in input that the terminal could echo.
+    send_output(
+        &mut client,
+        pane,
+        "stty -echo && printf 'TC_ECHO_%s\\n' OFF\r",
+        b"TC_ECHO_OFF",
+    );
+    let script = "printf '\\033]7;file:///tmp\\007\\033]777;tc-ready\\007\\360\\237\\230\\200\\n'; printf '%s\\n' \"; #{session_name} ' $HOME\"; printf 'TC_SPIKE_%s\\n' MARKER\r";
+    let output = send_output(&mut client, pane, script, b"TC_SPIKE_MARKER");
     assert!(
         output
             .windows(b"\x1b]7;file:///tmp\x07\x1b]777;tc-ready\x07".len())
