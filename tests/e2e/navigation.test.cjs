@@ -76,11 +76,13 @@ test('native terminal switcher isolates shell keys, restores focus, and reveals 
     const right = await startTerminal(h.page, { title: 'Same title', x: 2400, y: 0 });
     await h.page.evaluate(id => {
         setFocus(null); workspace.camera = { x: 120, y: 60, z: .65 }; renderCamera(); select(id);
+        $('#outline-toggle').click(); setSidebarCollapsed(true);
     }, left.id);
     await key(h.page, 'Control+Shift+p');
     const query = h.page.locator('#switcher-query'), dialog = h.page.locator('#terminal-switcher');
     await query.waitFor({ state: 'visible' });
     assert.equal(await query.evaluate(node => document.activeElement === node), true);
+    assert.equal(await h.page.locator('#sidebar').isVisible(), false, 'the switcher works with the sidebar hidden');
     await h.page.keyboard.type('SWITCHER_QUERY_MUST_STAY_LOCAL');
     assert.equal(await h.page.locator('#switcher-status').textContent(), 'No matching terminals.');
     await key(h.page, 'Enter');
@@ -91,7 +93,10 @@ test('native terminal switcher isolates shell keys, restores focus, and reveals 
     await key(h.page, 'Enter');
     await until(async () => hasOutputLine(await h.output(left.id), 'SWITCHER_RESTORED_OK'), 'Cancellation did not restore shell input.');
     assert.equal((await h.output()).includes('SWITCHER_QUERY_MUST_STAY_LOCAL'), false, 'query keystrokes leaked to a PTY');
-    await key(h.page, 'Control+Shift+p');
+    await h.page.evaluate(() => setSidebarCollapsed(false));
+    assert.equal(await h.page.locator('#outline-section').isVisible(), false);
+    await h.page.locator('#find-terminal').click();
+    assert.equal(await dialog.evaluate(node => node.open), true, 'Find terminal stays available beside the collapsed section');
     await h.page.keyboard.type('same title');
     await key(h.page, 'ArrowDown');
     assert.equal(await query.getAttribute('aria-activedescendant'), `switcher-option-${right.id}`);

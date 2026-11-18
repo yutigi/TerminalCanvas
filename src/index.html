@@ -21,20 +21,27 @@
     <script src="./renderer.js" defer></script>
 </head>
 <body>
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Workspace sidebar">
         <div class="brand"><img src="./assets/logo.svg" alt=""><span>terminal<span class="brand-light">canvas</span></span><span class="version">ALPHA</span></div>
         <div class="workspace-badge"><span class="workspace-mark">TC</span><div>Personal workspace<small><i class="status-dot"></i> Local on this device</small></div></div>
-        <div class="section-label">WORKSPACE</div>
-        <button class="nav-item active" id="canvas-nav"><span data-icon="canvas"></span>Your canvas<span class="badge" id="card-count">0</span></button>
-        <button class="nav-item" id="open-workspace"><span data-icon="folder"></span>Open workspace<kbd>⌃ O</kbd></button>
-        <button class="nav-item" id="new-workspace"><span data-icon="plus"></span>New workspace</button>
-        <button class="nav-item" id="export-workspace" title="Save a copy with images embedded so it works on another computer"><span data-icon="package"></span>Export portable copy</button>
-        <button class="nav-item" id="clean-images" title="Delete stored images that this workspace no longer uses"><span data-icon="trash"></span>Clean up images</button>
-        <div class="section-heading"><span class="section-label">LAUNCH A TERMINAL</span><span class="tiny-label">+</span></div>
+        <button id="workspace-toggle" class="section-label section-disclosure workspace-disclosure" aria-expanded="true" aria-controls="workspace-section">WORKSPACE</button>
+        <div id="workspace-section" class="sidebar-section">
+            <button class="nav-item active" id="canvas-nav"><span data-icon="canvas"></span>Your canvas<span class="badge" id="card-count">0</span></button>
+            <button class="nav-item" id="open-workspace"><span data-icon="folder"></span>Open workspace<kbd>⌃ O</kbd></button>
+            <button class="nav-item" id="new-workspace"><span data-icon="plus"></span>New workspace</button>
+            <button class="nav-item" id="export-workspace" title="Save a copy with images embedded so it works on another computer"><span data-icon="package"></span>Export portable copy</button>
+            <button class="nav-item" id="clean-images" title="Delete stored images that this workspace no longer uses"><span data-icon="trash"></span>Clean up images</button>
+        </div>
+        <button id="profiles-toggle" class="section-heading section-disclosure" aria-expanded="true" aria-controls="profile-list"><span class="section-label">LAUNCH A TERMINAL</span><span class="tiny-label disclosure-mark" aria-hidden="true">⌄</span></button>
         <div id="profile-list" class="profile-list"></div>
-        <div class="section-heading terminal-heading"><span class="section-label">ON THIS CANVAS</span><button id="find-terminal" class="icon-button" aria-label="Find terminal" aria-haspopup="dialog" aria-controls="terminal-switcher" aria-keyshortcuts="Control+Shift+P Meta+Shift+P" title="Find terminal (Ctrl+Shift+P / Command+Shift+P)"><span data-icon="search"></span></button><span id="outline-count" class="tiny-label">00</span></div>
-        <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find a terminal…" aria-label="Find a terminal"><kbd>/</kbd></label>
-        <div id="outline" class="outline"><p class="outline-empty">Your terminals will appear here.</p></div>
+        <div class="section-heading terminal-heading terminal-heading-row">
+            <button id="outline-toggle" class="section-disclosure" aria-expanded="true" aria-controls="outline-section"><span class="section-label">ON THIS CANVAS</span><span id="outline-count" class="tiny-label">00</span></button>
+            <button id="find-terminal" class="icon-button" aria-label="Find terminal" aria-haspopup="dialog" aria-controls="terminal-switcher" aria-keyshortcuts="Control+Shift+P Meta+Shift+P" title="Find terminal (Ctrl+Shift+P / Command+Shift+P)"><span data-icon="search"></span></button>
+        </div>
+        <div id="outline-section" class="sidebar-section">
+            <label class="search"><span data-icon="search"></span><input id="search" placeholder="Find a terminal…" aria-label="Find a terminal"><kbd>/</kbd></label>
+            <div id="outline" class="outline"><p class="outline-empty">Your terminals will appear here.</p></div>
+        </div>
         <div class="sidebar-bottom">
             <button id="plugins" class="plugin-card"><span class="plugin-symbol" data-icon="puzzle"></span><span>Room to grow<small>WebCanvas integration planned</small></span><span data-icon="arrow-up-right"></span></button>
             <button class="nav-item" id="help"><span data-icon="help"></span>Guide & shortcuts<span data-icon="arrow-up-right"></span></button>
@@ -43,7 +50,7 @@
     </aside>
     <main>
         <header class="topbar">
-            <div class="board-heading"><div class="board-icon" data-icon="canvas"></div><div><div class="breadcrumb">Workspace <span>/</span> Canvas</div><input id="workspace-name" maxlength="100" aria-label="Workspace name" value="My AI workspace"></div></div>
+            <div class="board-heading"><button id="sidebar-toggle" class="board-icon" data-icon="canvas" title="Hide sidebar (Ctrl+Shift+B)" aria-label="Hide sidebar" aria-expanded="true" aria-controls="sidebar" aria-keyshortcuts="Control+Shift+B Meta+Shift+B"></button><div><div class="breadcrumb">Workspace <span>/</span> Canvas</div><input id="workspace-name" maxlength="100" aria-label="Workspace name" value="My AI workspace"></div></div>
             <div class="top-actions"><span id="save-state" class="save-state"><i class="status-dot"></i>Saved locally</span><button class="button update" id="update" hidden></button><button class="button" id="save"><span data-icon="save"></span>Save workspace</button><button class="button primary" id="add-terminal"><span data-icon="plus"></span>New terminal</button></div>
         </header>
         <div class="canvas-bar"><div class="canvas-caption"><span class="status-dot"></span><strong id="running-count">0 running</strong><span class="bar-divider"></span><span>Many minds. One workspace.</span></div><div class="bar-actions"><button id="arrange"><span data-icon="grid"></span>Arrange</button><button id="focus-toggle" disabled><span data-icon="maximize"></span>Focus</button><span class="bar-divider"></span><button id="fit"><span data-icon="scan"></span>Fit canvas</button></div></div>

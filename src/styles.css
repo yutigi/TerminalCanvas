@@ -1,4 +1,12 @@
 @import url('./typography.css');
+.sidebar-section{display:contents}
+.section-disclosure{padding:0;text-align:left;flex-shrink:0}
+.workspace-disclosure{display:flex;align-items:center;justify-content:space-between;padding:0 10px}
+.workspace-disclosure .badge{letter-spacing:normal;font-weight:400}
+.section-disclosure:hover{color:var(--accent)}
+.section-disclosure:hover .section-label{color:inherit}
+.section-disclosure[aria-expanded="false"] .disclosure-mark{transform:rotate(-90deg)}
+.board-icon:hover{background:#303b2d}
 .minimap{position:absolute;right:20px;bottom:25px;width:220px;padding:10px;background:#1c2128f5;border:1px solid #39404a;border-radius:9px;box-shadow:0 8px 25px #0004;z-index:10;cursor:default;user-select:none}
 .minimap-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:8px;letter-spacing:1px;color:#a6b39c}
 .minimap-heading span:last-child{font-size:9px;letter-spacing:0;color:#768192}
@@ -23,6 +31,8 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 @media(max-width:1200px){:root{--sidebar:222px}.sidebar{padding-left:12px;padding-right:12px}.brand{font-size:14px;gap:7px}.version{font-size:6px}.topbar{padding:0 22px}.save-state{display:none}.canvas-caption>span:last-child{display:none}.canvas-bar{padding:0 22px}.top-actions{gap:7px}.empty-state h1{font-size:31px}}@media(max-height:800px){.sidebar{padding-top:20px}.workspace-badge{margin:19px 0}.section-heading{margin-top:18px}.sidebar-bottom{padding-top:10px}.plugin-card{display:none}.empty-state{padding-bottom:55px}.terminal-art{margin-top:18px;height:100px;transform:scale(.85)}.empty-state h1{font-size:29px}.empty-features{margin-top:21px}.topbar{height:79px}}@media(prefers-reduced-motion:no-preference){button{transition:background .12s,color .12s,border-color .12s}}
 
 /* Terminal switcher: focus stays on its combobox while stable-ID options are selected. */
+.terminal-heading-row{gap:4px}
+.terminal-heading-row>.section-disclosure{display:flex;align-items:center;justify-content:space-between;flex:1;min-width:0}
 #terminal-switcher{width:620px;max-height:calc(100vh - 50px);overflow:auto}
 .switcher-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .switcher-heading h2{margin:0}

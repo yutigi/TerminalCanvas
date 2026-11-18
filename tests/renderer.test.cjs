@@ -24,7 +24,13 @@ class Element {
         this.dataset = {}; this.lastChild = { textContent: '' }; this.clientWidth = 1100; this.clientHeight = 720;
         this.listeners = new Map(); this.attributes = new Map(); this.captured = new Set();
     }
-    append(...children) { this.children.push(...children); }
+    append(...children) {
+        for (const child of children) {
+            if (child.parentElement) child.parentElement.children = child.parentElement.children.filter(node => node !== child);
+            child.parentElement = this;
+            this.children.push(child);
+        }
+    }
     prepend(child) { this.children.unshift(child); }
     replaceChildren(...children) { this.children = children; }
     get childElementCount() { return this.children.length; }
@@ -52,6 +58,8 @@ class Element {
     setAttribute(name, value) { this.attributes.set(name, value); }
     removeAttribute(name) { this.attributes.delete(name); }
     closest() { return null; }
+    contains(element) { return !!element && (element === this || this.children.some(child => child.contains?.(element))); }
+    click() { this.onclick?.(); }
     focus() { this.focusCount = (this.focusCount || 0) + 1; if (this.ownerDocument) this.ownerDocument.activeElement = this; }
     blur() { this.dispatch('blur'); }
     select() {}
@@ -104,11 +112,12 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     });
     for (const element of elements.values()) element.ownerDocument = document;
     const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
-    const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame() {} });
+    const frames = [];
+    const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame: callback => frames.push(callback) });
     // Load renderer scripts in the same order as index.html.
     for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)" defer>/g)) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', script), 'utf8'), context);
     await new Promise(resolve => setImmediate(resolve));
-    return { elements, calls, context, onEvent, document, window, bridge, documentListeners, event: payload => bridge.event(payload) };
+    return { elements, calls, context, onEvent, document, window, bridge, documentListeners, frames, event: payload => bridge.event(payload) };
 }
 
 test('restored AI sessions offer Resume and a fresh shell without launching anything', async () => {
@@ -1767,6 +1776,162 @@ function navigationKey(context, key, values = {}) {
     return event;
 }
 const insideTerminal = id => ({ closest: selector => (selector.includes('.terminal-card') ? { dataset: { id } } : selector.includes('.xterm') ? {} : null) });
+
+function sidebarStorage(initial) {
+    const values = new Map(initial === undefined ? [] : [['terminal-canvas.sidebar.v1', initial]]);
+    return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+}
+function sidebarViewport({ elements }) {
+    Object.defineProperty(elements.get('#viewport'), 'clientWidth', {
+        get: () => elements.get('#sidebar').hidden ? 1350 : 1100
+    });
+}
+test('sidebar toggling preserves the world center, refreshes minimap and dimensions, and refits running PTYs', async () => {
+    const board = createWorkspace(); board.cards.push(createCard()); board.camera = { x: 30, y: 50, z: .65 };
+    const app = await boot(board, { terminals: true }); sidebarViewport(app);
+    const { context, elements, frames, calls } = app;
+    vm.runInContext(`
+        globalThis.resizes = []; globalThis.proposals = 0;
+        const session = sessions.get(workspace.cards[0].id);
+        session.status = 'running'; session.element.offsetWidth = 660; session.element.offsetHeight = 430;
+        session.fit = { proposeDimensions() { proposals++; return { cols: viewport.clientWidth > 1100 ? 100 : 80, rows: 24 }; } };
+        bridge.resize = (id, cols, rows) => resizes.push({ id, cols, rows });
+    `, context);
+    const center = () => json(context, '({ x: (viewport.clientWidth / 2 - workspace.camera.x) / workspace.camera.z, y: (viewport.clientHeight / 2 - workspace.camera.y) / workspace.camera.z })');
+    const before = center(), miniBefore = json(context, 'minimapLayout.viewport.w');
+    elements.get('#sidebar-toggle').click();
+    assert.equal(elements.get('#sidebar').hidden, true);
+    assert.equal(elements.get('#sidebar-toggle').attributes.get('aria-expanded'), 'false');
+    assert.equal(elements.get('#sidebar-toggle').attributes.get('aria-label'), 'Show sidebar');
+    assert.deepEqual(center(), before);
+    assert.ok(json(context, 'minimapLayout.viewport.w') > miniBefore);
+    for (const callback of frames.splice(0)) callback();
+    assert.equal(json(context, 'resizes.at(-1).cols'), 100);
+    elements.get('#sidebar-toggle').click();
+    for (const callback of frames.splice(0)) callback();
+    assert.deepEqual(center(), before);
+    assert.equal(json(context, 'resizes.at(-1).cols'), 80);
+    assert.equal(json(context, 'workspace.camera.z'), .65);
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'UI toggles do not autosave or call the host');
+});
+
+test('section disclosures recover hidden focus, keep counts visible, and persist across workspaces and restarts', async () => {
+    const storage = sidebarStorage(), board = createWorkspace(); board.cards.push(createCard());
+    const app = await boot(board, { localStorage: storage });
+    const { elements, document, context } = app;
+    elements.get('#sidebar').append(elements.get('#workspace-toggle'), elements.get('#workspace-section'), elements.get('#outline-toggle'), elements.get('#outline-section'));
+    elements.get('#outline-section').append(elements.get('#search'), elements.get('#outline'));
+    elements.get('#workspace-section').append(elements.get('#canvas-nav'));
+    elements.get('#canvas-nav').focus();
+    elements.get('#workspace-toggle').click();
+    assert.equal(document.activeElement, elements.get('#workspace-toggle'));
+    assert.equal(elements.get('#card-count').parentElement, elements.get('#workspace-toggle'));
+    assert.equal(elements.get('#card-count').textContent, 1);
+    elements.get('#search').focus(); elements.get('#outline-toggle').click();
+    assert.equal(document.activeElement, elements.get('#outline-toggle'));
+    assert.equal(elements.get('#outline-section').hidden, true);
+    assert.equal(elements.get('#outline-count').textContent, '01');
+    elements.get('#profiles-toggle').click(); elements.get('#sidebar-toggle').click();
+    assert.equal(document.activeElement, elements.get('#sidebar-toggle'));
+    assert.deepEqual(JSON.parse(storage.getItem('terminal-canvas.sidebar.v1')), { collapsed: true, workspace: true, profiles: true, outline: true });
+    vm.runInContext('loadWorkspace(JSON.parse(JSON.stringify(workspace)))', context);
+    assert.equal(elements.get('#sidebar').hidden, true);
+    const restarted = await boot(createWorkspace(), { localStorage: storage });
+    for (const selector of ['#sidebar', '#workspace-section', '#profile-list', '#outline-section']) assert.equal(restarted.elements.get(selector).hidden, true);
+    for (const selector of ['#workspace-toggle', '#profiles-toggle', '#outline-toggle']) assert.equal(restarted.elements.get(selector).attributes.get('aria-expanded'), 'false');
+    assert.deepEqual(Object.keys(json(context, 'workspace')).sort(), Object.keys(board).sort());
+    elements.get('#workspace-toggle').click();
+    assert.equal(elements.get('#card-count').parentElement, elements.get('#canvas-nav'));
+});
+
+test('slash reveals only the sidebar and outline before focusing search, including in Focus mode', async () => {
+    const board = createWorkspace(); board.cards.push(createCard());
+    const app = await boot(board, { localStorage: sidebarStorage() });
+    const { context, elements, document } = app;
+    context.viewport = elements.get('#viewport');
+    for (const selector of ['#workspace-toggle', '#profiles-toggle', '#outline-toggle', '#sidebar-toggle']) elements.get(selector).click();
+    const search = elements.get('#search'), originalFocus = search.focus.bind(search);
+    search.focus = () => {
+        assert.equal(elements.get('#sidebar').hidden, false);
+        assert.equal(elements.get('#outline-section').hidden, false);
+        originalFocus();
+    };
+    assert.equal(navigationKey(context, '/').prevented, true);
+    assert.equal(document.activeElement, search);
+    assert.equal(elements.get('#workspace-section').hidden, true);
+    assert.equal(elements.get('#profile-list').hidden, true);
+    vm.runInContext('setFocus(workspace.cards[0].id)', context);
+    assert.equal(elements.get('#sidebar').hidden, true);
+    navigationKey(context, '/');
+    assert.equal(elements.get('#sidebar').hidden, false);
+    assert.equal(json(context, '!!focused'), true, 'search leaves the terminal in Focus mode');
+    const count = search.focusCount;
+    for (const selector of ['input', 'textarea', '.xterm', '[contenteditable="true"]']) {
+        navigationKey(context, '/', { target: { closest: query => query.includes(selector) ? {} : null } });
+    }
+    assert.equal(search.focusCount, count, 'slash in editors and terminals stays there');
+});
+
+test('Focus hides the sidebar temporarily, restores manual state, and keeps its toggle available', async () => {
+    const storage = sidebarStorage(), board = createWorkspace(); board.cards.push(createCard(), createCard());
+    const app = await boot(board, { localStorage: storage }); sidebarViewport(app);
+    const { context, elements } = app;
+    const original = json(context, 'workspace.camera');
+    vm.runInContext('setFocus(workspace.cards[0].id); setFocus(workspace.cards[1].id)', context);
+    assert.equal(elements.get('#sidebar').hidden, true);
+    assert.equal(storage.getItem('terminal-canvas.sidebar.v1'), null, 'automatic hiding never persists');
+    vm.runInContext('setFocus(null)', context);
+    assert.equal(elements.get('#sidebar').hidden, false);
+    assert.deepEqual(json(context, 'workspace.camera'), original);
+    elements.get('#sidebar-toggle').click();
+    vm.runInContext('setFocus(workspace.cards[0].id); setFocus(null)', context);
+    assert.equal(elements.get('#sidebar').hidden, true, 'manual hiding survives Focus');
+    vm.runInContext('setFocus(workspace.cards[0].id)', context);
+    elements.get('#sidebar-toggle').click();
+    assert.equal(elements.get('#sidebar').hidden, false, 'the toggle reveals the sidebar during Focus');
+    vm.runInContext('setFocus(workspace.cards[1].id)', context);
+    assert.equal(elements.get('#sidebar').hidden, false, 'switching focused terminals preserves the override');
+    vm.runInContext('setFocus(null); setFocus(workspace.cards[0].id)', context);
+    assert.equal(elements.get('#sidebar').hidden, true, 'a new Focus visit hides it again');
+});
+
+test('Ctrl/Cmd Shift B bypasses xterm and toggles once, while composing, Alt, and dialogs stay untouched', async () => {
+    const board = createWorkspace(); board.cards.push(createCard());
+    const { context, elements } = await boot(board, { terminals: true });
+    context.viewport = elements.get('#viewport');
+    const terminal = vm.runInContext('sessions.get(workspace.cards[0].id).terminal', context);
+    for (const modifier of ['ctrlKey', 'metaKey']) {
+        const key = { type: 'keydown', key: 'B', shiftKey: true, [modifier]: true, target: insideTerminal(board.cards[0].id) };
+        assert.equal(terminal.keyHandler(key), false);
+        const before = elements.get('#sidebar').hidden;
+        assert.equal(navigationKey(context, 'B', key).prevented, true);
+        assert.equal(elements.get('#sidebar').hidden, !before);
+        navigationKey(context, 'B', { ...key, repeat: true });
+        assert.equal(elements.get('#sidebar').hidden, !before);
+        for (const extra of [{ isComposing: true }, { altKey: true }]) {
+            assert.equal(terminal.keyHandler({ ...key, ...extra }), true);
+            navigationKey(context, 'B', { ...key, ...extra });
+            assert.equal(elements.get('#sidebar').hidden, !before);
+        }
+        elements.get('#info-dialog').showModal(); navigationKey(context, 'B', key);
+        assert.equal(elements.get('#sidebar').hidden, !before);
+        elements.get('#info-dialog').close();
+    }
+});
+
+test('sidebar preferences tolerate invalid or blocked storage and camera compensation stays host-valid', async () => {
+    for (const value of ['not JSON', 'null', '[]', '{"collapsed":"true","outline":1,"extra":true}']) {
+        const { elements } = await boot(createWorkspace(), { localStorage: sidebarStorage(value) });
+        assert.equal(elements.get('#sidebar').hidden, false);
+        assert.equal(elements.get('#outline-section').hidden, false);
+    }
+    const app = await boot(createWorkspace(), { localStorage: { getItem() { throw Error('blocked'); }, setItem() { throw Error('full'); } } });
+    sidebarViewport(app);
+    vm.runInContext('workspace.camera.x = 100000', app.context);
+    assert.doesNotThrow(() => app.elements.get('#sidebar-toggle').click());
+    assert.equal(app.elements.get('#sidebar').hidden, true);
+    assert.equal(json(app.context, 'workspace.camera.x'), 100000);
+});
 async function navigationBoard({ cards, items = [], camera = { x: 48, y: 48, z: 1 }, running = true } = {}) {
     const workspace = createWorkspace(); workspace.camera = camera;
     workspace.cards.push(...cards.map(([title, x, y, extra = {}]) => createCard({ title, x, y, w: 660, h: 430, ...extra })));
@@ -1985,6 +2150,23 @@ function switcherState(context) {
 function switcherSearch(elements, value) {
     const query = elements.get('#switcher-query'); query.value = value; query.oninput();
 }
+
+test('switcher shortcut works with a collapsed sidebar and restores focus without changing sidebar preferences', async () => {
+    const { context, elements, document } = await navigationBoard({ cards: [['Shell', 0, 0]] });
+    elements.get('#outline-toggle').click();
+    elements.get('#sidebar-toggle').click();
+    elements.get('#viewport').focus();
+    const preferences = json(context, 'sidebarPreferences');
+    navigationKey(context, 'P', { ctrlKey: true, shiftKey: true });
+    assert.equal(switcherState(context).open, true);
+    assert.equal(document.activeElement, elements.get('#switcher-query'));
+    assert.equal(elements.get('#sidebar').hidden, true);
+    elements.get('#terminal-switcher').dispatch('keydown', { key: 'Escape' });
+    assert.equal(document.activeElement, elements.get('#viewport'));
+    assert.deepEqual(json(context, 'sidebarPreferences'), preferences);
+    assert.equal(elements.get('#outline-section').hidden, true);
+    assert.equal(elements.get('#sidebar').hidden, true);
+});
 
 test('switcher shortcut and accessible button focus the query without taking Ctrl+P, slash, or Focus shortcuts', async () => {
     const { context, elements, id, state } = await navigationBoard({ cards: [['Shell', 0, 0], ['Codex', 2000, 0]] });
