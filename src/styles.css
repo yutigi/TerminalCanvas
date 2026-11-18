@@ -121,6 +121,8 @@ dialog{border:1px solid #3e4751;border-radius:13px;background:#1c2128;color:var(
 .terminal-body .xterm-viewport{scrollbar-color:#414b59 var(--terminal-background,#15191f)}
 .theme-control{display:flex;align-items:center;gap:6px;font-size:10px;color:#b4bfcf;white-space:nowrap}
 .theme-control select{max-width:145px;height:26px;padding:0 5px;border:1px solid #536174;border-radius:4px;background:#21262d;color:#d5dce5;font:inherit}
+/* Native select intrinsic widths differ by 1px between Chromium and WebKit. */
+#workspace-theme{width:75px}
 .theme-control select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .item-text.size-small{font-size:12px}.item-text.size-large{font-size:24px}.item-text.size-huge{font-size:36px}
 .item-note.size-small{font-size:11px}.item-note.size-large{font-size:20px}.item-note.size-huge{font-size:30px}
