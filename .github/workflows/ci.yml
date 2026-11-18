@@ -52,7 +52,9 @@ jobs:
 
       - name: Install native tmux on macOS
         if: runner.os == 'macOS'
-        run: brew list tmux >/dev/null 2>&1 || brew install tmux
+        run: |
+          brew list tmux >/dev/null 2>&1 || brew install tmux
+          brew list utf8proc >/dev/null 2>&1 || brew install utf8proc
 
       - name: Probe current tmux on a private socket
         if: runner.os != 'Windows'
@@ -68,10 +70,15 @@ jobs:
           echo "e4fd347843bd0772c4f48d6dde625b0b109b7a380ff15db21e97c11a4dcdf93f  $RUNNER_TEMP/tmux-3.3a.tar.gz" | shasum -a 256 -c -
           tar -xzf "$RUNNER_TEMP/tmux-3.3a.tar.gz" -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP/tmux-3.3a"
+          configure_args=()
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            export PKG_CONFIG_PATH="$(brew --prefix libevent)/lib/pkgconfig:$(brew --prefix ncurses)/lib/pkgconfig"
+            export PKG_CONFIG_PATH="$(brew --prefix libevent)/lib/pkgconfig:$(brew --prefix ncurses)/lib/pkgconfig:$(brew --prefix utf8proc)/lib/pkgconfig"
+            # tmux 3.3a probes utf8proc directly, without pkg-config.
+            export CPPFLAGS="-I$(brew --prefix utf8proc)/include ${CPPFLAGS:-}"
+            export LDFLAGS="-L$(brew --prefix utf8proc)/lib ${LDFLAGS:-}"
+            configure_args+=(--enable-utf8proc)
           fi
-          ./configure --prefix="$RUNNER_TEMP/tc-tmux-minimum"
+          ./configure --prefix="$RUNNER_TEMP/tc-tmux-minimum" "${configure_args[@]}"
           make -j2
           make install
 
