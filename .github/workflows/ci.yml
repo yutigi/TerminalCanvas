@@ -18,11 +18,15 @@ concurrency:
 jobs:
   test:
     name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          # Keep the check name stable while avoiding the hosted ARM64 capacity queue.
+          - os: macos-latest
+            runner: macos-26-intel
     env:
       CARGO_TERM_COLOR: always
     steps:
