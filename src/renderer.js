@@ -176,7 +176,7 @@ function renderMinimap() {
         node.className = `minimap-card${selection.has(card.id) ? ' selected' : ''}${['running', 'starting'].includes(status) ? ' running' : ''}`;
         node.style.setProperty('--profile-color', profiles.find(profile => profile.id === card.profile).color);
         applyItemStyle(card, node);
-        node.title = card.title;
+        node.title = terminalDisplayTitle(card);
         positionMinimapElement(node, minimapLayout.cards[index]);
         return node;
     }).concat(boardItems.map((item, index) => {
@@ -247,7 +247,22 @@ function renderCardGeometry(card) {
 function renderGeometry(card) {
     renderCardGeometry(card); renderLines(); renderSelectionBox(); renderMinimap();
 }
+// Today card.title is the effective title. Automatic-title producers must apply manual-title
+// precedence before updating it, then call refresh() so both searches update without losing focus.
+function terminalDisplayTitle(card) { return card.title; }
+function matchingTerminals(query) {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return workspace.cards.filter(card => {
+        const profile = profiles.find(p => p.id === card.profile);
+        const text = [terminalDisplayTitle(card), card.cwd, sessions.get(card.id)?.cwd, card.profile, profile?.name].join(' ').toLowerCase();
+        return terms.every(term => text.includes(term));
+    });
+}
 function refresh() {
+    for (const card of workspace.cards) {
+        const title = sessions.get(card.id)?.element.querySelector('.card-title');
+        if (title) title.textContent = terminalDisplayTitle(card);
+    }
     renderMinimap();
     const running = [...sessions.values()].filter(s => ['running', 'starting'].includes(s.status)).length;
     $('#card-count').textContent = workspace.cards.length;
@@ -256,16 +271,15 @@ function refresh() {
     $('#terminal-total').textContent = `${workspace.cards.length} terminal${workspace.cards.length === 1 ? '' : 's'}`;
     $('#empty-state').hidden = workspace.cards.length + workspace.items.length > 0;
     $('#focus-toggle').disabled = !findCard(selected);
-    const filter = $('#search').value.toLowerCase();
     const outline = $('#outline');
     outline.replaceChildren();
-    workspace.cards.filter(c => `${c.title} ${c.cwd} ${c.profile}`.toLowerCase().includes(filter)).forEach(card => {
+    matchingTerminals($('#search').value).forEach(card => {
         const s = sessions.get(card.id);
         const button = document.createElement('button');
         button.className = `outline-item ${selection.has(card.id) ? 'selected' : ''} ${s.status === 'running' ? 'running' : ''}`;
         applyItemStyle(card, button);
         button.append(mark(profiles.find(p => p.id === card.profile)));
-        const label = document.createElement('span'); label.className = 'label'; label.textContent = card.title;
+        const label = document.createElement('span'); label.className = 'label'; label.textContent = terminalDisplayTitle(card);
         const dot = document.createElement('span'); dot.className = 'state-dot'; dot.title = s.status;
         button.append(label, dot);
         button.onclick = () => { if (focused) setFocus(null); showTerminal(card.id); };
@@ -276,6 +290,7 @@ function refresh() {
         p.textContent = workspace.cards.length ? 'No matching terminals.' : 'Your terminals will appear here.';
         outline.append(p);
     }
+    renderTerminalSwitcher();
 }
 // Selecting one element selects its whole group. Shift toggles the group in or out of the selection.
 // `type: false` selects a terminal without moving the keyboard into it.
@@ -434,6 +449,91 @@ function showTerminal(id) {
     viewport.focus({ preventScroll: true });
     return true;
 }
+const terminalSwitcher = $('#terminal-switcher');
+const switcherQuery = $('#switcher-query');
+let switcherActive = null, switcherMatches = [], switcherReturnFocus = null;
+// Shared entry point for the UI button, shortcut, and the context menu (#37).
+function openTerminalSwitcher() {
+    if (!ready || boardBusy() || document.querySelector('dialog[open]')) return false;
+    switcherReturnFocus = document.activeElement;
+    switcherQuery.value = '';
+    switcherActive = focused || selected;
+    terminalSwitcher.showModal();
+    switcherQuery.setAttribute('aria-expanded', 'true');
+    renderTerminalSwitcher();
+    switcherQuery.focus({ preventScroll: true });
+    return true;
+}
+function renderTerminalSwitcher() {
+    if (!terminalSwitcher.open) return;
+    const previousIndex = switcherMatches.indexOf(switcherActive);
+    switcherMatches = matchingTerminals(switcherQuery.value).map(card => card.id);
+    if (!switcherMatches.includes(switcherActive)) switcherActive = switcherMatches[Math.max(0, Math.min(previousIndex, switcherMatches.length - 1))] || null;
+    const results = $('#switcher-results');
+    results.replaceChildren(...switcherMatches.map(id => {
+        const card = findCard(id), profile = profiles.find(p => p.id === card.profile);
+        const option = document.createElement('div');
+        option.id = `switcher-option-${id}`;
+        option.className = 'switcher-option';
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', String(id === switcherActive));
+        option.append(mark(profile));
+        const text = document.createElement('div'); text.className = 'switcher-text';
+        const title = document.createElement('div'); title.className = 'switcher-title'; title.textContent = terminalDisplayTitle(card);
+        const detail = document.createElement('div'); detail.className = 'switcher-detail';
+        detail.textContent = `${profile.name} · ${sessions.get(id)?.cwd || card.cwd || 'No folder'} · ${sessions.get(id)?.status || 'idle'} · ${id}`;
+        text.append(title, detail); option.append(text);
+        option.title = `${title.textContent}\n${detail.textContent}`;
+        // Keep the combobox as the only result-navigation focus target.
+        option.addEventListener('pointerdown', event => event.preventDefault());
+        option.onclick = () => confirmTerminalSwitch(id);
+        return option;
+    }));
+    if (switcherActive) {
+        switcherQuery.setAttribute('aria-activedescendant', `switcher-option-${switcherActive}`);
+        results.children[switcherMatches.indexOf(switcherActive)]?.scrollIntoView?.({ block: 'nearest' });
+    } else switcherQuery.removeAttribute('aria-activedescendant');
+    const status = !workspace.cards.length ? 'There are no terminals on this canvas yet.'
+        : !switcherMatches.length ? 'No matching terminals.'
+        : `${switcherMatches.length} terminal${switcherMatches.length === 1 ? '' : 's'}${switcherQuery.value.trim() ? ' found' : ' on this canvas'}.`;
+    // Folder polling must not repeatedly announce an unchanged result count.
+    if ($('#switcher-status').textContent !== status) $('#switcher-status').textContent = status;
+}
+function confirmTerminalSwitch(id = switcherActive) {
+    // Revalidate the stable ID at confirmation, including a result removed since the last render.
+    if (!id || !findCard(id)) { renderTerminalSwitcher(); return; }
+    switcherReturnFocus = null;
+    terminalSwitcher.close();
+    showTerminal(id);
+}
+terminalSwitcher.addEventListener('close', () => {
+    switcherQuery.setAttribute('aria-expanded', 'false');
+    switcherQuery.removeAttribute('aria-activedescendant');
+    const target = switcherReturnFocus;
+    switcherReturnFocus = null;
+    if (target) {
+        if (target.isConnected && !target.disabled && target.getClientRects().length) target.focus({ preventScroll: true });
+        else viewport.focus({ preventScroll: true });
+    }
+});
+terminalSwitcher.addEventListener('cancel', event => { event.preventDefault(); terminalSwitcher.close(); });
+terminalSwitcher.addEventListener('keydown', event => {
+    event.stopPropagation();
+    if (event.isComposing) return;
+    if (event.key === 'Escape') { event.preventDefault(); terminalSwitcher.close(); return; }
+    if (event.target.closest('button')) return;
+    if (event.key === 'Enter') { event.preventDefault(); if (!event.repeat) confirmTerminalSwitch(); return; }
+    if (event.ctrlKey || event.metaKey || event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const count = switcherMatches.length;
+    if (!count) return;
+    const index = switcherMatches.indexOf(switcherActive);
+    switcherActive = switcherMatches[(index + (event.key === 'ArrowDown' ? 1 : -1) + count) % count];
+    renderTerminalSwitcher();
+});
+switcherQuery.oninput = renderTerminalSwitcher;
+$('#find-terminal').onclick = openTerminalSwitcher;
+$('#switcher-close').onclick = () => terminalSwitcher.close();
 // From the selected element, or with nothing selected from the middle of the view, to the nearest
 // terminal that way. When none lies that way the selection stays, and a selected terminal is shown again.
 function navigateTerminals(direction) {
@@ -590,7 +690,7 @@ function mount(card) {
     el.style.zIndex = String(++topCardZIndex);
     el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
-    el.querySelector('.card-title').textContent = card.title;
+    el.querySelector('.card-title').textContent = terminalDisplayTitle(card);
     const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
@@ -620,7 +720,7 @@ function mount(card) {
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
             if (event.altKey || event.isComposing) return true;
-            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'b'].includes(key)))) return false;
+            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'p', 'b'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
             // Ctrl/Cmd+0 resets the text size; Ctrl+- and Ctrl+= still reach the shell (Ctrl+- is readline undo).
             // Digit0 covers layouts whose 0 needs Shift. Numpad0 is matched by its key only: without
@@ -708,6 +808,7 @@ function showDirectory(s, cwd) {
     const label = cwd || 'Current directory unavailable';
     s.element.querySelector('.card-directory span').textContent = label;
     s.element.querySelector('.card-directory').title = label;
+    if (ready) refresh();
 }
 // `launch` names the program's request that opened this card, so the host can log its output.
 async function start(card, mode = card.session ? 'resume' : 'start', launch) {
@@ -818,12 +919,9 @@ function openCanvasMenu(point) {
     focusCanvasMenu(0);
     return true;
 }
-// #27 can replace this entry point with its switcher when it lands.
 function findTerminalFromCanvas() {
-    closeCanvasMenu();
-    sidebarPreferences.outline = false;
-    setSidebarCollapsed(false);
-    $('#search').focus(); $('#search').select();
+    closeCanvasMenu({ restoreFocus: true });
+    openTerminalSwitcher();
 }
 $('#canvas-menu-find').onclick = findTerminalFromCanvas;
 viewport.addEventListener('pointermove', event => {
@@ -1327,7 +1425,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
@@ -1351,6 +1449,9 @@ document.addEventListener('keydown', event => {
     if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
     if (event.ctrlKey || event.metaKey) {
         const key = event.key.toLowerCase();
+        if (key === 'p' && event.shiftKey && !event.altKey && !event.isComposing) {
+            event.preventDefault(); if (!event.repeat) openTerminalSwitcher(); return;
+        }
         if (key === 'b' && event.shiftKey && !event.altKey) {
             event.preventDefault();
             if (!event.repeat) $('#sidebar-toggle').click();

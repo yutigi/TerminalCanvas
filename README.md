@@ -39,7 +39,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 ## Use the workspace
 
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
-- Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** focuses the sidebar search; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior.
+- Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** opens the searchable terminal switcher; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior.
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan.
 - Scroll or two-finger scroll over empty space to zoom the canvas at the pointer. Plain scrolling over terminals, board items, the minimap, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A gesture stays with its starting area until you pause, so crossing a terminal does not change zooming into terminal scrolling. Ctrl + scroll (Command on macOS) also zooms the canvas elsewhere; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
@@ -127,6 +127,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl + Shift + P / Command + Shift + P | Open the terminal switcher, including while typing in a terminal |
 | Ctrl/Cmd + Shift + B | Hide / show sidebar, including inside terminals |
 | Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |
 | Enter, outside a terminal | Type in the selected terminal (a stopped one gets its Start button) |
@@ -154,6 +155,21 @@ Single-key and board shortcuts apply only when focus is outside a terminal or te
 The keyboard is either on the canvas or typing in one terminal. Selecting a terminal from the
 keyboard never types in it, and a terminal you type in receives every key except the app's
 Ctrl + Shift shortcuts, Alt + arrow keys included, so shells and full-screen programs keep them.
+
+**Find terminal:** press **Ctrl + Shift + P** (**Command + Shift + P** on macOS), or use the search
+button beside **ON THIS CANVAS**. The dialog focuses its query. Search by the displayed title,
+folder, or profile; words match together without regard to case. An empty query shows all terminals
+in sidebar order, initially highlighting the selected terminal. Folder/profile details and stable
+card IDs distinguish duplicate titles. Title, folder, creation, and removal updates keep the query
+and active terminal where possible; a removed result falls back to its next surviving row.
+
+Use **↑/↓** to choose a result, then **Enter** to reveal and highlight it at the current zoom.
+The keyboard stays on the canvas; press **Enter again** to type, or to focus a stopped terminal's
+Start/Resume button. In Focus view, confirmation changes the focused terminal and reveals it on
+the canvas when Focus ends. **Esc** or the dialog's close button cancels without changing selection
+or camera, restoring the previous input/button (or the canvas if it is gone or hidden). Dialog
+keystrokes stay out of shells. **Ctrl + P** remains available to terminal programs; **/** still
+focuses sidebar search and **Ctrl + Shift + F** still toggles Focus. Search works locally without AI.
 
 - **Alt + ←/→/↑/↓** on the canvas selects the nearest terminal that way. It works from the
   canvas itself, the sidebar, and the toolbars, but not inside a text field. With the minimap
