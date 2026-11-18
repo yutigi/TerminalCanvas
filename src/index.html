@@ -81,8 +81,8 @@
             <div class="dialog-heading"><span class="dialog-symbol" data-icon="terminal"></span><button type="button" class="icon-button" data-close aria-label="Close dialog"><span data-icon="x"></span></button></div>
             <div class="eyebrow">MAKE ROOM FOR ANOTHER MIND</div><h2>New terminal</h2><p class="dialog-description">Choose a tool and give it a place to work.</p>
             <label class="field-label" for="profile">Terminal profile</label><select id="profile" name="profile"></select>
-            <label class="field-label" for="terminal-title">Name <span>optional</span></label><input id="terminal-title" name="title" maxlength="100" placeholder="Automatic title">
-            <p class="field-hint">Leave the suggested name untouched for an automatic title. Click the card title to rename it later.</p>
+            <label class="field-label" for="terminal-title">Name <span>optional</span></label><input id="terminal-title" name="title" maxlength="100" placeholder="Automatic title" aria-describedby="automatic-title-hint">
+            <p id="automatic-title-hint" class="field-hint">Leave the suggested name untouched for an automatic title. Click the card title to rename it later.</p>
             <label class="field-label" for="cwd">Project folder</label><div class="folder-field"><input id="cwd" name="cwd" maxlength="4096" placeholder="Your home directory"><button class="button" type="button" id="browse-folder"><span data-icon="folder"></span>Browse</button></div>
             <label class="field-label" for="command">Launch command <span>optional</span></label><input id="command" name="command" maxlength="2000" placeholder="Leave empty for a shell" spellcheck="false">
             <p class="field-hint">Runs in your local shell. AI tools must already be installed and signed in.</p>
