@@ -123,6 +123,9 @@ pub struct Card {
     pub id: String,
     pub profile: ProfileId,
     pub title: String,
+    /// Absent in legacy files: their names remain manual, even when equal to a profile default.
+    pub title_mode: Option<crate::titles::TitleMode>,
+    pub title_revision: u64,
     pub cwd: String,
     pub command: String,
     pub session: Option<SessionMetadata>,
@@ -300,6 +303,12 @@ impl Serialize for Card {
         map.serialize_entry("y", &Number(self.y))?;
         map.serialize_entry("w", &Number(self.w))?;
         map.serialize_entry("h", &Number(self.h))?;
+        if let Some(mode) = self.title_mode {
+            map.serialize_entry("titleMode", &mode)?;
+        }
+        if self.title_revision > 0 {
+            map.serialize_entry("titleRevision", &self.title_revision)?;
+        }
         if let Some(size) = self.font_size {
             map.serialize_entry("fontSize", &size)?;
         }
@@ -559,6 +568,13 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
         id,
         profile,
         title,
+        title_mode: field(raw, "titleMode")
+            .and_then(Value::as_str)
+            .and_then(crate::titles::TitleMode::parse),
+        title_revision: field(raw, "titleRevision")
+            .and_then(Value::as_u64)
+            .filter(|value| *value <= 9_007_199_254_740_991)
+            .unwrap_or(0),
         cwd,
         command,
         session,
@@ -934,12 +950,47 @@ pub fn create_card(options: &Value) -> Result<Card> {
         "w": 660,
         "h": 430,
     });
-    validate_card(&raw, VERSION)
+    let mut card = validate_card(&raw, VERSION)?;
+    card.title_mode = option("titleMode")
+        .and_then(Value::as_str)
+        .and_then(crate::titles::TitleMode::parse);
+    if card.title_mode == Some(crate::titles::TitleMode::Automatic) {
+        card.title = crate::titles::fallback(&card);
+    }
+    Ok(card)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_intent_is_explicit_and_roundtrips_without_changing_legacy_defaults() {
+        use crate::titles::TitleMode;
+        let legacy = create_card(&json!({ "profile": "codex" })).unwrap();
+        assert_eq!(legacy.title_mode, None);
+        assert!(!json!(legacy).as_object().unwrap().contains_key("titleMode"));
+        let automatic =
+            create_card(&json!({ "profile": "codex", "cwd": "C:\\repo", "titleMode": "automatic" })).unwrap();
+        assert_eq!(automatic.title, "repo · Codex");
+        for version in [1, 2, 3] {
+            let mut board = create_workspace().to_value();
+            board["version"] = json!(version);
+            board["cards"] = json!([legacy, automatic]);
+            let saved = validate_workspace(&board).unwrap();
+            assert_eq!(saved.cards[0].title_mode, None);
+            assert_eq!(saved.cards[1].title_mode, Some(TitleMode::Automatic));
+            assert_eq!(validate_workspace(&saved.to_value()).unwrap(), saved);
+        }
+        for mode in [json!(null), json!(true), json!("AUTO"), json!({})] {
+            let mut card = json!(legacy);
+            card["titleMode"] = mode;
+            card["titleRevision"] = json!("1");
+            let card = validate_card(&card, VERSION).unwrap();
+            assert_eq!(card.title_mode, None);
+            assert_eq!(card.title_revision, 0);
+        }
+    }
 
     #[test]
     fn whole_number_versions_written_as_floats_are_accepted() {

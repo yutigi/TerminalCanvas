@@ -15,7 +15,12 @@ function compare(expected, actual, tolerance, { colors = true, intended = {} } =
         for (const selector of added) assert.ok(after.elements[selector], `${scene}: intended control ${selector} is missing`);
         assert.deepEqual(Object.keys(after.elements).filter(key => !added.includes(key)).sort(), Object.keys(before.elements).sort(), `${scene}: visible controls`);
         for (const [selector, recorded] of Object.entries(before.elements)) {
-            const old = resized[selector] ? { ...recorded, rect: recorded.rect.map((value, index) => value + resized[selector][index]) } : recorded;
+            const delta = resized[selector];
+            // A moved control carries its icons with it; their size and relative position still match.
+            const old = delta ? { ...recorded,
+                rect: recorded.rect.map((value, index) => value + delta[index]),
+                icons: recorded.icons.map(icon => icon.map((value, index) => value + (index < 2 ? delta[index] : 0))),
+            } : recorded;
             const current = after.elements[selector];
             const check = (a, b, field) => {
                 if (a.some((value, index) => Math.abs(value - b[index]) > tolerance)) {
@@ -24,10 +29,7 @@ function compare(expected, actual, tolerance, { colors = true, intended = {} } =
             };
             check(old.rect, current.rect, 'bounds');
             assert.equal(current.icons.length, old.icons.length, `${scene} ${selector}: icons`);
-            old.icons.forEach((icon, index) => {
-                const delta = resized[selector] || [0, 0, 0, 0];
-                check(icon.map((value, axis) => value + (axis < 2 ? delta[axis] : 0)), current.icons[index], `icon ${index}`);
-            });
+            old.icons.forEach((icon, index) => check(icon, current.icons[index], `icon ${index}`));
             if (colors && (old.background !== current.background || old.color !== current.color)) {
                 failures.push(`${scene} ${selector}: control colors changed`);
             }

@@ -55,6 +55,8 @@ pub const EXTENSION: &str = "json";
 pub struct LaunchRequest {
     pub profile: ProfileId,
     pub title: String,
+    #[serde(rename = "titleMode", skip_serializing_if = "Option::is_none")]
+    pub title_mode: Option<crate::titles::TitleMode>,
     pub cwd: String,
     pub command: String,
     /// The card to open beside. Only the app inbox reads it: a terminal's own inbox always
@@ -123,6 +125,9 @@ pub fn validate_request(raw: &Value, platform: Platform) -> Result<LaunchRequest
         },
     };
     let (title, cwd, command, parent) = (text("title")?, text("cwd")?, text("command")?, text("parent")?);
+    let title_mode = (fields.get("titleMode").and_then(Value::as_str) == Some("automatic")
+        || title.as_deref().is_none_or(|title| crate::js::trim(title).is_empty()))
+    .then_some(crate::titles::TitleMode::Automatic);
     let flag = |key: &str| match fields.get(key) {
         None | Some(Value::Null) => Ok(false),
         Some(Value::Bool(value)) => Ok(*value),
@@ -152,6 +157,7 @@ pub fn validate_request(raw: &Value, platform: Platform) -> Result<LaunchRequest
     Ok(LaunchRequest {
         profile: card.profile,
         title: card.title,
+        title_mode,
         cwd: card.cwd,
         command: card.command,
         parent,
@@ -295,6 +301,7 @@ mod tests {
             LaunchRequest {
                 profile: ProfileId::Claude,
                 title: "Claude Code".into(),
+                title_mode: Some(crate::titles::TitleMode::Automatic),
                 cwd: "/repo".into(),
                 command: "claude".into(),
                 parent: None,

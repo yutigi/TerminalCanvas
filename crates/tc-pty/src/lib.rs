@@ -9,6 +9,7 @@ mod job;
 pub mod manager;
 pub mod pty;
 pub mod shell;
+pub mod titles;
 
 pub use manager::{
     Backend, Config, DirectoryChoice, DirectoryRequest, EventSink, ExitStatus, Process, SessionEvent, SessionKey,
