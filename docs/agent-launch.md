@@ -210,9 +210,9 @@ harnesses that read `SKILL.md` can use it. It covers finding `tc-hook` when `TC_
 handing work over to a fresh session of the same or another agent through a briefing file, and
 running parallel workers in linked cards.
 
-Terminal Canvas installs it for you. The first launch offers **Set up AI agents**, and **Set up
-agents** in the sidebar's *Launch a terminal* heading offers it again at any time, for example after
-an update changes the skill. It writes `terminal-canvas/SKILL.md`, and nothing else, into:
+Terminal Canvas installs it for you. The first launch offers **Set up AI agents**, and **Agents** in
+the sidebar's *Launch a terminal* heading offers it again at any time, for example after an update
+changes the skill. It writes `terminal-canvas/SKILL.md`, and nothing else, into:
 
 - Claude Code: `~/.claude/skills/` (or `skills/` in `CLAUDE_CONFIG_DIR` when shells inherit it) and
   `skills/` in each Terminal Canvas Claude account folder;
