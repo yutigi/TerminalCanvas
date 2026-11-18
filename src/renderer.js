@@ -172,6 +172,7 @@ function renderMinimap() {
         const status = sessions.get(card.id)?.status;
         node.className = `minimap-card${selection.has(card.id) ? ' selected' : ''}${['running', 'starting'].includes(status) ? ' running' : ''}`;
         node.style.setProperty('--profile-color', profiles.find(profile => profile.id === card.profile).color);
+        applyItemStyle(card, node);
         node.title = card.title;
         positionMinimapElement(node, minimapLayout.cards[index]);
         return node;
@@ -259,6 +260,7 @@ function refresh() {
         const s = sessions.get(card.id);
         const button = document.createElement('button');
         button.className = `outline-item ${selection.has(card.id) ? 'selected' : ''} ${s.status === 'running' ? 'running' : ''}`;
+        applyItemStyle(card, button);
         button.append(mark(profiles.find(p => p.id === card.profile)));
         const label = document.createElement('span'); label.className = 'label'; label.textContent = card.title;
         const dot = document.createElement('span'); dot.className = 'state-dot'; dot.title = s.status;
@@ -501,6 +503,36 @@ function fitTerminal(s) {
     if (size && Number.isFinite(size.cols) && Number.isFinite(size.rows)) s.terminal.resize(Math.max(2, Math.min(500, size.cols)), Math.max(1, Math.min(300, size.rows)));
 }
 const terminalFontSize = card => card.fontSize ?? TERMINAL_FONT.DEFAULT;
+const themeIds = window.TerminalCanvasItemStyles.TERMINAL_THEMES;
+const terminalTheme = card => window.TerminalCanvasThemes[card.theme || workspace.terminalTheme || 'current'];
+function renderTerminalAppearance(card) {
+    const s = sessions.get(card.id); if (!s) return;
+    applyItemStyle(card, s.element);
+    const theme = terminalTheme(card);
+    s.element.style.setProperty('--terminal-background', theme.background);
+    // Updating options preserves the xterm instance, buffer, selection, and PTY.
+    if (s.terminal) s.terminal.options.theme = { ...theme };
+}
+function renderThemeControls() { $('#workspace-theme').value = workspace?.terminalTheme || 'current'; }
+function setTerminalTheme(theme, global = false) {
+    if (!ready || boardBusy() || (theme !== '' && !themeIds.includes(theme))) return;
+    const cards = global ? workspace.cards : selectedItems(['terminal']);
+    if (!global && !cards.length) return;
+    recordChange(() => {
+        if (global) {
+            if (theme && theme !== 'current') workspace.terminalTheme = theme;
+            else delete workspace.terminalTheme;
+        } else for (const card of cards) {
+            // An explicit Current overrides a non-Current workspace default.
+            if (theme) card.theme = theme;
+            else delete card.theme;
+        }
+        for (const card of cards) renderTerminalAppearance(card);
+    });
+    renderThemeControls(); renderStyleToolbar(); changed();
+}
+$('#workspace-theme').onchange = () => { setTerminalTheme($('#workspace-theme').value, true); renderThemeControls(); };
+$('#terminal-theme').onchange = () => { setTerminalTheme($('#terminal-theme').value); renderStyleToolbar(); };
 // xterm measures the new cell size immediately, so the refit gives a running program its new rows and columns.
 function setTerminalFontSize(card, size) {
     const next = Math.max(TERMINAL_FONT.MIN, Math.min(TERMINAL_FONT.MAX, Math.round(size)));
@@ -560,7 +592,7 @@ function mount(card) {
     el.querySelector('.card-title').textContent = card.title;
     const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
-    recoveryInfo(card); renderAccount(card);
+    recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
             disableStdin: !!bridge?.remote && bridge.role !== 'control',
@@ -574,7 +606,7 @@ function mount(card) {
                     run(() => invoke('open-link', uri));
                 }
             },
-            theme: { background: '#15191f', foreground: '#c8d1dc', cursor: '#c8ecb5', selectionBackground: '#52694e80', black: '#29313d', red: '#e59a91', green: '#b5d69a', yellow: '#dfc68c', blue: '#94b5e8', magenta: '#baa0da', cyan: '#91cbc7', white: '#d5dce5', brightBlack: '#667486', brightRed: '#f0b2a9', brightGreen: '#c8ecb5', brightYellow: '#f1dbab', brightBlue: '#b2cdff', brightMagenta: '#d8bcf6', brightCyan: '#b1e4df', brightWhite: '#f0f4fa' }
+            theme: { ...terminalTheme(card) }
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
         s.terminal.onData(data => {
@@ -836,7 +868,7 @@ async function duplicateTerminal(source) {
         const result = await invoke('duplicate-directory', source);
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (result.warning) {
-            openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount });
+            openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount, color: source.color, theme: source.theme });
             $('#cwd').value = result.cwd;
             $('#launch-error').textContent = result.warning;
             $('#launch-error').hidden = false;
@@ -845,6 +877,8 @@ async function duplicateTerminal(source) {
         const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (source.fontSize) card.fontSize = source.fontSize;
+        if (source.color) card.color = source.color;
+        if (source.theme) card.theme = source.theme;
         if (source.claudeAccount) card.claudeAccount = source.claudeAccount;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
@@ -902,11 +936,11 @@ async function openRequestedTerminal(event) {
     await start(card, undefined, event.request);
     return { card, parent };
 }
-// A duplicate whose folder needs review still copies its source terminal's text size and account.
-let launchFontSize, launchAccount;
-function openLaunch(profileId = 'shell', { fontSize, claudeAccount } = {}) {
+// Folder review preserves a duplicate's text size, appearance, and account.
+let launchFontSize, launchAccount, launchColor, launchTheme;
+function openLaunch(profileId = 'shell', { fontSize, claudeAccount, color, theme } = {}) {
     if (!ready || document.querySelector('dialog[open]')) return;
-    launchFontSize = fontSize; launchAccount = claudeAccount;
+    launchFontSize = fontSize; launchAccount = claudeAccount; launchColor = color; launchTheme = theme;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
@@ -1026,6 +1060,8 @@ $('#launch-form').onsubmit = event => {
             const count = workspace.cards.length;
             const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
             if (launchFontSize) result.card.fontSize = launchFontSize;
+            if (launchColor) result.card.color = launchColor;
+            if (launchTheme) result.card.theme = launchTheme;
             if (launchAccount) result.card.claudeAccount = launchAccount;
             workspace.cards.push(result.card); mount(result.card); select(result.card.id); changed(); refresh();
             $('#launch-dialog').close();
@@ -1043,6 +1079,7 @@ function loadWorkspace(board) {
     workspace = board;
     workspace.items = Array.isArray(board.items) ? board.items : [];
     clearHistory();
+    renderThemeControls();
     // The browser preview stores unvalidated layouts, which may still use format 2's single group.
     for (const e of [...workspace.cards, ...workspace.items]) {
         if (e.group && !e.groups) e.groups = [e.group];

@@ -1,5 +1,5 @@
 /* Undo and redo for the board. Loaded after items.js; functions read renderer state when called.
-   A step restores board items plus terminal geometry and groups. Terminals are never created or
+   A step restores board items plus terminal geometry, groups, colors, and themes. Terminals are never created or
    closed by undo, because that would start or stop processes. */
 'use strict';
 const HISTORY_LIMIT = 100;
@@ -21,7 +21,8 @@ function snapshotBoard() {
     sharedItemJson = new Map(workspace.items.map((item, index) => [item.id, items[index]]));
     const stacked = [...workspace.cards, ...workspace.items].filter(e => e.type !== 'line');
     return {
-        cards: workspace.cards.map(({ id, x, y, w, h, groups }) => cloneData({ id, x, y, w, h, groups })),
+        cards: workspace.cards.map(({ id, x, y, w, h, groups, color, theme }) => cloneData({ id, x, y, w, h, groups, color, theme })),
+        terminalTheme: workspace.terminalTheme,
         items,
         // Stacking order, so undoing a deletion returns items to their depth instead of on top.
         z: Object.fromEntries(stacked.map(e => [e.id, zOf(e.id)])),
@@ -31,7 +32,7 @@ function snapshotBoard() {
     };
 }
 const sameBoard = (a, b) => a.items.length === b.items.length && a.items.every((json, index) => json === b.items[index])
-    && JSON.stringify(a.cards) === JSON.stringify(b.cards);
+    && JSON.stringify(a.cards) === JSON.stringify(b.cards) && a.terminalTheme === b.terminalTheme;
 // Work that must not land inside a drag, such as an image whose import just finished, waits for it.
 let idleWaiters = [];
 function whenBoardIdle() { return boardBusy() ? new Promise(resolve => idleWaiters.push(resolve)) : Promise.resolve(); }
@@ -87,6 +88,8 @@ function stepHistory(from, to) {
 }
 // Items are updated in place so their views and event handlers stay attached.
 function restoreBoard(snapshot) {
+    if (snapshot.terminalTheme) workspace.terminalTheme = snapshot.terminalTheme;
+    else delete workspace.terminalTheme;
     const parsed = snapshot.items.map(json => JSON.parse(json));
     // Arrows attached to a terminal closed since the snapshot were removed with it, so they stay removed.
     const present = new Set([...workspace.cards, ...parsed].map(e => e.id));
@@ -98,6 +101,10 @@ function restoreBoard(snapshot) {
         if (!card) continue;
         Object.assign(card, { x: saved.x, y: saved.y, w: saved.w, h: saved.h });
         setGroups(card, saved.groups ? [...saved.groups] : []);
+        for (const key of ['color', 'theme']) {
+            if (saved[key]) card[key] = saved[key];
+            else delete card[key];
+        }
         renderCardGeometry(card);
     }
     const current = new Map(workspace.items.map(item => [item.id, item]));
@@ -123,6 +130,8 @@ function restoreBoard(snapshot) {
         const node = elementNode(id);
         if (node && findElement(id)?.type !== 'frame') node.style.zIndex = String(z);
     }
+    for (const card of workspace.cards) renderTerminalAppearance(card);
+    renderThemeControls();
     pruneGroups();
     setSelection(snapshot.selection.filter(id => findElement(id)));
     renderLines(); renderMinimap(); refresh(); changed();

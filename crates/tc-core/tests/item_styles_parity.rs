@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use serde_json::{Value, json};
-use tc_core::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES, terminal_font_size};
+use tc_core::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES, TerminalTheme, terminal_font_size};
 
 #[test]
 fn rust_styles_match_item_styles_js() {
@@ -21,6 +21,7 @@ fn rust_styles_match_item_styles_js() {
         "COLORS": Color::ALL.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
         "FONT_SIZES": FontSize::ALL.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         "COLORED_TYPES": COLORED_TYPES,
+        "TERMINAL_THEMES": TerminalTheme::ALL.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         "TEXT_TYPES": TEXT_TYPES,
         "GROUP_DEPTH": GROUP_DEPTH,
         "TERMINAL_FONT_SIZE": {
