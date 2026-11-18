@@ -54,6 +54,7 @@ class Element {
     focus() { this.focusCount = (this.focusCount || 0) + 1; }
     blur() { this.dispatch('blur'); }
     select() {}
+    click() { this.onclick?.(); }
     showModal() { this.open = true; }
     close() { this.open = false; }
 }
@@ -80,6 +81,7 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
+    elements.get('#canvas-menu').hidden = true;
     elements.get('#minimap-map').clientWidth = 198;
     elements.get('#minimap-map').clientHeight = 120;
     const calls = [];
@@ -108,6 +110,173 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     await new Promise(resolve => setImmediate(resolve));
     return { elements, calls, context, onEvent, document, window, bridge, documentListeners, event: payload => bridge.event(payload) };
 }
+
+const canvasTarget = selector => ({ closest: query => query.split(',').map(part => part.trim()).includes(selector) ? {} : null });
+function openMenu(elements, values = {}) {
+    let prevented = false;
+    elements.get('#viewport').dispatch('contextmenu', { button: 2, clientX: 400, clientY: 300, preventDefault() { prevented = true; }, ...values });
+    return prevented;
+}
+
+test('canvas menu opens only on empty background and uses the sidebar launch profiles', async () => {
+    const { elements, calls } = await boot(createWorkspace());
+    const menu = elements.get('#canvas-menu'), profiles = elements.get('#canvas-menu-profiles').children;
+    assert.equal(menu.hidden, true);
+    assert.deepEqual(profiles.map(button => button.children[1].textContent), PROFILES.map(profile => profile.name));
+    for (const button of profiles) assert.equal(button.attributes.get('role'), 'menuitem');
+    for (const selector of ['.terminal-card', '.canvas-item', '.canvas-line', '.minimap', '.canvas-toolbar', '.create-toolbar', '.style-toolbar', '.exit-focus', 'button', 'input', '[contenteditable="true"]']) {
+        assert.equal(openMenu(elements, { target: canvasTarget(selector) }), false, selector);
+        assert.equal(menu.hidden, true, selector);
+    }
+    assert.equal(openMenu(elements), true);
+    assert.equal(menu.hidden, false);
+    assert.equal(profiles[0].focusCount, 1);
+    assert.equal(profiles[0].tabIndex, 0);
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('canvas menu is unavailable before initialization, during drags, in Focus, or behind a dialog', async () => {
+    const loading = await boot(createWorkspace(), { initialized: false });
+    assert.equal(openMenu(loading.elements), false);
+    const board = createWorkspace(); board.cards.push(createCard());
+    const { elements, context } = await boot(board);
+    vm.runInContext('activeDrags = 1', context);
+    assert.equal(openMenu(elements), false);
+    vm.runInContext('activeDrags = 0; setFocus(workspace.cards[0].id)', context);
+    assert.equal(openMenu(elements), false);
+    vm.runInContext('setFocus(null); openLaunch()', context);
+    assert.equal(openMenu(elements), false);
+});
+
+test('hand tool hit testing keeps cards and shapes out of the background menu', async () => {
+    const board = createWorkspace(); board.camera = { x: 0, y: 0, z: 1 };
+    board.cards.push(createCard({ x: 100, y: 100 }));
+    board.items.push({ id: 'shape', type: 'shape', shape: 'rect', x: 800, y: 100, w: 150, h: 100, text: '' });
+    const { elements, context } = await boot(board);
+    vm.runInContext('setTool("hand")', context);
+    // In hand mode the browser targets the viewport even above an existing item.
+    assert.equal(openMenu(elements, { clientX: 200, clientY: 200 }), false);
+    assert.equal(openMenu(elements, { clientX: 850, clientY: 150 }), false);
+    assert.equal(openMenu(elements, { clientX: 1000, clientY: 200 }), true);
+});
+
+test('menu creation retains the clicked world point through the launch form at different zooms', async () => {
+    for (const z of [.35, 1, 1.5]) {
+        const board = createWorkspace(); board.camera = { x: -160, y: 85, z };
+        const { elements, context, calls } = await boot(board, { respond: (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null });
+        const viewport = elements.get('#viewport');
+        viewport.getBoundingClientRect = () => ({ left: 250, top: 140, width: 1100, height: 720 });
+        vm.runInContext('start = async card => invoke("start", { card })', context);
+        assert.equal(openMenu(elements, { clientX: 683, clientY: 465 }), true);
+        const expected = { x: (683 - 250 + 160) / z, y: (465 - 140 - 85) / z };
+        elements.get('#canvas-menu-profiles').children[1].click();
+        assert.equal(elements.get('#canvas-menu').hidden, true);
+        assert.equal(elements.get('#launch-dialog').open, true);
+        assert.equal(elements.get('#profile').value, PROFILES[1].id);
+        assert.equal(elements.get('#command').value, PROFILES[1].command);
+        assert.equal(calls.length, 1, 'choosing a profile does not start anything');
+        // A camera change while the form is open must not move the requested world point.
+        vm.runInContext('workspace.camera = { x: 12, y: 34, z: 1.2 }', context);
+        elements.get('#terminal-title').value = 'Reviewed name'; elements.get('#cwd').value = '/project';
+        elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+        const request = calls.find(call => call.action === 'create-card').payload;
+        assert.deepEqual({ x: request.x, y: request.y }, expected);
+        assert.equal(request.title, 'Reviewed name'); assert.equal(request.cwd, '/project');
+        assert.equal(calls.filter(call => call.action === 'start').length, 1);
+    }
+});
+
+test('canceling a menu launch does not create a card or change the next normal launch position', async () => {
+    const { elements, calls, context } = await boot(createWorkspace(), { respond: (action, payload) => action === 'create-card' ? { card: createCard(payload) } : null });
+    vm.runInContext('start = async () => {}', context);
+    openMenu(elements); elements.get('#canvas-menu-profiles').children[0].click();
+    elements.get('#launch-dialog').close();
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+    elements.get('#add-terminal').click();
+    const expected = json(context, '({ x: Math.round((60 - workspace.camera.x) / workspace.camera.z), y: Math.round((40 - workspace.camera.y) / workspace.camera.z) })');
+    elements.get('#launch-form').onsubmit({ preventDefault() {} }); await flush();
+    const request = calls.find(call => call.action === 'create-card').payload;
+    assert.deepEqual({ x: request.x, y: request.y }, expected);
+});
+
+test('Find terminal focuses and selects sidebar search; a result reveals and highlights without typing', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ x: 5000, y: -3000, title: 'Far away' }));
+    const { elements, calls, context } = await boot(board);
+    const search = elements.get('#search'); let selectedText = false;
+    search.select = () => { selectedText = true; };
+    const before = json(context, 'workspace.camera');
+    openMenu(elements); elements.get('#canvas-menu-find').click();
+    assert.equal(elements.get('#canvas-menu').hidden, true);
+    assert.equal(search.focusCount, 1); assert.equal(selectedText, true);
+    search.value = 'Far away'; search.oninput(); elements.get('#outline').children[0].click();
+    assert.equal(json(context, 'keyboardCurrent'), board.cards[0].id);
+    assert.equal(json(context, 'selected'), board.cards[0].id);
+    assert.equal(json(context, 'workspace.camera.z'), before.z);
+    assert.notDeepEqual(json(context, 'workspace.camera'), before);
+    assert.equal(vm.runInContext('sessions.get(workspace.cards[0].id).element.classList.contains("keyboard-current")', context), true);
+    assert.deepEqual(calls.map(call => call.action), ['initialize']);
+});
+
+test('Menu key and Shift+F10 open at the last background point or view center and keep terminal keys alone', async () => {
+    const { elements, document, context } = await boot(createWorkspace());
+    const viewport = elements.get('#viewport'), menu = elements.get('#canvas-menu');
+    const point = (x, y) => json(context, `toWorld({ clientX: ${x}, clientY: ${y} })`);
+    for (const values of [{ key: 'ContextMenu' }, { key: 'F10', shiftKey: true }]) {
+        document.dispatch('keydown', { ...values, target: viewport });
+        assert.equal(menu.hidden, false);
+        assert.deepEqual(json(context, 'canvasMenuPoint'), point(550, 360));
+        document.dispatch('keydown', { key: 'Escape', target: viewport });
+    }
+    viewport.dispatch('pointermove', { clientX: 380, clientY: 220 });
+    document.dispatch('keydown', { key: 'ContextMenu', target: viewport });
+    assert.deepEqual(json(context, 'canvasMenuPoint'), point(380, 220));
+    document.dispatch('keydown', { key: 'Escape', target: viewport });
+    for (const selector of ['.terminal-card', '.canvas-item', '.minimap', 'input', 'button']) {
+        document.dispatch('keydown', { key: 'F10', shiftKey: true, target: canvasTarget(selector) });
+        assert.equal(menu.hidden, true, selector);
+    }
+});
+
+test('menu keyboard navigation wraps, activates once, isolates canvas shortcuts, and dismisses', async () => {
+    const { elements, document, context } = await boot(createWorkspace());
+    const viewport = elements.get('#viewport'), menu = elements.get('#canvas-menu');
+    const buttons = [...elements.get('#canvas-menu-profiles').children, elements.get('#canvas-menu-find')];
+    const key = (key, values = {}) => document.dispatch('keydown', { key, target: viewport, ...values });
+    openMenu(elements);
+    key('ArrowUp'); assert.equal(buttons.at(-1).tabIndex, 0);
+    key('ArrowDown'); assert.equal(buttons[0].tabIndex, 0);
+    key('ArrowDown'); assert.equal(buttons[1].tabIndex, 0);
+    key('Home'); assert.equal(buttons[0].tabIndex, 0);
+    key('End'); assert.equal(buttons.at(-1).tabIndex, 0);
+    key('n'); assert.equal(json(context, 'activeTool'), 'select');
+    key('Delete'); assert.equal(menu.hidden, false);
+    key('Enter', { repeat: true }); assert.equal(menu.hidden, false);
+    key('Enter'); assert.equal(menu.hidden, true); assert.equal(elements.get('#search').focusCount, 1);
+    openMenu(elements); key('Escape'); assert.equal(menu.hidden, true); assert.ok(viewport.focusCount);
+    openMenu(elements); key('Tab'); assert.equal(menu.hidden, true);
+    openMenu(elements); key(' '); assert.equal(menu.hidden, true); assert.equal(elements.get('#launch-dialog').open, true);
+});
+
+test('menu clamps its displayed bounds without moving the launch point and closes on outside actions', async () => {
+    const { elements, document, window, context } = await boot(createWorkspace());
+    const menu = elements.get('#canvas-menu');
+    menu.getBoundingClientRect = () => ({ width: 230, height: 280 });
+    openMenu(elements, { clientX: 1098, clientY: 719 });
+    assert.equal(menu.style.left, '870px'); assert.equal(menu.style.top, '440px');
+    assert.deepEqual(json(context, 'canvasMenuPoint'), json(context, 'toWorld({ clientX: 1098, clientY: 719 })'));
+    document.dispatch('pointerdown', { target: canvasTarget('#canvas-menu') });
+    assert.equal(menu.hidden, false, 'menu clicks are not outside clicks');
+    document.dispatch('scroll', { target: canvasTarget('#canvas-menu') });
+    document.dispatch('wheel', { target: canvasTarget('#canvas-menu') });
+    assert.equal(menu.hidden, false, 'a profile list taller than the window can still scroll');
+    const dismissals = [
+        () => document.dispatch('pointerdown'), () => document.dispatch('wheel'), () => document.dispatch('scroll'),
+        () => window.dispatch('blur'), () => window.dispatch('resize'), () => vm.runInContext('zoom(1.1)', context)
+    ];
+    for (const dismiss of dismissals) { openMenu(elements); dismiss(); assert.equal(menu.hidden, true); }
+    elements.get('#viewport').clientWidth = 150; elements.get('#viewport').clientHeight = 100;
+    openMenu(elements); assert.equal(menu.style.left, '0px'); assert.equal(menu.style.top, '0px');
+});
 
 test('restored AI sessions offer Resume and a fresh shell without launching anything', async () => {
     const workspace = createWorkspace();
