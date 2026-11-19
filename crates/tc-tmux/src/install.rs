@@ -3,7 +3,7 @@
 //! The command runs in a terminal on the canvas, so the user sees its progress and answers any
 //! UAC, sudo, or package-manager prompt themselves. Nothing here installs anything.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::client::{MSYS2_BIN, Version, find_binary};
 
@@ -78,20 +78,22 @@ pub fn plan(os: Os, find: impl Fn(&str) -> Option<PathBuf>) -> Option<Plan> {
     match os {
         Os::Windows => {
             // pacman, not bash: Git for Windows puts its own bash on PATH, but no pacman.
-            if let Some(tools) = find("pacman").as_deref().and_then(Path::parent) {
+            // Interpret Windows paths independently of the host running the planner/tests.
+            let pacman = find("pacman").map(|path| path.to_string_lossy().replace('/', "\\"));
+            if let Some((tools, _)) = pacman.as_deref().and_then(|path| path.rsplit_once('\\')) {
                 return Some(Plan {
                     manager: "MSYS2",
-                    command: msys2_bash(tools),
+                    command: msys2_bash(&format!(r"{tools}\bash.exe")),
                 });
             }
             find("winget")?;
-            let tools = Path::new(MSYS2_BIN);
+            let bash = format!(r"{MSYS2_BIN}\bash.exe");
             Some(Plan {
                 manager: "winget and MSYS2",
                 command: format!(
                     "{WINGET_MSYS2}; if (Test-Path {}) {{ {} }}",
-                    ps_quote(&tools.join("bash.exe").to_string_lossy()),
-                    msys2_bash(tools)
+                    ps_quote(&bash),
+                    msys2_bash(&bash)
                 ),
             })
         }
@@ -118,12 +120,8 @@ pub fn plan(os: Os, find: impl Fn(&str) -> Option<PathBuf>) -> Option<Plan> {
     }
 }
 
-fn msys2_bash(tools: &Path) -> String {
-    format!(
-        "& {} -lc {}",
-        ps_quote(&tools.join("bash.exe").to_string_lossy()),
-        ps_quote(PACMAN_TMUX)
-    )
+fn msys2_bash(bash: &str) -> String {
+    format!("& {} -lc {}", ps_quote(bash), ps_quote(PACMAN_TMUX))
 }
 
 fn ps_quote(text: &str) -> String {
@@ -170,6 +168,10 @@ mod tests {
         assert_eq!(
             existing.command,
             format!("& 'D:\\it''s msys\\usr\\bin\\bash.exe' -lc '{PACMAN_TMUX}'")
+        );
+        assert_eq!(
+            plan(Os::Windows, found(&[("pacman", "D:/it's msys/usr/bin/pacman.exe")])),
+            Some(existing)
         );
         // Git for Windows' bash is not MSYS2: without pacman or winget there is no plan.
         assert_eq!(
