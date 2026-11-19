@@ -2402,6 +2402,38 @@ test('startup cursor replies reach the PTY before the start response without acc
     assert.deepEqual(sent.at(-1), { id: card.id, data: 'ready typing\r' });
 });
 
+test('kept terminals hear focus out only while the app itself still has focus', async () => {
+    const board = createWorkspace(), kept = createCard(), plain = createCard(); board.cards.push(kept, plain);
+    const { context, bridge, document } = await boot(board, { terminals: true,
+        respond: (action, payload) => action === 'start' ? { cwd: payload.card.cwd, kept: payload.card.id === kept.id } : undefined });
+    const timers = [];
+    context.setTimeout = callback => timers.push(callback);
+    let appFocused = true; document.hasFocus = () => appFocused;
+    const terminal = id => vm.runInContext(`sessions.get(${JSON.stringify(id)}).terminal`, context);
+    for (const card of [kept, plain]) { terminal(card.id).write = (_data, done) => done(); context.card = card; await vm.runInContext('start(anyCard(card.id))', context); }
+    const sent = []; bridge.input = (id, data) => sent.push({ id, data });
+    const runTimers = () => { while (timers.length) timers.shift()(); };
+
+    appFocused = false; // Another app took focus; the browser blurs the terminal and reports focus out.
+    terminal(kept.id).dataHandler('\x1b[O');
+    terminal(plain.id).dataHandler('\x1b[O');
+    runTimers();
+    assert.deepEqual(sent, [{ id: plain.id, data: '\x1b[O' }], 'only the plain terminal is told the app lost focus');
+
+    appFocused = true; sent.length = 0; // Back in the app; focus moved to another card.
+    terminal(kept.id).dataHandler('\x1b[I');
+    terminal(kept.id).dataHandler('\x1b[O');
+    assert.deepEqual(sent, [{ id: kept.id, data: '\x1b[I' }], 'focus out waits a task for the window to settle');
+    runTimers();
+    assert.deepEqual(sent.at(-1), { id: kept.id, data: '\x1b[O' }, 'moving within the app still reports focus out');
+
+    sent.length = 0;
+    terminal(kept.id).dataHandler('\x1b[O');
+    vm.runInContext(`setStatus(anyCard(${JSON.stringify(kept.id)}), 'exited')`, context);
+    runTimers();
+    assert.deepEqual(sent, [], 'a deferred report never reaches a terminal that has ended');
+});
+
 test('terminal hyperlinks open only on a trusted primary click, without confirmation', async () => {
     let options;
     const terminal = {

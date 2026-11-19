@@ -731,6 +731,15 @@ function mount(card) {
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
         s.terminal.onData(data => {
             if (bridge?.remote && (bridge.role !== 'control' || s.replaying || !s.userInput)) return;
+            // A kept (tmux) terminal is not told when the whole app loses focus, so a program that
+            // dims while unfocused (Claude Code does) stays active while you use another app.
+            // Moving to another card or control in the app still reports focus out. The check waits a
+            // task, as the browser may blur the terminal before the window itself.
+            if (s.kept && data === '\x1b[O') {
+                const generation = s.generation;
+                setTimeout(() => { if (document.hasFocus() && s.generation === generation && s.status === 'running') bridge.input(card.id, data); });
+                return;
+            }
             // ConPTY can ask for its cursor before the start invoke resolves.
             // Answer an observed query while keeping early user typing blocked.
             const startupReply = s.status === 'starting' && s.startupCursorQueries > 0 && /^\x1b\[\d+;\d+R$/.test(data);
@@ -936,7 +945,7 @@ async function start(card, mode = card.session ? 'resume' : 'start', launch) {
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
     s.generation++;
-    s.startupCursorQueries = 0; s.startupQueryTail = '';
+    s.startupCursorQueries = 0; s.startupQueryTail = ''; s.kept = false;
     s.terminal.reset(); fitTerminal(s); showDirectory(s, null); setStatus(card, 'starting');
     try {
         clearTimeout(autosaveTimer);
@@ -944,6 +953,7 @@ async function start(card, mode = card.session ? 'resume' : 'start', launch) {
         const metadataRevision = s.metadataRevision;
         const result = await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows, mode, ...(launch ? { launch } : {}) });
         if (sessions.get(card.id) !== s) return;
+        s.kept = !!result.kept;
         if (s.metadataRevision === metadataRevision) {
             if (result.cwd) card.cwd = result.cwd;
             if (result.session) card.session = result.session;

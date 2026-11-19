@@ -254,16 +254,22 @@ pub struct Started {
     pub pid: Option<u32>,
     pub shell: String,
     pub metadata: CardMetadata,
+    /// The terminal outlives the app (tmux, or the Windows helper).
+    pub kept: bool,
 }
 
 impl Serialize for Started {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(5))?;
+        let mut map = serializer.serialize_map(Some(if self.kept { 6 } else { 5 }))?;
         map.serialize_entry("id", &self.id)?;
         map.serialize_entry("pid", &self.pid)?;
         map.serialize_entry("cwd", &self.metadata.cwd)?;
         map.serialize_entry("shell", &self.shell)?;
         map.serialize_entry("session", &self.metadata.session)?;
+        // Only kept terminals add a field, so other results keep the JavaScript host's shape.
+        if self.kept {
+            map.serialize_entry("kept", &true)?;
+        }
         map.end()
     }
 }
@@ -854,6 +860,7 @@ impl TerminalManager {
             pid,
             shell,
             metadata: self.metadata[&card.id].clone(),
+            kept: false,
         })
     }
 
@@ -1048,6 +1055,7 @@ impl TerminalManager {
             pid,
             shell,
             metadata,
+            kept: true,
         })
     }
 
