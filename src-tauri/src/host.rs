@@ -1308,7 +1308,11 @@ impl Host {
             if sequence < order.next {
                 return;
             }
-            state.manager.pointer_typed(&id);
+            // xterm sends focus reports when a canvas is hidden or revealed. They do not
+            // edit the shell's input buffer, but must still reach programs requesting them.
+            if !matches!(data.as_str(), "\x1b[I" | "\x1b[O") {
+                state.manager.pointer_typed(&id);
+            }
             order.waiting.entry(sequence).or_insert(data);
             let mut ready = Vec::new();
             while let Some(data) = order.waiting.remove(&order.next) {

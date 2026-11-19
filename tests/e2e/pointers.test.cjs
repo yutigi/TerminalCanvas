@@ -72,3 +72,26 @@ test('native Claude and Codex lifecycle hooks queue a prompt and continue throug
     await until(async () => hasOutputLine(await h.output(c.id), 'POINTER_AI_CHAIN_OK'), 'AI chain did not reach the shell.');
     await screenshot(h.page, 'hook-pointer-ai-chain');
 });
+
+test('native hidden-canvas pointers ignore focus reports and global pause preserves every canvas', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    await h.page.evaluate(async () => loadWorkspace((await invoke('new')).workspace));
+    const source = await startTerminal(h.page, { title: 'Hidden source', cwd: root });
+    const target = await startTerminal(h.page, { title: 'Hidden target', cwd: root, x: 720 });
+    for (const card of [source, target]) await idle(h, card);
+    await configure(h.page, source, target, 'hidden-hook', { event: 'trigger', name: 'hidden', action: 'shell', text: 'Write-Output HIDDEN_POINTER_OK' });
+    await h.page.evaluate(() => createCanvas('Visible canvas'));
+    const visible = await h.page.evaluate(() => activeCanvas.id);
+    assert.equal(await h.page.evaluate(() => workspace.cards.length), 0, 'Both terminals are hidden');
+    await input(h.page, source.id, '& $env:TC_HOOK trigger hidden\r');
+    await until(async () => hasOutputLine(await h.output(target.id), 'HIDDEN_POINTER_OK'), 'Hidden pointer did not deliver.');
+    assert.equal(await h.page.evaluate(() => activeCanvas.id), visible, 'Background delivery leaves navigation alone');
+    assert.equal(await h.page.locator('#pointers-pause').isVisible(), true);
+    await h.page.locator('#pointers-pause').click();
+    await until(async () => h.page.evaluate(() => canvasStates.every(canvas => canvas.board.hooksPaused)), 'Pause did not cover the hidden canvas.');
+    const state = await h.state();
+    assert.equal(state.host.workspace.hooksPaused, true);
+    assert.equal(state.host.workspace.cards.length, 2);
+    assert.equal(state.host.workspace.canvases.length, 2);
+    await screenshot(h.page, 'hook-pointer-hidden-canvas');
+});

@@ -1166,6 +1166,12 @@ async fn hidden_canvas_pointers_run_in_the_actor_and_remote_typing_blocks_delive
         json!([{"id":"hidden","type":"line","arrow":true,"start":{"id":source["id"]},"end":{"id":target["id"]}}]);
     h.host.command("pointer-configure", Some(&json!({"workspace":board,"id":"hidden","hook":{"event":"trigger","action":"shell","text":"echo hidden","armed":true}}))).await.unwrap();
     h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let target_id = target["id"].as_str().unwrap();
+    h.host.input(target_id, "\x1b[I".into(), 0);
+    h.host.input(target_id, "\x1b[O".into(), 1);
+    h.host.running().await;
+    assert!(h.pointer_writes(1).contains(&"\x1b[I".into()));
+    assert!(h.pointer_writes(1).contains(&"\x1b[O".into()));
     h.pointer_request(0, "trigger").await;
     assert!(h.pointer_writes(1).contains(&"echo hidden\r".into()));
     assert_eq!(h.read_saved()["activeCanvas"], "foreground");
