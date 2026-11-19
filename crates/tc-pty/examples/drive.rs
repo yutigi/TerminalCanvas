@@ -4,8 +4,12 @@
 //!
 //! ```text
 //! cargo build -p tc-hook                        # the AI capture needs the hook next to this binary
-//! cargo run -p tc-pty --example drive -- [--shell <shell>] [--ai] [--verbose]
+//! cargo run -p tc-pty --example drive -- [--shell <shell>] [--ai] [--keep] [--verbose]
 //! ```
+//!
+//! `--keep` keeps the terminal running as the app's setting does (in the app's helper on Windows,
+//! in tmux elsewhere), then checks that it survives a detach, attaches again with its output, and
+//! ends on Stop.
 //!
 //! `--shell` names the shell: `zsh` or `bash` on macOS and Linux (the login shell by default),
 //! `powershell`, `pwsh`, or `cmd` on Windows (Windows PowerShell by default). The exit status is 0
@@ -20,7 +24,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tc_core::Platform;
 use tc_core::workspace::create_card;
-use tc_pty::manager::{Config, EventSink, HOOK_POLL_INTERVAL, Integrations, SessionEvent, SessionKey, TerminalManager};
+use tc_pty::manager::{
+    Config, EventSink, HOOK_POLL_INTERVAL, Integrations, Keeper, SessionEvent, SessionKey, TerminalManager,
+};
 use tc_pty::{DirectoryRequest, PtyBackend, TerminalEvent};
 
 #[cfg(any(windows, test))]
@@ -42,7 +48,7 @@ fn main() -> ExitCode {
             .cloned()
     };
     let flag = |name: &str| args.iter().any(|arg| arg == name);
-    match drive(option("--shell"), flag("--ai"), flag("--verbose")) {
+    match drive(option("--shell"), flag("--ai"), flag("--keep"), flag("--verbose")) {
         Ok(()) => {
             println!("PASS");
             ExitCode::SUCCESS
@@ -153,7 +159,7 @@ fn quoted(platform: Platform, shell: &str, folder: &str) -> String {
     }
 }
 
-fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
+fn drive(shell: Option<String>, ai: bool, keep: bool, verbose: bool) -> Result<(), String> {
     let platform = Platform::current();
     let mut config = Config::from_environment();
     let shell = shell.unwrap_or_else(|| {
@@ -211,7 +217,23 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
     let sink: EventSink = Arc::new(move |key, event| {
         let _ = sender.send((key, event));
     });
-    let manager = TerminalManager::new(config, Box::new(PtyBackend), integrations, sink);
+    let mut manager = TerminalManager::new(config, Box::new(PtyBackend), integrations, sink);
+    let keeper = match (keep, platform.is_windows()) {
+        (false, _) => None,
+        (true, true) => {
+            let hook = hook.clone().ok_or("--keep needs tc-hook on Windows")?;
+            let folder = std::env::temp_dir().join("tc-drive-helper");
+            Some(Keeper::Daemon(tc_pty::daemon::Daemon::new(hook, folder)))
+        }
+        (true, false) => {
+            let program = tc_pty::tmux::find(None, manager.environment()).ok_or("tmux is not installed")?;
+            Some(Keeper::Tmux(tc_pty::tmux::Tmux::new(
+                program,
+                manager.environment().clone(),
+            )))
+        }
+    };
+    manager.set_keeper(keeper.clone());
     let mut driver = Driver {
         manager,
         inbox,
@@ -332,6 +354,12 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
                 d.session(&id) == Some(expected.clone())
             })?;
             driver.log("check", "the Claude hook recorded its session");
+        }
+        // The stand-in Codex only prints its session header, which arrives before tmux's polled
+        // launch report; the real Codex also records its session through its SessionStart hook.
+        if ai && matches!(keeper, Some(Keeper::Tmux(_))) {
+            driver.log("skip", "Codex's printed session header is not read in tmux");
+        } else if ai {
             driver.manager.write(&id, "codex\r").map_err(|e| e.to_string())?;
             let expected = ("codex".to_owned(), CODEX_ID.to_owned());
             driver.wait("the Codex session", Duration::from_secs(30), |d| {
@@ -339,8 +367,60 @@ fn drive(shell: Option<String>, ai: bool, verbose: bool) -> Result<(), String> {
             })?;
             driver.log("check", "the Codex session header was captured");
         }
+        // Prints two words joined, so the output differs from the typed line.
+        let marker = |first: &str, second: &str| match shell.as_str() {
+            "cmd" => format!("echo {first}^{second}\r"),
+            _ => format!("echo {first}''{second}\r"),
+        };
+        if let Some(keeper) = &keeper {
+            driver
+                .manager
+                .write(&id, &marker("BEFORE", "DETACH"))
+                .map_err(|e| e.to_string())?;
+            driver.wait("output before detaching", Duration::from_secs(10), |d| {
+                d.output.contains("BEFOREDETACH")
+            })?;
+            // Quitting detaches: the terminal keeps running.
+            driver.manager.stop_all();
+            driver.wait("the client to exit", Duration::from_secs(10), |d| {
+                !d.manager.is_running(&id)
+            })?;
+            if !keeper.sessions().contains(&id) {
+                return Err("the kept terminal ended with its client".into());
+            }
+            driver.log("check", "the kept terminal outlived its client");
+            driver.output.clear();
+            let attached = driver
+                .manager
+                .start(&card, None, None, None)
+                .map_err(|e| e.to_string())?;
+            driver.log("attach", format!("pid={:?} shell={}", attached.pid, attached.shell));
+            driver.wait("the earlier output after attaching", Duration::from_secs(10), |d| {
+                d.output.contains("BEFOREDETACH")
+            })?;
+            driver
+                .manager
+                .write(&id, &marker("ATTACHED", "AGAIN"))
+                .map_err(|e| e.to_string())?;
+            driver.wait("output after attaching", Duration::from_secs(10), |d| {
+                d.output.contains("ATTACHEDAGAIN")
+            })?;
+            driver.wait("the folder after attaching", Duration::from_secs(10), |d| {
+                d.manager.live_directory(&id) == Some(Some(target_text.clone()))
+            })?;
+            driver.log("check", "the card attached again and kept its folder");
+            driver.manager.stop(&id);
+            driver.wait("Stop", Duration::from_secs(10), |d| !d.manager.is_running(&id))?;
+            driver.wait("the kept terminal to end", Duration::from_secs(10), |_| {
+                !keeper.sessions().contains(&id)
+            })?;
+            driver.log("check", "Stop ended the kept terminal");
+        }
         Ok(())
     })();
+    if let Some(keeper) = &keeper {
+        keeper.kill_session(&id);
+    }
 
     driver.manager.begin_shutdown(Duration::from_secs(5));
     while driver.manager.stopping() > 0 {

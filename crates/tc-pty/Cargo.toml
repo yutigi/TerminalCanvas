@@ -12,6 +12,8 @@ gethostname.workspace = true
 portable-pty.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
 tc-core.workspace = true
 uuid.workspace = true
 

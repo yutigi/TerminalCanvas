@@ -4513,6 +4513,8 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
+ "subtle",
  "tc-core",
  "uuid",
  "windows-sys 0.61.2",

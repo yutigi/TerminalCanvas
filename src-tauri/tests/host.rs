@@ -1237,3 +1237,63 @@ async fn the_tmux_setup_reports_tmux_and_is_offered_until_answered() {
     );
     assert!(!h.folder.join("tmux-setup.json").exists());
 }
+
+#[test]
+fn keeping_terminals_running_is_off_until_saved_and_keeps_other_settings() {
+    use tc_core::Platform as Os;
+    use tc_pty::manager::Keeper;
+    use terminal_canvas::host::KeepRunning;
+    let folder = std::env::temp_dir().join(format!("tc-settings-{}", uuid::Uuid::new_v4()));
+    let file = folder.join("settings.json");
+    assert_eq!(KeepRunning::read(&file), KeepRunning::default());
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(&file, r#"{"tmuxProgram":"/opt/tmux","other":1}"#).unwrap();
+    let mut setting = KeepRunning::read(&file);
+    assert!(!setting.enabled);
+    assert_eq!(setting.tmux_program, Some(PathBuf::from("/opt/tmux")));
+    setting.enabled = true;
+    setting.write(&file).unwrap();
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        json!({ "tmuxProgram": "/opt/tmux", "other": 1, "keepRunning": true })
+    );
+    assert!(KeepRunning::read(&file).enabled);
+    // An unreadable file turns it off rather than failing startup.
+    std::fs::write(&file, "not json").unwrap();
+    assert_eq!(KeepRunning::read(&file), KeepRunning::default());
+
+    // Windows keeps terminals in the app's helper, which needs tc-hook; elsewhere tmux must be found.
+    let mut paths = Paths {
+        data: folder.clone(),
+        hook: Some(folder.join("tc-hook.exe")),
+        agents: None,
+        tmux: None,
+    };
+    let env = Default::default();
+    assert!(matches!(
+        setting.keeper(&paths, &env, Os::Windows),
+        Ok(Keeper::Daemon(_))
+    ));
+    paths.hook = None;
+    assert_eq!(
+        setting.keeper(&paths, &env, Os::Windows).err(),
+        Some(terminal_canvas::host::KEEPER_MISSING)
+    );
+    let missing = KeepRunning {
+        enabled: true,
+        tmux_program: Some(folder.join("missing")),
+    };
+    assert_eq!(
+        missing.keeper(&paths, &env, Os::Linux).err(),
+        Some(terminal_canvas::host::TMUX_MISSING)
+    );
+    let tmux = folder.join("tmux");
+    std::fs::write(&tmux, b"").unwrap();
+    let found = KeepRunning {
+        enabled: true,
+        tmux_program: Some(tmux.clone()),
+    };
+    assert!(matches!(found.keeper(&paths, &env, Os::MacOs), Ok(Keeper::Tmux(found)) if found.program == tmux));
+    std::fs::remove_dir_all(folder).unwrap();
+}

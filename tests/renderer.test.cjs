@@ -3792,3 +3792,31 @@ test('pending title renames finish on their owning canvas after a canvas switch'
     assert.equal(vm.runInContext(`anyCard('${id}').titleRevision`, context), 2);
     assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
 });
+
+test('the footer Keep running button and the Settings item switch together and show the host state', async () => {
+    let enabled = false;
+    const respond = (action, payload) => {
+        if (action !== 'keep-running') return null;
+        enabled = payload.enabled;
+        return { enabled, via: enabled ? 'helper' : null, available: true, sessions: [] };
+    };
+    const { elements, calls } = await boot(createWorkspace(), { respond });
+    const button = elements.get('#keep-toggle');
+    const shown = () => [button.attributes.get('aria-pressed'), elements.get('#keep-toggle-state').textContent,
+        elements.get('#keep-setting').attributes.get('aria-checked')];
+    button.onclick(); await flush();
+    assert.deepEqual(shown(), ['true', 'On', 'true']);
+    elements.get('#keep-setting').onclick(); await flush();
+    assert.deepEqual(shown(), ['false', 'Off', 'false']);
+    assert.deepEqual(structuredClone(calls.filter(call => call.action === 'keep-running').map(call => call.payload)), [{ enabled: true }, { enabled: false }]);
+    assert.equal(button.disabled, false);
+});
+
+test('a refused Keep running switch keeps the shown state and reports why', async () => {
+    const respond = action => action === 'keep-running' ? { error: 'Keeping terminals running needs tmux, which was not found.' } : null;
+    const { elements } = await boot(createWorkspace(), { respond });
+    elements.get('#keep-toggle').onclick(); await flush();
+    assert.equal(elements.get('#keep-toggle').attributes.get('aria-pressed'), 'false');
+    assert.equal(elements.get('#keep-toggle').disabled, false);
+    assert.match(elements.get('#toast').textContent, /needs tmux, which was not found/);
+});

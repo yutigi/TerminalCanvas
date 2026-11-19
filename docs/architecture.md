@@ -42,6 +42,26 @@ fallback. Windows creates a mandatory kill-on-close Job Object before process cr
 vendored job-list patch, so startup children belong to it. Unix Stop sends SIGHUP to shell and
 foreground process groups. Failed worker startup ends the child before closing the master.
 
+With the optional Keep running setting (`keepRunning` in `settings.json` in the data folder), new
+terminals outlive the app. Quit, workspace switches, and renderer loss detach; Stop and Close end
+the terminal. Started or restored cards attach to a kept terminal and its saved integration files.
+
+On Windows (`tc_pty::daemon`), `tc-hook terminal-daemon` runs from a content-named copy in the data
+folder (so updates can replace the installed one), started outside the app's job with breakaway. It
+owns kept terminals' ConPTYs through `PtyBackend`, each in its own kill-on-close job, and serves
+the app on loopback TCP after a mutual challenge-response over the secret in its owner-only state
+file. Output passes through unchanged under the same watermarks, acknowledged by the attached app or
+immediately while detached. It keeps 1 MiB of output per terminal; attaching replays it after a
+reset, without the queries a terminal would answer, restores tracked DEC modes, and resizes the
+ConPTY, which repaints the screen. A terminal that ends unattached has its integration files
+removed. The helper exits after 30 seconds without terminals or connections.
+
+On macOS and Linux (`tc_pty::tmux`), a card's shell runs in the session `tc-<card ID>` on the
+`terminal-canvas` socket, created by a detached `new-session` in its own process group; the PTY
+runs only an attached client. tmux drops the integration's OSC sequences, so one watch thread lists
+the panes each second and replays `pane_path` (OSC 7) and the `@tc_launch`/`@tc_end` pane options
+as hidden reports.
+
 PowerShell/cmd/Bash integration supplies directories/readiness and validated AI launch metadata.
 Unix directory polling supports other shells. Claude hook files are polled twice per second and
 read again on exit/stop/save/close; Codex output is considered only during a recognized launch.

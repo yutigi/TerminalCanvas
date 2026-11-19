@@ -1429,6 +1429,38 @@ document.addEventListener('pointerdown', event => {
     if (!$('#settings-menu').hidden && !event.target.closest?.('#settings-menu,#settings')) setSettingsMenu(false);
 }, true);
 $('#agent-setup').onclick = () => { setSettingsMenu(false); run(() => openAgentSetup()); };
+// Kept terminals outlive the app (in the host's helper on Windows, in tmux elsewhere). The host
+// reports the setting and the cards whose terminals still run; those cards attach again as soon as
+// their workspace loads.
+let keepEnabled = false;
+function showKeep(status) {
+    keepEnabled = !!status?.enabled;
+    $('#keep-setting').setAttribute('aria-checked', String(keepEnabled));
+    $('#keep-state').textContent = keepEnabled ? 'On' : 'Off';
+    $('#keep-toggle').setAttribute('aria-pressed', String(keepEnabled));
+    $('#keep-toggle-state').textContent = keepEnabled ? 'On' : 'Off';
+}
+function attachKept(status) {
+    showKeep(status);
+    if (!keepEnabled || bridge?.remote) return;
+    for (const id of status.sessions || []) {
+        const s = sessions.get(id);
+        if (s?.card && !['running', 'starting'].includes(s.status)) run(() => start(s.card));
+    }
+}
+// The Settings menu item and the footer button both switch it.
+async function toggleKeep() {
+    const button = $('#keep-toggle');
+    if (button.disabled) return;
+    button.disabled = true;
+    try { showKeep(await invoke('keep-running', { enabled: !keepEnabled })); }
+    finally { button.disabled = false; }
+    toast(keepEnabled
+        ? 'Terminals you start now keep running after you quit, and attach again when you reopen. Stop ends a terminal.'
+        : 'Terminals you start now stop when you quit. Terminals already kept running continue until you stop them.');
+}
+$('#keep-setting').onclick = () => { setSettingsMenu(false); run(toggleKeep); };
+$('#keep-toggle').onclick = () => run(toggleKeep);
 $('#agent-form').onsubmit = event => {
     event.preventDefault(); if (agentBusy) return;
     const chosen = [...agentChoices.values()].filter(choice => choice.box.checked);
@@ -1634,11 +1666,11 @@ function remoteTerminals(terminals) {
 async function canReplace() {
     if (canvasMutation || boardBusy() || imageImports || formBusy || duplicateBusy) return false;
     if (canvasStates.length === 1 && !workspace.cards.length && !workspace.items.length) return true;
-    return confirmAction('Replace this workspace?', 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
+    return confirmAction('Replace this workspace?', keepEnabled ? 'Save a workspace file first if you want to keep this layout. Kept terminals keep running and attach again when you reopen this workspace; others stop.' : 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
 }
 async function save() { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.'); }
 $('#save').onclick = () => run(save);
-$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); } });
+$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); attachKept(result.keepRunning); } });
 $('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('new'); loadWorkspace(result.workspace, result.titleEpoch); changed(); });
 $('#workspace-name').oninput = () => { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; changed(); };
 $('#canvas-list').onchange = () => { if (!switchCanvas($('#canvas-list').value)) renderCanvases(); };
@@ -1859,7 +1891,7 @@ if (bridge) {
         if (event.type === 'update') showUpdate(event);
         if (event.type === 'launch') requestTerminal(event);
         if (event.type === 'closing') run(async () => {
-            if (event.running && !await confirmAction('Close Terminal Canvas?', `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
+            if (event.running && !await confirmAction('Close Terminal Canvas?', keepEnabled ? `Kept terminals keep running and attach again when you reopen; others stop. Your layout will be saved.` : `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
             clearTimeout(autosaveTimer); await invoke('close', workspace);
         });
     });
@@ -1898,6 +1930,7 @@ if (bridge) {
         }
         if (initial.warning) toast(initial.warning);
         tmuxPending = !!initial.tmuxSetup;
+        if (!bridge.remote) attachKept(initial.keepRunning);
         if (initial.agentSetup) await openAgentSetup({ offer: true });
         offerTmuxSetup();
     });
