@@ -1859,6 +1859,30 @@ $('#update').onclick = () => run(async () => {
     clearTimeout(autosaveTimer); await invoke('close', workspace);
 });
 window.addEventListener('resize', () => { if (ready) renderCamera(); });
+// Output is acknowledged once xterm has parsed it, which paces the program writing it. xterm parses
+// on timers, and a minimized or covered window throttles them to as little as one a minute, which
+// would stall the program at the host's high watermark. While the window is hidden, output is
+// acknowledged as it arrives instead, leaving at most this many UTF-16 units waiting to be parsed.
+const HIDDEN_PARSE_BACKLOG = 4_000_000;
+// The host ignores a larger acknowledgment.
+const ACK_CHUNK = 1024 * 1024;
+function writeOutput(s, id, data) {
+    s.ackId = id;
+    s.unacknowledged = (s.unacknowledged || 0) + data.length;
+    s.unparsed = (s.unparsed || 0) + data.length;
+    s.terminal.write(data, () => { s.unparsed -= data.length; acknowledgeOutput(s); });
+    acknowledgeOutput(s);
+}
+function acknowledgeOutput(s) {
+    const held = document.hidden ? Math.max(0, s.unparsed - HIDDEN_PARSE_BACKLOG) : s.unparsed;
+    for (let amount = s.unacknowledged - held; amount > 0; amount -= ACK_CHUNK) {
+        const part = Math.min(amount, ACK_CHUNK);
+        s.unacknowledged -= part;
+        bridge.acknowledge(s.ackId, part);
+    }
+}
+// Output already waiting when the window is hidden would otherwise hold the terminal paused.
+document.addEventListener('visibilitychange', () => { for (const s of sessions.values()) if (s.unacknowledged) acknowledgeOutput(s); });
 if (bridge) {
     bridge.onEvent(event => {
         if (bridge.remote && event.type === 'remote-workspace' && ready) remoteWorkspace(event.workspace, event.titleEpoch);
@@ -1892,7 +1916,7 @@ if (bridge) {
                 s.startupCursorQueries += [...output.matchAll(/\x1b\[6n/g)].length;
                 s.startupQueryTail = output.slice(-3);
             }
-            if (s?.terminal) s.terminal.write(event.data, () => bridge.acknowledge(event.id, event.data.length));
+            if (s?.terminal) writeOutput(s, event.id, event.data);
             else bridge.acknowledge(event.id, event.data.length);
         }
         if (event.type === 'cwd' && s) showDirectory(s, event.cwd);

@@ -208,6 +208,51 @@ test('hidden canvases keep complete writes, acknowledgments, cwd and session met
     await bridge.invoke('noop');
 });
 
+test('a hidden window acknowledges output on arrival so throttled parsing cannot pause the terminal', async () => {
+    const board = createWorkspace(), card = createCard(); board.cards.push(card);
+    const { context, onEvent, document, documentListeners } = await boot(board, { terminals: true });
+    context.id = card.id;
+    vm.runInContext(`
+        globalThis.parsed = []; globalThis.acks = [];
+        // Writes wait for xterm's (throttled) parse timer until the test runs it.
+        sessions.get(id).terminal.write = (data, done) => parsed.push(done);
+        bridge.acknowledge = (terminal, amount) => acks.push({ terminal, amount });
+    `, context);
+    const total = () => json(context, 'acks.reduce((sum, ack) => sum + ack.amount, 0)');
+    const parse = () => vm.runInContext('parsed.shift()()', context);
+
+    onEvent({ type: 'data', id: card.id, data: 'visible' });
+    assert.equal(total(), 0, 'a visible window acknowledges only parsed output');
+    parse();
+    assert.deepEqual(json(context, 'acks'), [{ terminal: card.id, amount: 7 }]);
+
+    onEvent({ type: 'data', id: card.id, data: 'waiting 日本語' });
+    document.hidden = true; documentListeners.get('visibilitychange')();
+    assert.equal(total(), 7 + 11, 'output already waiting is released when the window hides');
+    onEvent({ type: 'data', id: card.id, data: '😀 while hidden' });
+    assert.equal(total(), 7 + 11 + 15, 'hidden output is acknowledged on arrival');
+    parse(); parse();
+    assert.equal(total(), 7 + 11 + 15, 'parsing later never acknowledges twice');
+
+    const chunk = 'x'.repeat(1_000_000);
+    for (let index = 0; index < 5; index++) onEvent({ type: 'data', id: card.id, data: chunk });
+    assert.equal(total(), 7 + 11 + 15 + 4_000_000, 'the unparsed backlog is bounded');
+    assert.ok(json(context, 'acks.every(ack => ack.amount <= 1024 * 1024)'), 'each acknowledgment stays within the host limit');
+    parse();
+    assert.equal(total(), 33 + 5_000_000, 'parsing releases what the bound held back');
+    onEvent({ type: 'data', id: card.id, data: 'held' });
+    assert.equal(total(), 33 + 5_000_000, 'at the bound, output waits for parsing');
+    parse();
+    assert.equal(total(), 33 + 5_000_004);
+
+    document.hidden = false; documentListeners.get('visibilitychange')();
+    onEvent({ type: 'data', id: card.id, data: 'visible again' });
+    assert.equal(total(), 33 + 5_000_004, 'a shown window waits for parsing again');
+    while (json(context, 'parsed.length')) parse();
+    assert.equal(total(), 33 + 5_000_004 + 13);
+    assert.equal(json(context, 'sessions.get(id).unacknowledged'), 0);
+});
+
 test('canvas switches restore selection, fullscreen focus, and hide SVG connectors as well as cards', async () => {
     const board = twoCanvases();
     board.items = [{ id: 'connector', type: 'line', start: { id: board.cards[0].id }, end: { x: 12, y: 34 }, arrow: true }];

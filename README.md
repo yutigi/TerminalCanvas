@@ -451,7 +451,10 @@ factory fixtures. Golden updates must be intentional and reviewed.
 Windows cleanup uses the documented local `portable-pty` patch in `vendor/portable-pty/PATCH.md`.
 A mandatory kill-on-close Job Object is attached in process creation before startup children can
 escape. Unix Stop signals process groups. The PTY backend has a reader, writer, and exit waiter;
-output pauses at 256,000 unacknowledged UTF-16 units and resumes below 32,000. Input is applied in
+output pauses at 256,000 unacknowledged UTF-16 units and resumes below 32,000. The UI acknowledges
+output once xterm parses it. While the window is minimized or covered, it acknowledges output on
+arrival (up to 4,000,000 unparsed units), and the webview's background timer throttling is turned
+off, so terminals keep running when the app is not in front. Input is applied in
 per-terminal sequence order, and the host actor owns all mutable terminal/recovery state.
 
 ## Windows distribution
