@@ -21,8 +21,8 @@ struct Server {
 
 impl Server {
     fn new() -> Self {
-        if !cfg!(unix) {
-            panic!("Real tmux probes require native macOS/Linux.");
+        if !cfg!(unix) && std::env::var_os("TC_TMUX_BINARY").is_none() {
+            panic!("On Windows, set TC_TMUX_BINARY to an MSYS2/Cygwin tmux, e.g. C:\\msys64\\usr\\bin\\tmux.exe.");
         }
         let binary =
             tc_tmux::client::find_binary(std::env::var_os("TC_TMUX_BINARY").as_deref().map(std::path::Path::new))
@@ -62,7 +62,20 @@ impl Server {
     }
 
     fn run(&self, args: &[&str]) -> String {
-        let output = OsCommand::new(&self.binary)
+        let mut command = OsCommand::new(&self.binary);
+        if cfg!(windows) {
+            // An MSYS2/Cygwin server's shell needs its own /usr/bin (stty, etc.) on PATH.
+            let mut path = vec![self.binary.parent().unwrap().to_owned()];
+            path.extend(
+                std::env::var_os("PATH")
+                    .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            );
+            command.env("PATH", std::env::join_paths(path).unwrap());
+            // Stop the MSYS2/Cygwin runtime from brace-expanding "#{...}" format arguments.
+            command.env("MSYS", "noglob").env("CYGWIN", "noglob");
+        }
+        let output = command
             .arg("-S")
             .arg(&self.socket)
             .args(args)

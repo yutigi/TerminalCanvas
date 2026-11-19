@@ -96,6 +96,49 @@ pub fn find_binary(configured: Option<&Path>) -> io::Result<PathBuf> {
         })
 }
 
+/// Experimental MSYS2/Cygwin transport. A control client normally hands its stdin/stdout to the
+/// server over the socket, but Cygwin's emulated AF_UNIX cannot pass descriptors, so a piped
+/// client is never served. Cygwin tmux instead reopens a client's terminal by name, so the client
+/// runs on a Cygwin pty made by `script`, in raw mode so protocol bytes pass unchanged.
+fn cygwin_control_command(binary: &Path, options: &Options) -> io::Result<OsCommand> {
+    let tools = binary
+        .parent()
+        .ok_or_else(|| invalid("The tmux binary has no parent folder."))?;
+    let script = tools.join("script.exe");
+    if !script.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "The MSYS2/Cygwin `script` tool must sit next to tmux (pacman -S util-linux).",
+        ));
+    }
+    let mut path = vec![tools.to_owned()];
+    path.extend(
+        std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+            .unwrap_or_default(),
+    );
+    let mut command = OsCommand::new(script);
+    // Values travel only through the environment. With globbing and field splitting disabled the
+    // shell never reinterprets them, so the command line itself needs no quoting.
+    command
+        .args([
+            "-qfec",
+            "set -f; IFS=; stty raw -echo; exec $TC_TMUX -S $TC_SOCKET -f /dev/null -C attach-session -t $TC_SESSION",
+            "/dev/null",
+        ])
+        .env(
+            "PATH",
+            std::env::join_paths(path).map_err(|_| invalid("PATH is not representable."))?,
+        )
+        // Cygwin programs glob/brace-expand a native caller's command line ("#{x}" -> "#x").
+        .env("MSYS", "noglob")
+        .env("CYGWIN", "noglob")
+        .env("TC_TMUX", binary)
+        .env("TC_SOCKET", &options.socket)
+        .env("TC_SESSION", options.session.to_string());
+    Ok(command)
+}
+
 /// Phase 1 always requires an explicit socket, even outside tests. There is no default-server
 /// fallback. Phase 2 can add a separately validated production connection policy.
 pub struct Options {
@@ -130,10 +173,12 @@ pub struct Client {
 
 impl Client {
     pub fn attach(options: Options) -> io::Result<Self> {
-        if !cfg!(unix) {
+        // Windows has no native tmux. An explicitly configured MSYS2/Cygwin build is an
+        // experimental opt-in; there is no automatic discovery there.
+        if !cfg!(unix) && options.binary.is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Native tmux is supported only on macOS/Linux; WSL integration is a later phase.",
+                "On Windows, configure an MSYS2/Cygwin tmux binary path; WSL integration is a later phase.",
             ));
         }
         if !options.socket.is_absolute() {
@@ -143,8 +188,11 @@ impl Client {
         let version = Version::probe(&binary)?;
         // -C is the pipe protocol. -CC includes terminal-emulator DCS framing and terminal modes.
         // Ignore user config when starting a server (normally attach requires an existing one).
-        let mut child = OsCommand::new(binary)
-            .args([
+        let mut command = if cfg!(windows) {
+            cygwin_control_command(&binary, &options)?
+        } else {
+            let mut command = OsCommand::new(binary);
+            command.args([
                 "-S".as_ref(),
                 options.socket.as_os_str(),
                 "-f".as_ref(),
@@ -153,7 +201,10 @@ impl Client {
                 "attach-session".as_ref(),
                 "-t".as_ref(),
                 options.session.to_string().as_ref(),
-            ])
+            ]);
+            command
+        };
+        let mut child = command
             .env_remove("TMUX")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
