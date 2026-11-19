@@ -20,7 +20,14 @@ test('WebView2 arrow pixels preserve plain, colored, and selected lines in force
             { dataURL: 'data:image/png;base64,' + png.toString('base64'), lines: scene.lines });
         return scene;
     };
-    assert.deepEqual(arrowPaintFailures(await capture('normal'), 'WebView2 normal'), []);
+    const normal = await capture('normal');
+    assert.deepEqual(arrowPaintFailures(normal, 'WebView2 normal'), []);
+    await h.page.evaluate(() => {
+        const hidden = document.createElement('button'); hidden.className = 'nav-item'; hidden.hidden = true;
+        document.querySelector('#help').before(hidden);
+    });
+    const withHidden = await h.page.evaluate(() => window.captureLayout('board'));
+    assert.deepEqual(withHidden.elements, normal.elements, 'A hidden control must not renumber visible layout measurements.');
     await h.page.emulateMedia({ forcedColors: 'active' });
     const forced = await capture('forced-colors');
     assert.equal(forced.forcedColorsActive, true);

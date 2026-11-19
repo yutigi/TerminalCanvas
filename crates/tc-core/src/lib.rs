@@ -49,7 +49,9 @@ pub mod plain;
 pub mod pointers;
 pub mod recovery;
 pub mod session;
+pub mod skills;
 pub mod styles;
+pub mod titles;
 pub mod workspace;
 
 /// An error the UI shows word for word, or a file system failure.

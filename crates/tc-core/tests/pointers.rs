@@ -37,6 +37,27 @@ fn optional_fields_roundtrip_without_changing_legacy_defaults() {
 }
 
 #[test]
+fn pointers_roundtrip_on_hidden_canvases_but_cannot_span_canvases() {
+    let mut raw = board();
+    raw["hooksPaused"] = json!(true);
+    raw["terminalTheme"] = json!("paper");
+    raw["canvases"] = json!([
+        {"id":"foreground", "name":"Foreground", "camera":raw["camera"], "cardIds":[raw["cards"][2]["id"]], "itemIds":[]},
+        {"id":"background", "name":"Background", "camera":raw["camera"], "cardIds":[raw["cards"][0]["id"],raw["cards"][1]["id"]], "itemIds":["p"]}
+    ]);
+    raw["activeCanvas"] = json!("foreground");
+    let validated = validate_workspace(&raw).unwrap();
+    assert_eq!(validated, validate_workspace(&validated.to_value()).unwrap());
+    assert_eq!(validated.to_value()["hooksPaused"], true);
+    assert_eq!(validated.to_value()["terminalTheme"], "paper");
+    raw["items"][0]["end"]["id"] = raw["cards"][2]["id"].clone();
+    assert_eq!(
+        validate_workspace(&raw).unwrap_err().to_string(),
+        "Connectors cannot span canvases."
+    );
+}
+
+#[test]
 fn configuration_rejects_control_sequences_bad_types_and_utf16_overflow() {
     for (field, value) in [
         ("event", json!("output")),

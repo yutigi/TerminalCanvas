@@ -2,18 +2,24 @@
 'use strict';
 const pointerStates = new Map();
 let editingPointer = null;
+function anyPointerItem(id) { return canvasStates.flatMap(canvas => canvas.board.items).find(item => item.id === id); }
+function setHooksPaused(paused) {
+    for (const canvas of canvasStates) {
+        if (paused) canvas.board.hooksPaused = true; else delete canvas.board.hooksPaused;
+    }
+}
 function pointerCandidate(item) {
     return item?.type === 'line' && item.arrow && findCard(item.start.id) && findCard(item.end.id);
 }
 function renderPointerControls() {
     if (!workspace) return;
     const item = selection.size === 1 ? findItem(selected) : null;
-    $('#pointer-configure').hidden = !pointerCandidate(item);
-    $('#pointer-toggle').hidden = !item?.hook;
+    $('#pointer-configure').hidden = !!bridge?.remote || !pointerCandidate(item);
+    $('#pointer-toggle').hidden = !!bridge?.remote || !item?.hook;
     $('#pointer-toggle').textContent = item?.hook?.armed ? 'Disarm pointer' : 'Arm pointer';
     $('#pointer-status').hidden = !item?.hook;
     if (item?.hook) $('#pointer-status').textContent = pointerLabel(item);
-    $('#pointers-pause').hidden = !workspace.items.some(item => item.hook);
+    $('#pointers-pause').hidden = !!bridge?.remote || !canvasStates.some(canvas => canvas.board.items.some(item => item.hook));
     $('#pointers-pause').textContent = workspace.hooksPaused ? 'Resume hooks' : 'Pause hooks';
     $('#pointers-pause').setAttribute('aria-pressed', String(!!workspace.hooksPaused));
 }
@@ -33,12 +39,12 @@ function renderPointerLine(item, view, start, end) {
     view.pulse.setAttribute('d', `M${start.x} ${start.y}L${end.x} ${end.y}`);
 }
 function pointerEvent(event) {
-    const item = findItem(event.id);
+    const item = anyPointerItem(event.id);
     if (!item?.hook) return;
     const latest = { state: event.state, message: event.message };
     pointerStates.set(item.id, latest);
     const view = itemViews.get(item.id);
-    if (view) {
+    if (view && findItem(item.id) === item) {
         view.element.classList.remove('pointer-flash');
         // Restart the pulse even when two deliveries occur before the previous pulse finishes.
         void view.element.getBoundingClientRect();
@@ -47,14 +53,17 @@ function pointerEvent(event) {
     }
     renderPointerControls();
     if (event.state === 'firing') setTimeout(() => {
-        if (pointerStates.get(item.id) !== latest || findItem(item.id) !== item) return;
-        latest.state = 'armed'; renderLine(item); renderPointerControls();
+        if (pointerStates.get(item.id) !== latest || anyPointerItem(item.id) !== item) return;
+        latest.state = 'armed';
+        if (findItem(item.id) === item) renderLine(item);
+        renderPointerControls();
     }, 1200);
     if (event.state === 'failed') toast(`Hook pointer: ${event.message}`);
 }
 async function savePointerChange(item, hook, paused) {
+    if (bridge?.remote) throw new Error('Configure hook pointers in the desktop app.');
     clearTimeout(autosaveTimer);
-    const candidate = cloneData(workspace);
+    const candidate = cloneData(workspaceSnapshot());
     if (item) {
         const next = candidate.items.find(next => next.id === item.id);
         if (!next) throw new Error('This arrow was removed.');
@@ -67,7 +76,7 @@ async function savePointerChange(item, hook, paused) {
         if (hook) item.hook = hook; else delete item.hook;
         pointerStates.delete(item.id);
     }
-    if (paused !== undefined) { if (paused) workspace.hooksPaused = true; else delete workspace.hooksPaused; }
+    if (paused !== undefined) setHooksPaused(paused);
     renderLines(); renderPointerControls(); changed();
 }
 function pointerFields() {

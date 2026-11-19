@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use tc_core::workspace::{create_card, create_workspace};
 use tc_pty::manager::{Backend, Config, EventSink, ExitStatus, Process, SessionEvent, SessionKey, SpawnRequest};
-use terminal_canvas::host::{BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform};
+use terminal_canvas::host::{AgentHome, BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform};
 
 #[derive(Default)]
 struct FakePlatform {
@@ -138,6 +138,13 @@ impl Harness {
     /// With `hook`, the host is told `tc-hook` is in the test folder; nothing runs it unless a
     /// terminal starts.
     fn with_hook(hook: bool) -> Self {
+        Self::build(hook, false)
+    }
+    /// With an agent home in the test folder that offers the setup on the first launch.
+    fn with_agents() -> Self {
+        Self::build(false, true)
+    }
+    fn build(hook: bool, agents: bool) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let folder = std::env::temp_dir().join(format!(
             "tc-host-{}-{}",
@@ -154,6 +161,11 @@ impl Harness {
             Paths {
                 data: folder.clone(),
                 hook: hook.then(|| folder.join("tc-hook")),
+                agents: agents.then(|| AgentHome {
+                    home: folder.join("home"),
+                    claude_config: None,
+                    first_launch: true,
+                }),
             },
             platform.clone(),
             Box::new(backend),
@@ -201,6 +213,219 @@ impl Drop for Harness {
         // while idle; its next tick disposes processes, and queue workers finish before exiting.
         let _ = std::fs::remove_dir_all(&self.folder);
     }
+}
+
+#[tokio::test]
+async fn title_edits_survive_stale_saves_export_import_and_restart_without_starting_terminals() {
+    let h = Harness::new();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    let card = create_card(&json!({"cwd":h.folder,"titleMode":"automatic"})).unwrap();
+    let mut board = create_workspace().to_value();
+    board["cards"] = json!([card]);
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    let manual = h
+        .host
+        .command(
+            "rename-title",
+            Some(&json!({"id":card.id,"mode":"manual","title":"Release checks","titleEpoch":initial["titleEpoch"]})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(manual["card"]["titleMode"], "manual");
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    assert_eq!(h.read_saved()["cards"][0]["title"], "Release checks");
+    let export = h.folder.join("portable.terminalcanvas");
+    h.platform.chosen.lock().unwrap().push_back(Some(export.clone()));
+    h.host.command("export", Some(&board)).await.unwrap();
+    let exported: Value = serde_json::from_slice(&std::fs::read(&export).unwrap()).unwrap();
+    assert_eq!(exported["cards"][0]["title"], "Release checks");
+    h.host.command("new", None).await.unwrap();
+    h.platform.chosen.lock().unwrap().push_back(Some(export));
+    let imported = h.host.command("open", None).await.unwrap();
+    assert_eq!(imported["workspace"]["cards"][0]["titleMode"], "manual");
+    assert_eq!(h.host.running().await, 0);
+    assert_eq!(h.host.command("rename-title", Some(&json!({"id":card.id,"mode":"manual","title":"Stale workspace edit","titleEpoch":initial["titleEpoch"]}))).await.unwrap_err(), "The workspace has changed.");
+    let restored = h.host.command("initialize", None).await.unwrap();
+    assert_eq!(restored["workspace"]["cards"][0]["title"], "Release checks");
+    assert_eq!(h.host.running().await, 0);
+    let automatic = h
+        .host
+        .command("rename-title", Some(&json!({"id":card.id,"mode":"automatic"})))
+        .await
+        .unwrap();
+    assert_eq!(automatic["card"]["titleMode"], "automatic");
+    assert!(automatic["card"]["title"].as_str().unwrap().ends_with(" · Terminal"));
+}
+
+#[tokio::test]
+async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_manual_precedence() {
+    let h = Harness::new();
+    let initial = h.host.command("initialize", None).await.unwrap();
+    let mut card = create_card(&json!({"cwd":h.folder,"titleMode":"automatic"})).unwrap();
+    card.claude_account = Some("Naming test".into());
+    h.host
+        .command("start", Some(&json!({"card":card,"cols":80,"rows":24})))
+        .await
+        .unwrap();
+    let project: String = h
+        .folder
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let folder = h
+        .folder
+        .join("claude-accounts")
+        .join("Naming test")
+        .join("projects")
+        .join(project);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("12345678-1234-4321-9876-123456789abc.jsonl"),
+        format!(
+            "{}\n",
+            json!({"sessionId":"12345678-1234-4321-9876-123456789abc","aiTitle":"Fix browser titles ไทย"})
+        ),
+    )
+    .unwrap();
+    let (snapshot, mut events) = h.host.remote_attach().await;
+    assert_eq!(snapshot["titleEpoch"], initial["titleEpoch"]);
+    h.report_session().await;
+    let title = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["type"] == "title" {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(title["title"], "Fix browser titles ไทย");
+    assert_eq!(title["titleEpoch"], initial["titleEpoch"]);
+    h.host.running().await;
+    assert!(
+        h.events.lock().unwrap().contains(&title),
+        "desktop and browsers receive the same title event"
+    );
+    let manual = h
+        .host
+        .command(
+            "rename-title",
+            Some(&json!({"id":card.id,"mode":"manual","title":"My task"})),
+        )
+        .await
+        .unwrap();
+    let board = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["type"] == "remote-workspace" && event["workspace"]["cards"][0]["titleMode"] == "manual" {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(board["workspace"]["cards"][0], json!(manual["card"]));
+    assert_eq!(board["titleEpoch"], initial["titleEpoch"]);
+    let (snapshot, _) = h.host.remote_attach().await;
+    assert_eq!(snapshot["workspace"]["cards"][0]["title"], "My task");
+    h.host.command("close", None).await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_workspace_replacement_broadcasts_a_new_epoch_even_when_the_board_is_identical() {
+    let h = Harness::new();
+    h.host.command("initialize", None).await.unwrap();
+    let (snapshot, mut events) = h.host.remote_attach().await;
+    let replacement = h.host.command("new", None).await.unwrap();
+    assert_eq!(snapshot["workspace"], replacement["workspace"]);
+    assert_ne!(snapshot["titleEpoch"], replacement["titleEpoch"]);
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["type"] == "remote-workspace" && event["titleEpoch"] == replacement["titleEpoch"] {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(event["workspace"], replacement["workspace"]);
+}
+
+#[tokio::test]
+async fn remote_attachment_preserves_desktop_state_sequences_and_event_delivery() {
+    let h = Harness::new();
+    h.host.command("initialize", None).await.unwrap();
+    let card = h.start().await;
+    let id = card["id"].as_str().unwrap().to_owned();
+    h.host.input(&id, "desktop-first".into(), 0);
+    let (snapshot, mut remote_events) = h.host.remote_attach().await;
+    assert_eq!(snapshot["workspace"]["cards"][0]["id"], card["id"]);
+    assert_eq!(snapshot["terminals"][0]["running"], true);
+    assert_eq!(snapshot["terminals"][0]["cols"], 80);
+    let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    h.host.remote_input(id.clone(), "remote".into(), active).await.unwrap();
+    h.host.remote_attach().await;
+    h.host.input(&id, "desktop-second".into(), 1);
+    h.host.running().await;
+    let (key, events, process) = h.launches.lock().unwrap()[0].clone();
+    assert_eq!(
+        process.lock().unwrap().writes,
+        ["desktop-first", "remote", "desktop-second"]
+    );
+    events(key, SessionEvent::Output("shared-output".into()));
+    h.host.running().await;
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["data"] == "shared-output")
+    );
+    let received = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = remote_events.recv().await.unwrap();
+            if event["type"] == "data" {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(received["data"], "shared-output");
+    let (snapshot, _) = h.host.remote_attach().await;
+    assert_eq!(snapshot["output"][&id], "shared-output");
+    h.host.resize(&id, &json!(92), &json!(31));
+    let (snapshot, _) = h.host.remote_attach().await;
+    assert_eq!(snapshot["terminals"][0]["cols"], 92);
+    assert_eq!(snapshot["terminals"][0]["rows"], 31);
+    h.host.remote_detach().await;
+    h.host.input(&id, "desktop-after-stop".into(), 2);
+    h.host.running().await;
+    assert_eq!(process.lock().unwrap().writes.last().unwrap(), "desktop-after-stop");
+}
+
+#[tokio::test]
+async fn remote_input_rechecks_revocation_and_uses_the_existing_utf16_limit() {
+    let h = Harness::new();
+    let card = h.start().await;
+    let id = card["id"].as_str().unwrap().to_owned();
+    let revoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    assert_eq!(
+        h.host
+            .remote_input(id.clone(), "unsafe".into(), revoked)
+            .await
+            .unwrap_err(),
+        "Session revoked."
+    );
+    let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    assert_eq!(
+        h.host.remote_input(id, "🚀".repeat(32769), active).await.unwrap_err(),
+        "Input exceeds 64 KB."
+    );
+    assert!(h.launches.lock().unwrap()[0].2.lock().unwrap().writes.is_empty());
 }
 
 #[tokio::test]
@@ -926,6 +1151,61 @@ async fn pointers_deliver_to_ready_shells_and_never_submit_partial_user_input() 
 }
 
 #[tokio::test]
+async fn hidden_canvas_pointers_run_in_the_actor_and_remote_typing_blocks_delivery() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let foreground = h.start().await;
+    let mut board = h.read_saved();
+    board["canvases"] = json!([
+        {"id":"foreground", "name":"Foreground", "camera":board["camera"], "cardIds":[foreground["id"]], "itemIds":[]},
+        {"id":"background", "name":"Background", "camera":board["camera"], "cardIds":[source["id"],target["id"]], "itemIds":["hidden"]}
+    ]);
+    board["activeCanvas"] = json!("foreground");
+    board["items"] =
+        json!([{"id":"hidden","type":"line","arrow":true,"start":{"id":source["id"]},"end":{"id":target["id"]}}]);
+    h.host.command("pointer-configure", Some(&json!({"workspace":board,"id":"hidden","hook":{"event":"trigger","action":"shell","text":"echo hidden","armed":true}}))).await.unwrap();
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    h.pointer_request(0, "trigger").await;
+    assert!(h.pointer_writes(1).contains(&"echo hidden\r".into()));
+    assert_eq!(h.read_saved()["activeCanvas"], "foreground");
+
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let mut board = h.read_saved();
+    board["items"][0]["id"] = json!("remote-typing");
+    board["canvases"][1]["itemIds"] = json!(["remote-typing"]);
+    h.host.command("pointer-configure", Some(&json!({"workspace":board,"id":"remote-typing","hook":{"event":"trigger","action":"shell","text":"echo forbidden","armed":true}}))).await.unwrap();
+    h.host.remote_attach().await;
+    h.host
+        .remote_input(
+            target["id"].as_str().unwrap().into(),
+            "unfinished".into(),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+    let before = h.pointer_writes(1).len();
+    h.pointer_request(0, "trigger").await;
+    assert_eq!(h.pointer_writes(1).len(), before);
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["id"] == "remote-typing"
+                && event["state"] == "failed"
+                && event["message"].as_str().unwrap_or_default().contains("user input"))
+    );
+    h.host
+        .command("stop", Some(&json!({"id":target["id"],"removePointers":true})))
+        .await
+        .unwrap();
+    let saved = h.read_saved();
+    assert!(saved["items"].as_array().unwrap().is_empty());
+    assert!(saved["canvases"][1]["itemIds"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn pointers_queue_busy_ai_prompts_and_chain_stop_to_a_shell_without_typing_into_busy_agents() {
     let h = Harness::with_hook(true);
     let source = h.start().await;
@@ -1093,4 +1373,73 @@ async fn a_failed_configuration_save_pauses_automation_instead_of_arming_it_invi
     assert!(h.events.lock().unwrap().iter().any(|e| e["type"] == "pointers-paused"));
     h.pointer_request(0, "trigger").await;
     assert!(!h.events.lock().unwrap().iter().any(|e| e["type"] == "launch"));
+}
+
+#[tokio::test]
+async fn the_agent_setup_is_offered_once_and_installs_the_skill_where_agents_look() {
+    let h = Harness::new();
+    assert_eq!(
+        h.host.command("initialize", None).await.unwrap().get("agentSetup"),
+        None
+    );
+    assert_eq!(
+        h.host.command("agent-setup", Some(&json!({}))).await.unwrap_err(),
+        "Agent setup is unavailable: the home folder is unknown."
+    );
+
+    let h = Harness::with_agents();
+    let home = h.folder.join("home");
+    let setup = |payload: Value| {
+        let host = h.host.clone();
+        async move { host.command("agent-setup", Some(&payload)).await }
+    };
+    assert_eq!(h.host.command("initialize", None).await.unwrap()["agentSetup"], true);
+    // Listing changes nothing, so the offer stands.
+    let listed = setup(json!({})).await.unwrap();
+    assert_eq!(listed["targets"][0]["id"], "claude");
+    assert_eq!(listed["targets"][0]["status"], "missing");
+    assert_eq!(
+        listed["targets"][1]["folders"],
+        json!([home.join(".agents").join("skills").display().to_string()])
+    );
+    assert_eq!(h.host.command("initialize", None).await.unwrap()["agentSetup"], true);
+    for bad in [
+        json!({ "install": ["claude", "../elsewhere"] }),
+        json!({ "install": "claude" }),
+    ] {
+        assert_eq!(setup(bad).await.unwrap_err(), "Unknown agent setup target.");
+    }
+    assert!(!home.exists());
+
+    // Each Terminal Canvas Claude account gets its own copy.
+    h.host
+        .command("claude-accounts", Some(&json!({ "create": "Work" })))
+        .await
+        .unwrap();
+    let installed = setup(json!({ "install": ["claude"] })).await.unwrap();
+    assert_eq!(installed["installed"], json!(["claude"]));
+    assert_eq!(installed["targets"][0]["status"], "current");
+    assert_eq!(installed["targets"][1]["status"], "missing");
+    let skill = |skills: PathBuf| std::fs::read_to_string(skills.join("terminal-canvas").join("SKILL.md")).unwrap();
+    assert_eq!(skill(home.join(".claude").join("skills")), tc_core::skills::SKILL);
+    assert_eq!(
+        skill(h.folder.join("claude-accounts").join("Work").join("skills")),
+        tc_core::skills::SKILL
+    );
+    assert_eq!(
+        h.host.command("initialize", None).await.unwrap().get("agentSetup"),
+        None
+    );
+
+    // Declining the offer installs nothing and is not offered again.
+    let h = Harness::with_agents();
+    h.host
+        .command("agent-setup", Some(&json!({ "dismiss": true })))
+        .await
+        .unwrap();
+    assert_eq!(
+        h.host.command("initialize", None).await.unwrap().get("agentSetup"),
+        None
+    );
+    assert!(!h.folder.join("home").exists());
 }

@@ -34,7 +34,9 @@ const paths = {
     undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
     redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
     trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -68,7 +70,7 @@ function saveSidebarPreferences() {
     try { window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, JSON.stringify(sidebarPreferences)); }
     catch { /* A blocked or full store must not prevent using the sidebar. */ }
 }
-function renderSidebar() {
+function renderSidebar({ preserveCenter = true } = {}) {
     const width = viewport.clientWidth, height = viewport.clientHeight;
     const sidebar = $('#sidebar'), toggle = $('#sidebar-toggle');
     const collapsed = sidebarPreferences.collapsed || (!!focused && !focusSidebarRevealed);
@@ -91,8 +93,10 @@ function renderSidebar() {
     }
     if (!ready) return;
     // Changing the available width must preserve the world point at the viewport's center.
-    workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + (viewport.clientWidth - width) / 2));
-    workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + (viewport.clientHeight - height) / 2));
+    if (preserveCenter) {
+        workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + (viewport.clientWidth - width) / 2));
+        workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + (viewport.clientHeight - height) / 2));
+    }
     renderCamera();
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
@@ -129,13 +133,14 @@ function toast(message) {
 }
 async function invoke(action, payload) {
     if (!bridge) throw new Error('Open Terminal Canvas with npm start.');
+    if (payload === workspace && ['autosave', 'save', 'export', 'close'].includes(action)) payload = workspaceSnapshot();
     const result = await bridge.invoke(action, payload);
     if (result?.error) throw new Error(result.error);
     return result;
 }
 function run(task) { Promise.resolve().then(task).catch(error => toast(error.message)); }
 function changed() {
-    if (!ready) return;
+    if (!ready || bridge?.remote) return;
     const revision = ++saveRevision;
     $('#save-state').lastChild.textContent = 'Saving…';
     clearTimeout(autosaveTimer);
@@ -145,6 +150,7 @@ function changed() {
     }), 500);
 }
 function renderCamera() {
+    closeCanvasMenu();
     const { x, y, z } = workspace.camera;
     world.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
     viewport.style.backgroundSize = `${24 * z}px ${24 * z}px`;
@@ -172,7 +178,8 @@ function renderMinimap() {
         const status = sessions.get(card.id)?.status;
         node.className = `minimap-card${selection.has(card.id) ? ' selected' : ''}${['running', 'starting'].includes(status) ? ' running' : ''}`;
         node.style.setProperty('--profile-color', profiles.find(profile => profile.id === card.profile).color);
-        node.title = card.title;
+        applyItemStyle(card, node);
+        node.title = terminalDisplayTitle(card);
         positionMinimapElement(node, minimapLayout.cards[index]);
         return node;
     }).concat(boardItems.map((item, index) => {
@@ -243,8 +250,28 @@ function renderCardGeometry(card) {
 function renderGeometry(card) {
     renderCardGeometry(card); renderLines(); renderSelectionBox(); renderMinimap();
 }
+// card.title is the effective title after automatic/manual precedence has been applied.
+// Title updates call refresh() so both searches update without losing focus.
+function terminalDisplayTitle(card) { return card.title; }
+function matchingTerminals(query) {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return workspace.cards.filter(card => {
+        const profile = profiles.find(p => p.id === card.profile);
+        const text = [terminalDisplayTitle(card), card.cwd, sessions.get(card.id)?.cwd, card.profile, profile?.name].join(' ').toLowerCase();
+        return terms.every(term => text.includes(term));
+    });
+}
 function refresh() {
+    for (const card of workspace.cards) {
+        const title = sessions.get(card.id)?.element.querySelector('.card-title');
+        if (title) {
+            title.textContent = terminalDisplayTitle(card);
+            title.title = `${terminalDisplayTitle(card)} · Click to rename`;
+            title.setAttribute('aria-label', `Rename terminal: ${terminalDisplayTitle(card)}`);
+        }
+    }
     renderMinimap();
+    renderCanvases();
     const running = [...sessions.values()].filter(s => ['running', 'starting'].includes(s.status)).length;
     $('#card-count').textContent = workspace.cards.length;
     $('#outline-count').textContent = String(workspace.cards.length).padStart(2, '0');
@@ -252,18 +279,20 @@ function refresh() {
     $('#terminal-total').textContent = `${workspace.cards.length} terminal${workspace.cards.length === 1 ? '' : 's'}`;
     $('#empty-state').hidden = workspace.cards.length + workspace.items.length > 0;
     $('#focus-toggle').disabled = !findCard(selected);
-    const filter = $('#search').value.toLowerCase();
     const outline = $('#outline');
     outline.replaceChildren();
-    workspace.cards.filter(c => `${c.title} ${c.cwd} ${c.profile}`.toLowerCase().includes(filter)).forEach(card => {
+    matchingTerminals($('#search').value).forEach(card => {
         const s = sessions.get(card.id);
+        // A workspace reload mounts cards one at a time; recovery updates can refresh mid-load.
+        if (!s) return;
         const button = document.createElement('button');
         button.className = `outline-item ${selection.has(card.id) ? 'selected' : ''} ${s.status === 'running' ? 'running' : ''}`;
+        applyItemStyle(card, button);
         button.append(mark(profiles.find(p => p.id === card.profile)));
-        const label = document.createElement('span'); label.className = 'label'; label.textContent = card.title;
+        const label = document.createElement('span'); label.className = 'label'; label.textContent = terminalDisplayTitle(card);
         const dot = document.createElement('span'); dot.className = 'state-dot'; dot.title = s.status;
         button.append(label, dot);
-        button.onclick = () => { if (focused) setFocus(null); select(card.id); centerCard(card); };
+        button.onclick = () => { if (focused) setFocus(null); showTerminal(card.id); };
         outline.append(button);
     });
     if (!outline.childElementCount) {
@@ -271,6 +300,7 @@ function refresh() {
         p.textContent = workspace.cards.length ? 'No matching terminals.' : 'Your terminals will appear here.';
         outline.append(p);
     }
+    renderTerminalSwitcher();
 }
 // Selecting one element selects its whole group. Shift toggles the group in or out of the selection.
 // `type: false` selects a terminal without moving the keyboard into it.
@@ -337,6 +367,7 @@ function movingElements() {
     return { rects: elements.filter(e => e.type !== 'line'), lines: elements.filter(e => e.type === 'line') };
 }
 function startMove(event, id, handle) {
+    if (bridge?.remote) return;
     if (event.button !== 0 || focused || event.shiftKey) return;
     if (!selection.has(id)) select(id);
     const { rects, lines } = movingElements(), z = workspace.camera.z;
@@ -419,6 +450,8 @@ function clearKeyboardCurrent() {
 // is highlighted and panned into view at the current zoom. In Focus mode it becomes the focused terminal,
 // and the canvas pans to it when Focus ends, once the toolbars it must clear are laid out again.
 function showTerminal(id) {
+    const canvas = canvasForCard(id);
+    if (canvas && canvas !== activeCanvas && !switchCanvas(canvas.id)) return false;
     const card = findCard(id);
     if (!card) return false;
     keyboardCurrent = id;
@@ -429,6 +462,91 @@ function showTerminal(id) {
     viewport.focus({ preventScroll: true });
     return true;
 }
+const terminalSwitcher = $('#terminal-switcher');
+const switcherQuery = $('#switcher-query');
+let switcherActive = null, switcherMatches = [], switcherReturnFocus = null;
+// Shared entry point for the UI button, shortcut, and the context menu (#37).
+function openTerminalSwitcher() {
+    if (!ready || canvasMutation || boardBusy() || document.querySelector('dialog[open]')) return false;
+    switcherReturnFocus = document.activeElement;
+    switcherQuery.value = '';
+    switcherActive = focused || selected;
+    terminalSwitcher.showModal();
+    switcherQuery.setAttribute('aria-expanded', 'true');
+    renderTerminalSwitcher();
+    switcherQuery.focus({ preventScroll: true });
+    return true;
+}
+function renderTerminalSwitcher() {
+    if (!terminalSwitcher.open) return;
+    const previousIndex = switcherMatches.indexOf(switcherActive);
+    switcherMatches = matchingTerminals(switcherQuery.value).map(card => card.id);
+    if (!switcherMatches.includes(switcherActive)) switcherActive = switcherMatches[Math.max(0, Math.min(previousIndex, switcherMatches.length - 1))] || null;
+    const results = $('#switcher-results');
+    results.replaceChildren(...switcherMatches.map(id => {
+        const card = findCard(id), profile = profiles.find(p => p.id === card.profile);
+        const option = document.createElement('div');
+        option.id = `switcher-option-${id}`;
+        option.className = 'switcher-option';
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', String(id === switcherActive));
+        option.append(mark(profile));
+        const text = document.createElement('div'); text.className = 'switcher-text';
+        const title = document.createElement('div'); title.className = 'switcher-title'; title.textContent = terminalDisplayTitle(card);
+        const detail = document.createElement('div'); detail.className = 'switcher-detail';
+        detail.textContent = `${profile.name} · ${sessions.get(id)?.cwd || card.cwd || 'No folder'} · ${sessions.get(id)?.status || 'idle'} · ${id}`;
+        text.append(title, detail); option.append(text);
+        option.title = `${title.textContent}\n${detail.textContent}`;
+        // Keep the combobox as the only result-navigation focus target.
+        option.addEventListener('pointerdown', event => event.preventDefault());
+        option.onclick = () => confirmTerminalSwitch(id);
+        return option;
+    }));
+    if (switcherActive) {
+        switcherQuery.setAttribute('aria-activedescendant', `switcher-option-${switcherActive}`);
+        results.children[switcherMatches.indexOf(switcherActive)]?.scrollIntoView?.({ block: 'nearest' });
+    } else switcherQuery.removeAttribute('aria-activedescendant');
+    const status = !workspace.cards.length ? 'There are no terminals on this canvas yet.'
+        : !switcherMatches.length ? 'No matching terminals.'
+        : `${switcherMatches.length} terminal${switcherMatches.length === 1 ? '' : 's'}${switcherQuery.value.trim() ? ' found' : ' on this canvas'}.`;
+    // Folder polling must not repeatedly announce an unchanged result count.
+    if ($('#switcher-status').textContent !== status) $('#switcher-status').textContent = status;
+}
+function confirmTerminalSwitch(id = switcherActive) {
+    // Revalidate the stable ID at confirmation, including a result removed since the last render.
+    if (!id || !findCard(id)) { renderTerminalSwitcher(); return; }
+    switcherReturnFocus = null;
+    terminalSwitcher.close();
+    showTerminal(id);
+}
+terminalSwitcher.addEventListener('close', () => {
+    switcherQuery.setAttribute('aria-expanded', 'false');
+    switcherQuery.removeAttribute('aria-activedescendant');
+    const target = switcherReturnFocus;
+    switcherReturnFocus = null;
+    if (target) {
+        if (target.isConnected && !target.disabled && target.getClientRects().length) target.focus({ preventScroll: true });
+        else viewport.focus({ preventScroll: true });
+    }
+});
+terminalSwitcher.addEventListener('cancel', event => { event.preventDefault(); terminalSwitcher.close(); });
+terminalSwitcher.addEventListener('keydown', event => {
+    event.stopPropagation();
+    if (event.isComposing) return;
+    if (event.key === 'Escape') { event.preventDefault(); terminalSwitcher.close(); return; }
+    if (event.target.closest('button')) return;
+    if (event.key === 'Enter') { event.preventDefault(); if (!event.repeat) confirmTerminalSwitch(); return; }
+    if (event.ctrlKey || event.metaKey || event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const count = switcherMatches.length;
+    if (!count) return;
+    const index = switcherMatches.indexOf(switcherActive);
+    switcherActive = switcherMatches[(index + (event.key === 'ArrowDown' ? 1 : -1) + count) % count];
+    renderTerminalSwitcher();
+});
+switcherQuery.oninput = renderTerminalSwitcher;
+$('#find-terminal').onclick = openTerminalSwitcher;
+$('#switcher-close').onclick = () => terminalSwitcher.close();
 // From the selected element, or with nothing selected from the middle of the view, to the nearest
 // terminal that way. When none lies that way the selection stays, and a selected terminal is shown again.
 function navigateTerminals(direction) {
@@ -494,11 +612,46 @@ function setFocus(id, { type = true } = {}) {
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
 function fitTerminal(s) {
-    if (!s?.fit || !s.element.offsetWidth || !s.element.offsetHeight) return;
+    if (bridge?.remote) return;
+    if (!s?.fit || s.canvas !== activeCanvas || !s.element.offsetWidth || !s.element.offsetHeight) return;
     const size = s.fit.proposeDimensions();
     if (size && Number.isFinite(size.cols) && Number.isFinite(size.rows)) s.terminal.resize(Math.max(2, Math.min(500, size.cols)), Math.max(1, Math.min(300, size.rows)));
 }
 const terminalFontSize = card => card.fontSize ?? TERMINAL_FONT.DEFAULT;
+const themeIds = window.TerminalCanvasItemStyles.TERMINAL_THEMES;
+const terminalTheme = card => window.TerminalCanvasThemes[card.theme || workspace.terminalTheme || 'current'];
+function renderTerminalAppearance(card) {
+    const s = sessions.get(card.id); if (!s) return;
+    applyItemStyle(card, s.element);
+    const theme = terminalTheme(card);
+    s.element.style.setProperty('--terminal-background', theme.background);
+    // Updating options preserves the xterm instance, buffer, selection, and PTY.
+    if (s.terminal) s.terminal.options.theme = { ...theme };
+}
+function renderThemeControls() { $('#workspace-theme').value = workspace?.terminalTheme || 'current'; }
+function setWorkspaceTerminalTheme(theme) {
+    for (const canvas of canvasStates) {
+        if (theme && theme !== 'current') canvas.board.terminalTheme = theme;
+        else delete canvas.board.terminalTheme;
+    }
+}
+function setTerminalTheme(theme, global = false) {
+    if (!ready || boardBusy() || (theme !== '' && !themeIds.includes(theme))) return;
+    const cards = global ? canvasStates.flatMap(canvas => canvas.board.cards) : selectedItems(['terminal']);
+    if (!global && !cards.length) return;
+    recordChange(() => {
+        if (global) setWorkspaceTerminalTheme(theme);
+        else for (const card of cards) {
+            // An explicit Current overrides a non-Current workspace default.
+            if (theme) card.theme = theme;
+            else delete card.theme;
+        }
+        for (const card of cards) renderTerminalAppearance(card);
+    });
+    renderThemeControls(); renderStyleToolbar(); changed();
+}
+$('#workspace-theme').onchange = () => { setTerminalTheme($('#workspace-theme').value, true); renderThemeControls(); };
+$('#terminal-theme').onchange = () => { setTerminalTheme($('#terminal-theme').value); renderStyleToolbar(); };
 // xterm measures the new cell size immediately, so the refit gives a running program its new rows and columns.
 function setTerminalFontSize(card, size) {
     const next = Math.max(TERMINAL_FONT.MIN, Math.min(TERMINAL_FONT.MAX, Math.round(size)));
@@ -553,14 +706,18 @@ function mount(card) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><span class="card-title"></span><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><button type="button" class="card-title" title="Rename terminal"></button><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
-    el.querySelector('.card-title').textContent = card.title;
-    const s = { element: el, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
+    el.querySelector('.card-title').textContent = terminalDisplayTitle(card);
+    el.querySelector('.card-title').setAttribute('aria-label', 'Rename terminal: ' + terminalDisplayTitle(card));
+    el.querySelector('.card-title').onclick = () => openTitleDialog(card);
+    el.querySelector('.card-title').disabled = !!bridge?.remote;
+    const s = { element: el, canvas: activeCanvas, card, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
-    recoveryInfo(card); renderAccount(card);
+    recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
     if (window.Terminal && window.FitAddon) {
         s.terminal = new window.Terminal({
+            disableStdin: !!bridge?.remote && bridge.role !== 'control',
             fontFamily: "'Cascadia Code', 'Cascadia Mono', Consolas, monospace", fontSize: terminalFontSize(card), lineHeight: 1.3,
             cursorBlink: true, scrollback: 5000, allowProposedApi: false,
             linkHandler: {
@@ -571,21 +728,38 @@ function mount(card) {
                     run(() => invoke('open-link', uri));
                 }
             },
-            theme: { background: '#15191f', foreground: '#c8d1dc', cursor: '#c8ecb5', selectionBackground: '#52694e80', black: '#29313d', red: '#e59a91', green: '#b5d69a', yellow: '#dfc68c', blue: '#94b5e8', magenta: '#baa0da', cyan: '#91cbc7', white: '#d5dce5', brightBlack: '#667486', brightRed: '#f0b2a9', brightGreen: '#c8ecb5', brightYellow: '#f1dbab', brightBlue: '#b2cdff', brightMagenta: '#d8bcf6', brightCyan: '#b1e4df', brightWhite: '#f0f4fa' }
+            theme: { ...terminalTheme(card) }
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
         s.terminal.onData(data => {
+            if (bridge?.remote && (bridge.role !== 'control' || s.replaying || !s.userInput)) return;
             // ConPTY can ask for its cursor before the start invoke resolves.
             // Answer an observed query while keeping early user typing blocked.
             const startupReply = s.status === 'starting' && s.startupCursorQueries > 0 && /^\x1b\[\d+;\d+R$/.test(data);
             if (startupReply) s.startupCursorQueries--;
             if (s.status === 'running' || startupReply) bridge.input(card.id, data);
         });
+        if (bridge?.remote) {
+            // Only user input reaches the shared PTY. Terminal query responses come from desktop.
+            const userInput = event => {
+                if (!event.isTrusted) return;
+                s.userInput = true;
+                // Native dispatch runs a microtask checkpoint between DOM listeners. Keep the
+                // flag through xterm's target listener, then clear it in the next task.
+                clearTimeout(s.userInputTimer);
+                s.userInputTimer = setTimeout(() => { s.userInput = false; }, 0);
+            };
+            el.addEventListener('keydown', userInput, true);
+            el.addEventListener('paste', userInput, true);
+            el.addEventListener('input', userInput, true);
+        }
         s.terminal.onResize(({ cols, rows }) => { if (['running', 'starting'].includes(s.status)) bridge.resize(card.id, cols, rows); });
+        s.terminal.onBell?.(() => markCanvasActivity(s, 'Bell'));
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
+            if (canvasShortcut(event, { detect: true })) return false;
             if (event.altKey || event.isComposing) return true;
-            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'b'].includes(key)))) return false;
+            if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'p', 'b'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
             // Ctrl/Cmd+0 resets the text size; Ctrl+- and Ctrl+= still reach the shell (Ctrl+- is readline undo).
             // Digit0 covers layouts whose 0 needs Shift. Numpad0 is matched by its key only: without
@@ -610,7 +784,10 @@ function mount(card) {
                     const generation = s.generation;
                     run(async () => {
                         const { text } = await invoke('clipboard-read');
-                        if (sessions.get(card.id) === s && s.status === 'running' && s.generation === generation) s.terminal.paste(text);
+                        if (sessions.get(card.id) === s && s.status === 'running' && s.generation === generation) {
+                            s.userInput = true;
+                            try { s.terminal.paste(text); } finally { s.userInput = false; }
+                        }
                     });
                 }
             }
@@ -626,6 +803,7 @@ function mount(card) {
         else if (selected !== card.id) { selected = card.id; applySelection(true); }
     });
     el.querySelectorAll('[data-action]').forEach(button => button.onclick = () => run(async () => {
+        if (canvasMutation) return;
         const action = button.dataset.action;
         if (action === 'duplicate') await duplicateTerminal(card);
         if (action === 'account') await openAccountDialog(card);
@@ -639,13 +817,14 @@ function mount(card) {
         }
         if (action === 'close') {
             if (['running', 'starting'].includes(s.status) && !await confirmAction('Close this terminal?', 'Its running shell and child processes will be stopped. Terminal output is not saved.', 'Close terminal')) return;
-            await invoke('stop', { id: card.id, removePointers: true });
-            removeCard(card);
+            s.closing = true;
+            try { await invoke('stop', { id: card.id, removePointers: true }); removeCard(card); }
+            finally { s.closing = false; }
         }
     }));
     const header = el.querySelector('.card-header');
     header.addEventListener('pointerdown', event => { if (!event.target.closest('button')) startMove(event, card.id, header); });
-    drag(el.querySelector('.card-resize'), () => !focused, (dx, dy, initial) => {
+    drag(el.querySelector('.card-resize'), () => !focused && !bridge?.remote, (dx, dy, initial) => {
         card.w = Math.max(400, Math.min(2400, initial.w + dx / workspace.camera.z));
         card.h = Math.max(280, Math.min(1800, initial.h + dy / workspace.camera.z));
         renderGeometry(card);
@@ -673,7 +852,86 @@ function showDirectory(s, cwd) {
     const label = cwd || 'Current directory unavailable';
     s.element.querySelector('.card-directory span').textContent = label;
     s.element.querySelector('.card-directory').title = label;
+    if (ready) refresh();
 }
+
+/* Titles are plain text. The host owns names and revisions; all surfaces read card.title. */
+let titleCard = null, titleBusy = false, launchTitleEdited = false, titleEpoch;
+function validTerminalTitle(value) {
+    const title = value.trim();
+    return title.length > 0 && title.length <= 100 && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(title);
+}
+function showTitle(card) {
+    const button = sessions.get(card.id)?.element.querySelector('.card-title');
+    if (button) {
+        button.textContent = card.title;
+        button.title = `${card.title} · Click to rename`;
+        button.setAttribute('aria-label', `Rename terminal: ${card.title}`);
+    }
+    refresh();
+}
+function applyTitleEvent(event) {
+    const card = anyCard(event.id);
+    if (event.titleEpoch === titleEpoch && card && card.titleMode === 'automatic' && event.titleMode === 'automatic'
+        && Number.isSafeInteger(event.titleRevision) && event.titleRevision > (card.titleRevision || 0)
+        && typeof event.title === 'string' && validTerminalTitle(event.title)) {
+        Object.assign(card, { title: event.title, titleMode: event.titleMode, titleRevision: event.titleRevision });
+        showTitle(card); changed();
+    }
+}
+function openTitleDialog(card) {
+    if (!ready || bridge?.remote || titleBusy || document.querySelector('dialog[open]')) return;
+    titleCard = card;
+    $('#rename-title').value = card.title;
+    $('#title-mode').textContent = card.titleMode === 'automatic' ? 'Automatic title' : 'Manual title';
+    $('#title-error').hidden = true;
+    $('#title-dialog').showModal();
+    $('#rename-title').focus(); $('#rename-title').select();
+}
+async function renameTerminal(card, mode, title) {
+    if (bridge?.remote || titleBusy || anyCard(card.id) !== card) return;
+    if (mode === 'manual' && !validTerminalTitle(title)) throw new Error('Use a name of 1 to 100 characters without controls.');
+    titleBusy = true;
+    const s = sessions.get(card.id), previous = { title: card.title, titleMode: card.titleMode, titleRevision: card.titleRevision };
+    // Immediate manual precedence, even while an older automatic event is in flight.
+    if (s) s.namingPending = true;
+    card.titleMode = mode;
+    if (mode === 'manual') card.title = title.trim();
+    showTitle(card);
+    try {
+        // New stopped cards might not have reached the host's debounced autosave yet.
+        await invoke('autosave', workspace);
+        if (anyCard(card.id) !== card || sessions.get(card.id) !== s) return;
+        const result = await invoke('rename-title', { id: card.id, mode, ...(titleEpoch === undefined ? {} : { titleEpoch }), ...(mode === 'manual' ? { title: card.title } : {}) });
+        if (anyCard(card.id) !== card || sessions.get(card.id) !== s) return;
+        Object.assign(card, { title: result.card.title, titleMode: result.card.titleMode, titleRevision: result.card.titleRevision });
+        showTitle(card); changed();
+        $('#title-dialog').close(); titleCard = null;
+    } catch (error) {
+        if (anyCard(card.id) === card) { Object.assign(card, previous); showTitle(card); }
+        throw error;
+    } finally {
+        if (s) {
+            s.namingPending = false;
+            const deferred = s.deferredTitle; delete s.deferredTitle;
+            if (deferred && sessions.get(card.id) === s) applyTitleEvent(deferred);
+        }
+        titleBusy = false;
+    }
+}
+$('#title-form').onsubmit = event => {
+    event.preventDefault();
+    const card = titleCard;
+    if (card) run(async () => {
+        try { await renameTerminal(card, 'manual', $('#rename-title').value); }
+        catch (error) { $('#title-error').textContent = error.message; $('#title-error').hidden = false; }
+    });
+};
+$('#automatic-title').onclick = () => {
+    const card = titleCard;
+    if (card) run(() => renameTerminal(card, 'automatic'));
+};
+$('#terminal-title').oninput = () => { launchTitleEdited = true; };
 // `launch` names the program's request that opened this card, so the host can log its output.
 async function start(card, mode = card.session ? 'resume' : 'start', launch) {
     const s = sessions.get(card.id);
@@ -694,7 +952,7 @@ async function start(card, mode = card.session ? 'resume' : 'start', launch) {
         }
         recoveryInfo(card); changed();
         if (s.status === 'starting') setStatus(card, 'running');
-        s.terminal.focus();
+        if (s.canvas === activeCanvas) s.terminal.focus();
     } catch (error) { showDirectory(s, card.cwd || 'Home directory'); setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
@@ -746,7 +1004,71 @@ function drag(element, allowed, move, initial) {
         beginDrag(element, event, (dx, dy) => move(dx, dy, data), moved => { if (moved) changed(); }, { history: true });
     });
 }
-const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus');
+const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus, .canvas-menu');
+// Only the canvas background owns this menu; terminals, board items and controls keep their menus.
+function emptyCanvasTarget(target) {
+    if (target.closest('button,input,textarea,select,[contenteditable="true"],.terminal-card,.canvas-item,.canvas-line') || onCanvasChrome(target)) return false;
+    return target === viewport || target === world || !!target.closest('.empty-state');
+}
+let canvasMenuPoint = null, canvasPointer = null, canvasMenuIndex = 0;
+function canvasMenuButtons() {
+    return [...$('#canvas-menu-profiles').children, $('#canvas-menu-find')];
+}
+function closeCanvasMenu({ restoreFocus = false } = {}) {
+    const menu = $('#canvas-menu');
+    if (menu.hidden) return;
+    menu.hidden = true; canvasMenuPoint = null;
+    if (restoreFocus) viewport.focus({ preventScroll: true });
+}
+function focusCanvasMenu(index) {
+    const buttons = canvasMenuButtons();
+    canvasMenuIndex = (index + buttons.length) % buttons.length;
+    buttons.forEach((button, i) => { button.tabIndex = i === canvasMenuIndex ? 0 : -1; });
+    buttons[canvasMenuIndex].focus();
+}
+function openCanvasMenu(point) {
+    if (!ready || canvasMutation || focused || boardBusy() || document.querySelector('dialog[open]')) return false;
+    const area = viewport.getBoundingClientRect();
+    const local = { x: Math.max(0, Math.min(area.width, point.x - area.left)), y: Math.max(0, Math.min(area.height, point.y - area.top)) };
+    const worldPoint = toWorld({ clientX: area.left + local.x, clientY: area.top + local.y });
+    // The hand tool disables world hit targets so they can pan; they still are not empty space.
+    if (hand && Geometry.topmostAt(worldPoint, elementRecords().filter(record => !record.line))) return false;
+    canvasMenuPoint = worldPoint;
+    const menu = $('#canvas-menu'); menu.hidden = false;
+    const size = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(0, Math.min(local.x, area.width - size.width))}px`;
+    menu.style.top = `${Math.max(0, Math.min(local.y, area.height - size.height))}px`;
+    focusCanvasMenu(0);
+    return true;
+}
+function findTerminalFromCanvas() {
+    closeCanvasMenu({ restoreFocus: true });
+    openTerminalSwitcher();
+}
+$('#canvas-menu-find').onclick = findTerminalFromCanvas;
+viewport.addEventListener('pointermove', event => {
+    if (emptyCanvasTarget(event.target)) canvasPointer = { x: event.clientX, y: event.clientY };
+});
+function canvasKeyboardPoint() {
+    const area = viewport.getBoundingClientRect();
+    return canvasPointer || { x: area.left + area.width / 2, y: area.top + area.height / 2 };
+}
+viewport.addEventListener('contextmenu', event => {
+    if (!emptyCanvasTarget(event.target)) return;
+    const point = event.button === 0 ? canvasKeyboardPoint() : { x: event.clientX, y: event.clientY };
+    if (openCanvasMenu(point)) { canvasPointer = point; event.preventDefault(); }
+});
+document.addEventListener('pointerdown', event => {
+    if (!event.target?.closest?.('#canvas-menu')) closeCanvasMenu();
+}, true);
+// A small window can make the profile list scroll; scrolling that list keeps its menu usable.
+function dismissCanvasMenuOnScroll(event) {
+    if (!event.target?.closest?.('#canvas-menu')) closeCanvasMenu();
+}
+document.addEventListener('wheel', dismissCanvasMenuOnScroll, { capture: true, passive: true });
+document.addEventListener('scroll', dismissCanvasMenuOnScroll, true);
+window.addEventListener('blur', () => closeCanvasMenu());
+window.addEventListener('resize', () => closeCanvasMenu());
 // Capture phase: finish in-place edits, and let creation tools draw over existing elements.
 viewport.addEventListener('pointerdown', event => {
     if (editing && !event.target.closest('.item-editor, .frame-title-editor')) document.activeElement?.blur();
@@ -783,6 +1105,44 @@ viewport.addEventListener('pointerdown', event => {
         else if (event.button === 0 && empty) setSelection([]);
     });
 });
+function zoomFromWheel(event, delta = event.deltaY) {
+    // Wheel events from a zoomed terminal carry coordinates rewritten for xterm; use the real pointer.
+    const rect = viewport.getBoundingClientRect(), point = window.TerminalCanvasPointer?.clientPoint(event) ?? { x: event.clientX, y: event.clientY };
+    zoom(Math.exp(-delta * .002), { x: point.x - rect.left, y: point.y - rect.top });
+}
+const WHEEL_GESTURE_GAP = 200, WHEEL_ZOOM_THRESHOLD = 4;
+let plainWheelGesture = null;
+function plainWheelDestination(target) {
+    const control = target.closest('.terminal-card, .canvas-item, .canvas-line')
+        || target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus')
+        || target.closest('button, input, textarea, select, [contenteditable="true"]');
+    if (control) return control;
+    // Only known background surfaces count as empty; other UI keeps its native scrolling.
+    return target === viewport || target === world || target.closest('.empty-state') ? viewport : target;
+}
+window.addEventListener('blur', () => { plainWheelGesture = null; });
+// Capture before xterm or the minimap can consume the event. Crossing destinations consumes the
+// remainder of the gesture there, so canvas zoom cannot turn into terminal scrolling or vice versa.
+viewport.addEventListener('wheel', event => {
+    if (!ready || focused || event.ctrlKey || event.metaKey) { plainWheelGesture = null; return; }
+    const destination = plainWheelDestination(event.target), now = event.timeStamp ?? Date.now();
+    if (!plainWheelGesture || now - plainWheelGesture.time >= WHEEL_GESTURE_GAP || now < plainWheelGesture.time) {
+        plainWheelGesture = { destination, time: now, delta: 0 };
+    }
+    plainWheelGesture.time = now;
+    if (destination !== plainWheelGesture.destination) {
+        event.preventDefault(); event.stopPropagation(); return;
+    }
+    if (destination !== viewport || !event.deltaY) return;
+    event.preventDefault(); event.stopPropagation();
+    const delta = event.deltaY * (event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? viewport.clientHeight : 1);
+    // Ignore tiny direction reversals rather than letting trackpad noise shake the camera.
+    if (Math.sign(delta) !== Math.sign(plainWheelGesture.delta)) plainWheelGesture.delta = 0;
+    plainWheelGesture.delta += delta;
+    if (Math.abs(plainWheelGesture.delta) < WHEEL_ZOOM_THRESHOLD) return;
+    zoomFromWheel(event, plainWheelGesture.delta);
+    plainWheelGesture.delta = 0;
+}, { capture: true, passive: false });
 // Ctrl/Cmd + wheel scales a terminal's text anywhere in Focus mode, and over the selected terminal on
 // the canvas while its output is showing; everywhere else the listener below zooms the canvas. This
 // runs while capturing, so xterm neither scrolls nor reports the wheel to the running program.
@@ -804,26 +1164,26 @@ viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     if (!ready) return;
-    // Wheel events from a zoomed terminal carry coordinates rewritten for xterm; zoom around the real pointer.
-    const rect = viewport.getBoundingClientRect(), point = window.TerminalCanvasPointer?.clientPoint(event) ?? { x: event.clientX, y: event.clientY };
-    zoom(Math.exp(-event.deltaY * .002), { x: point.x - rect.left, y: point.y - rect.top });
+    zoomFromWheel(event);
 }, { passive: false });
 async function duplicateTerminal(source) {
-    if (!ready || duplicateBusy || document.querySelector('dialog[open]')) return;
+    if (!ready || duplicateBusy || canvasMutation || document.querySelector('dialog[open]')) return;
     duplicateBusy = true;
     try {
         const result = await invoke('duplicate-directory', source);
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (result.warning) {
-            openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount });
+            openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount, color: source.color, theme: source.theme });
             $('#cwd').value = result.cwd;
             $('#launch-error').textContent = result.warning;
             $('#launch-error').hidden = false;
             return;
         }
-        const { card } = await invoke('create-card', { profile: 'shell', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
+        const { card } = await invoke('create-card', { profile: 'shell', titleMode: 'automatic', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
         if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
         if (source.fontSize) card.fontSize = source.fontSize;
+        if (source.color) card.color = source.color;
+        if (source.theme) card.theme = source.theme;
         if (source.claudeAccount) card.claudeAccount = source.claudeAccount;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
@@ -852,41 +1212,50 @@ function requestTerminal(event) {
 // Returns the started card and the card it opened beside (null when none), or throws why it could not open.
 async function openRequestedTerminal(event) {
     await appReady;
-    let parent = findCard(event.external ? event.parent : event.id) || null;
-    const closed = 'The terminal that asked for a new terminal has closed.';
-    if (!event.external && !parent) throw new Error(closed);
-    const requester = () => parent?.title || 'A program';
+    const parentCanvas = canvasForCard(event.external ? event.parent : event.id);
     await whenBoardIdle();
-    const size = { w: 660, h: 430 };
-    const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
-    const spot = parent ? Geometry.placeBeside(parent, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-    const { card } = await invoke('create-card', { profile: event.profile, title: event.title, cwd: event.cwd, command: event.command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
-    if (parent && !workspace.cards.includes(parent)) {
-        if (!event.external) throw new Error(closed);
-        parent = null;
-    }
-    await whenBoardIdle();
-    // A terminal opened beside another signs in to Claude as that terminal does.
-    if (event.pointer) { if (event.claudeAccount) card.claudeAccount = event.claudeAccount; }
-    else if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
-    workspace.cards.push(card); mount(card);
-    if (parent && workspace.items.length < ITEM_LIMIT) {
-        recordHistory();
-        const arrow = { id: newId(), type: 'line', start: { id: parent.id }, end: { id: card.id }, arrow: true };
-        workspace.items.push(arrow); mountLine(arrow);
-    }
-    renderLines(); select(card.id); changed(); refresh();
-    if (focused) setFocus(card.id);
-    else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
-    toast(`${requester()} opened a new terminal: ${card.title}.`);
-    await start(card, undefined, event.request);
-    return { card, parent };
+    if (parentCanvas && parentCanvas !== activeCanvas && !switchCanvas(parentCanvas.id)) throw new Error('Finish the current canvas action, then request the terminal again.');
+    if (canvasLocked()) throw new Error('Finish the current canvas action, then request the terminal again.');
+    canvasMutation = true;
+    try {
+        let parent = findCard(event.external ? event.parent : event.id) || null;
+        const closed = 'The terminal that asked for a new terminal has closed.';
+        if (!event.external && !parent) throw new Error(closed);
+        const requester = () => parent?.title || 'A program';
+        await whenBoardIdle();
+        const size = { w: 660, h: 430 };
+        const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
+        const spot = parent ? Geometry.placeBeside(parent, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
+        const { card } = await invoke('create-card', { profile: event.profile, title: event.title, ...(event.titleMode ? { titleMode: event.titleMode } : {}), cwd: event.cwd, command: event.command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+        if (parent && !workspace.cards.includes(parent)) {
+            if (!event.external) throw new Error(closed);
+            parent = null;
+        }
+        await whenBoardIdle();
+        // A terminal opened beside another signs in to Claude as that terminal does.
+        if (event.pointer) { if (event.claudeAccount) card.claudeAccount = event.claudeAccount; }
+        else if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
+        workspace.cards.push(card); mount(card);
+        if (parent && workspaceItemCount() < ITEM_LIMIT) {
+            recordHistory();
+            const arrow = { id: newId(), type: 'line', start: { id: parent.id }, end: { id: card.id }, arrow: true };
+            workspace.items.push(arrow); mountLine(arrow);
+        }
+        renderLines(); select(card.id); changed(); refresh();
+        if (focused) setFocus(card.id);
+        else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
+        toast(`${requester()} opened a new terminal: ${card.title}.`);
+        await start(card, undefined, event.request);
+        return { card, parent };
+    } finally { canvasMutation = false; }
 }
-// A duplicate whose folder needs review still copies its source terminal's text size and account.
-let launchFontSize, launchAccount;
-function openLaunch(profileId = 'shell', { fontSize, claudeAccount } = {}) {
-    if (!ready || document.querySelector('dialog[open]')) return;
-    launchFontSize = fontSize; launchAccount = claudeAccount;
+// Folder review preserves a duplicate's text size, appearance, and account.
+let launchFontSize, launchAccount, launchColor, launchTheme, launchPoint;
+function openLaunch(profileId = 'shell', { fontSize, claudeAccount, color, theme, point } = {}) {
+    if (!ready || canvasMutation || document.querySelector('dialog[open]')) return;
+    closeCanvasMenu();
+    launchFontSize = fontSize; launchAccount = claudeAccount; launchColor = color; launchTheme = theme; launchPoint = point;
+    launchTitleEdited = false;
     const profile = profiles.find(p => p.id === profileId);
     $('#profile').value = profile.id; $('#terminal-title').value = profile.name; $('#command').value = profile.command;
     $('#launch-error').hidden = true; $('#launch-dialog').showModal();
@@ -983,19 +1352,100 @@ $('#account-signin').onclick = () => {
 };
 async function openAccountSignIn(beside, name) {
     await whenBoardIdle();
-    const size = { w: 660, h: 430 };
-    const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
-    const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-    const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
-    card.claudeAccount = name;
-    workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
-    if (focused) setFocus(card.id);
-    else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
-    toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
-    await start(card);
+    if (canvasLocked()) throw new Error('Finish the current canvas action, then sign in again.');
+    canvasMutation = true;
+    try {
+        const size = { w: 660, h: 430 };
+        const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
+        const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
+        const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+        card.claudeAccount = name;
+        workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
+        if (focused) setFocus(card.id);
+        else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
+        toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
+        await start(card);
+    } finally { canvasMutation = false; }
 }
 $('#account-dialog').addEventListener('close', () => { accountCard = null; });
-$('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); $('#terminal-title').value = p.name; $('#command').value = p.command; };
+// The agent setup installs the Terminal Canvas skill where AI agents load skills for every session.
+// The first launch offers it once; Set up agents in the sidebar offers it again at any time.
+const AGENT_STATUS = { current: 'INSTALLED', outdated: 'UPDATE', missing: 'NOT INSTALLED' };
+let agentChoices = new Map(), agentBusy = false, agentOffer = false;
+function renderAgentTargets(targets) {
+    agentChoices = new Map();
+    const anyDetected = targets.some(target => target.detected.length);
+    const rows = targets.map(target => {
+        const row = document.createElement('label'); row.className = 'agent-target';
+        const box = document.createElement('input'); box.type = 'checkbox'; box.value = target.id;
+        // Preselect what this computer uses and does not have yet; with no agent found, everything.
+        box.checked = target.status !== 'current' && (!anyDetected || target.detected.length > 0);
+        agentChoices.set(target.id, { box, target });
+        const copy = document.createElement('span'); copy.className = 'agent-target-copy';
+        const name = document.createElement('span'); name.className = 'agent-target-name';
+        const title = document.createElement('span'); title.textContent = target.name;
+        const status = document.createElement('span'); status.className = `agent-target-status ${target.status}`; status.textContent = AGENT_STATUS[target.status] || '';
+        name.append(title, status);
+        const found = document.createElement('span'); found.className = 'agent-target-detail';
+        found.textContent = target.detected.length ? `Found on this computer: ${target.detected.join(', ')}.` : 'Not found on this computer yet.';
+        const folders = document.createElement('span'); folders.className = 'agent-target-detail';
+        target.folders.forEach((folder, index) => {
+            const code = document.createElement('code'); code.textContent = folder;
+            if (index) folders.append(document.createElement('br'));
+            folders.append(code);
+        });
+        copy.append(name, found, folders); row.append(box, copy);
+        return row;
+    });
+    $('#agent-targets').replaceChildren(...rows);
+}
+async function openAgentSetup({ offer = false } = {}) {
+    if (!ready || agentBusy || document.querySelector('dialog[open]')) return;
+    const { targets } = await invoke('agent-setup', {});
+    if (document.querySelector('dialog[open]')) return;
+    agentOffer = offer;
+    renderAgentTargets(targets);
+    $('#agent-error').hidden = true; $('#agent-install').disabled = false;
+    $('#agent-dialog').showModal();
+}
+// The footer's gear opens the Settings menu; Escape, a click elsewhere, or choosing an item closes it.
+function setSettingsMenu(open) {
+    $('#settings-menu').hidden = !open;
+    $('#settings').setAttribute('aria-expanded', String(open));
+    if (open) $('#agent-setup').focus();
+}
+$('#settings').onclick = () => setSettingsMenu($('#settings-menu').hidden);
+$('#settings-menu').addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation();
+    setSettingsMenu(false); $('#settings').focus();
+});
+document.addEventListener('pointerdown', event => {
+    if (!$('#settings-menu').hidden && !event.target.closest?.('#settings-menu,#settings')) setSettingsMenu(false);
+}, true);
+$('#agent-setup').onclick = () => { setSettingsMenu(false); run(() => openAgentSetup()); };
+$('#agent-form').onsubmit = event => {
+    event.preventDefault(); if (agentBusy) return;
+    const chosen = [...agentChoices.values()].filter(choice => choice.box.checked);
+    if (!chosen.length) { $('#agent-dialog').close(); return; }
+    agentBusy = true; $('#agent-install').disabled = true;
+    run(async () => {
+        try {
+            await invoke('agent-setup', { install: chosen.map(choice => choice.target.id) });
+            agentOffer = false; $('#agent-dialog').close();
+            toast(`Terminal Canvas skill installed for ${chosen.map(choice => choice.target.name).join(' and ')}. Agent sessions started from now on can open linked terminals and hand work over.`);
+        } catch (error) {
+            $('#agent-error').textContent = error.message; $('#agent-error').hidden = false;
+        } finally { agentBusy = false; $('#agent-install').disabled = false; }
+    });
+};
+// Closing the first-launch offer without installing declines it, so it is not offered again.
+$('#agent-dialog').addEventListener('close', () => {
+    if (!agentOffer) return;
+    agentOffer = false;
+    run(() => invoke('agent-setup', { dismiss: true }));
+});
+$('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); if (!launchTitleEdited) $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
 $('#launch-form').onsubmit = event => {
     event.preventDefault(); if (formBusy) return;
@@ -1004,8 +1454,11 @@ $('#launch-form').onsubmit = event => {
         try {
             const { x, y, z } = workspace.camera;
             const count = workspace.cards.length;
-            const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) });
+            const point = launchPoint || { x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) };
+            const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), titleMode: launchTitleEdited && $('#terminal-title').value.trim() ? 'manual' : 'automatic', cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), ...point });
             if (launchFontSize) result.card.fontSize = launchFontSize;
+            if (launchColor) result.card.color = launchColor;
+            if (launchTheme) result.card.theme = launchTheme;
             if (launchAccount) result.card.claudeAccount = launchAccount;
             workspace.cards.push(result.card); mount(result.card); select(result.card.id); changed(); refresh();
             $('#launch-dialog').close();
@@ -1017,34 +1470,132 @@ $('#launch-form').onsubmit = event => {
         } finally { formBusy = false; $('#launch-submit').disabled = false; }
     });
 };
-function loadWorkspace(board) {
+function loadWorkspace(board, epoch) {
+    titleEpoch = epoch;
+    $('#title-dialog').close(); titleCard = null;
     pointerStates.clear();
     clearTimeout(autosaveTimer);
     if (editing) document.activeElement?.blur();
     workspace = board;
     workspace.items = Array.isArray(board.items) ? board.items : [];
-    clearHistory();
     // The browser preview stores unvalidated layouts, which may still use format 2's single group.
     for (const e of [...workspace.cards, ...workspace.items]) {
         if (e.group && !e.groups) e.groups = [e.group];
         delete e.group;
     }
-    setFocus(null);
     for (const id of sessions.keys()) dispose(id);
     for (const id of [...itemViews.keys()]) disposeItem(id);
     topCardZIndex = 0;
-    selected = null; selection = new Set(); $('#workspace-name').value = board.name;
-    board.cards.forEach(mount); workspace.items.forEach(mountItem); renderCamera(); applySelection(false);
+    selected = null; focused = null; selection = new Set(); $('#workspace-name').value = board.name;
+    canvasExtended = Array.isArray(board.canvases) && board.canvases.length > 0;
+    const cards = new Map(board.cards.map(card => [card.id, card])), items = new Map(board.items.map(item => [item.id, item]));
+    canvasStates = canvasExtended ? board.canvases.map(canvas => canvasState({ ...canvas,
+        cards: canvas.cardIds.map(id => cards.get(id)), items: canvas.itemIds.map(id => items.get(id)) }))
+        : [canvasState({ camera: board.camera, cards: board.cards, items: board.items })];
+    setWorkspaceTerminalTheme(board.terminalTheme);
+    setHooksPaused(!!board.hooksPaused);
+    for (const canvas of canvasStates) {
+        activeCanvas = canvas; workspace = canvas.board; workspace.name = board.name;
+        workspace.cards.forEach(mount); workspace.items.forEach(mountItem);
+    }
+    revealCanvas(canvasStates.find(canvas => canvas.id === board.activeCanvas) || canvasStates[0], { restoreKeyboard: false });
+}
+
+// A browser updates layout without recreating its terminal emulators or sharing focus/selection.
+function remoteWorkspace(board, epoch) {
+    titleEpoch = epoch;
+    rememberCanvas();
+    const previousCanvas = activeCanvas;
+    const present = new Set(board.cards.map(card => card.id));
+    for (const id of sessions.keys()) if (!present.has(id)) dispose(id);
+    const cards = new Map(board.cards.map(card => {
+        const previous = sessions.get(card.id)?.card;
+        if (!previous) return [card.id, card];
+        for (const key of Object.keys(previous)) delete previous[key];
+        Object.assign(previous, card);
+        return [card.id, previous];
+    }));
+    const items = new Map(board.items.map(item => [item.id, item]));
+    for (const id of [...itemViews.keys()]) disposeItem(id);
+    const wasExtended = canvasExtended;
+    canvasExtended = Array.isArray(board.canvases) && board.canvases.length > 0;
+    const definitions = canvasExtended ? board.canvases : [{ id: canvasStates[0].id, name: 'Canvas 1', camera: board.camera,
+        cardIds: board.cards.map(card => card.id), itemIds: board.items.map(item => item.id) }];
+    canvasStates = definitions.map((definition, index) => {
+        // Desktop owns membership and geometry; browser navigation remains local to each canvas.
+        const canvas = canvasStates.find(canvas => canvas.id === definition.id)
+            || (!wasExtended && index === 0 ? canvasStates[0] : canvasState(definition));
+        canvas.id = definition.id; canvas.name = definition.name;
+        Object.assign(canvas.board, { name: board.name, cards: definition.cardIds.map(id => cards.get(id)),
+            items: definition.itemIds.map(id => items.get(id)) });
+        const ids = new Set([...canvas.board.cards, ...canvas.board.items].map(item => item.id));
+        canvas.selection = new Set([...canvas.selection].filter(id => ids.has(id)));
+        if (!ids.has(canvas.selected)) canvas.selected = null;
+        if (!canvas.board.cards.some(card => card.id === canvas.focused)) canvas.focused = null;
+        return canvas;
+    });
+    setWorkspaceTerminalTheme(board.terminalTheme);
+    setHooksPaused(!!board.hooksPaused);
+    for (const canvas of canvasStates) {
+        activeCanvas = canvas; workspace = canvas.board;
+        for (const card of workspace.cards) {
+            const s = sessions.get(card.id);
+            if (!s) mount(card);
+            else {
+                s.canvas = canvas;
+                if (s.terminal) s.terminal.options.fontSize = terminalFontSize(card);
+                renderCardGeometry(card); recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
+                s.element.querySelector('.card-title').textContent = card.title;
+                s.element.querySelector('.card-title').setAttribute('aria-label', `Rename terminal: ${card.title}`);
+            }
+        }
+        workspace.items.forEach(mountItem);
+    }
+    $('#workspace-name').value = board.name;
+    revealCanvas(canvasStates.find(canvas => canvas.id === previousCanvas.id)
+        || canvasStates.find(canvas => canvas.id === board.activeCanvas) || canvasStates[0], { restoreKeyboard: false });
+    refresh();
+}
+
+function remoteTerminals(terminals) {
+    for (const terminal of terminals) {
+        const s = sessions.get(terminal.id), card = anyCard(terminal.id);
+        if (!s || !card) continue;
+        if (terminal.running && s.remoteGeneration !== terminal.generation) s.terminal?.reset();
+        s.remoteGeneration = terminal.generation;
+        s.terminal?.resize(terminal.cols, terminal.rows);
+        // Keep desktop columns even when Focus view or a narrower browser would propose another size.
+        const screen = s.element.querySelector('.terminal-body .xterm');
+        if (screen) screen.style.width = `${Math.ceil(terminal.cols * terminalFontSize(card) * 0.61)}px`;
+        setStatus(card, terminal.running ? 'running' : 'idle');
+    }
 }
 async function canReplace() {
-    if (!workspace.cards.length && !workspace.items.length) return true;
+    if (canvasMutation || boardBusy() || imageImports || formBusy || duplicateBusy) return false;
+    if (canvasStates.length === 1 && !workspace.cards.length && !workspace.items.length) return true;
     return confirmAction('Replace this workspace?', 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
 }
 async function save() { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.'); }
 $('#save').onclick = () => run(save);
-$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace); changed(); toast('Workspace restored. Start each terminal when you are ready.'); } });
-$('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; loadWorkspace((await invoke('new')).workspace); changed(); });
+$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); } });
+$('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('new'); loadWorkspace(result.workspace, result.titleEpoch); changed(); });
 $('#workspace-name').oninput = () => { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; changed(); };
+$('#canvas-list').onchange = () => { if (!switchCanvas($('#canvas-list').value)) renderCanvases(); };
+$('#canvas-add').onclick = () => createCanvas();
+$('#canvas-rename').onclick = renameCanvas;
+$('#canvas-earlier').onclick = () => reorderCanvas(-1);
+$('#canvas-later').onclick = () => reorderCanvas(1);
+$('#canvas-delete').onclick = () => run(deleteCanvas);
+document.addEventListener('focusin', event => {
+    if (activeCanvas && !event.target.closest('.canvas-manager')) activeCanvas.typing = !!event.target.closest('.xterm');
+});
+$('#canvas-form').onsubmit = event => {
+    event.preventDefault();
+    const name = $('#canvas-name').value.trim() || 'Untitled canvas';
+    if (name.length > 100 || /[\x00-\x1f]/.test(name)) return toast('Invalid canvas name.');
+    activeCanvas.name = name; canvasExtended = true;
+    $('#canvas-dialog').close(); renderCanvases(); changed();
+};
 $('#search').oninput = () => { if (ready) refresh(); };
 $('#canvas-nav').onclick = () => { if (ready) fitCanvas(); };
 $('#add-terminal').onclick = $('#empty-add').onclick = () => openLaunch();
@@ -1107,15 +1658,34 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer</span><kbd>Ctrl + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
+    if (!$('#canvas-menu').hidden) {
+        if (event.key === 'Tab') { closeCanvasMenu({ restoreFocus: true }); return; }
+        event.preventDefault();
+        if (event.key === 'Escape') closeCanvasMenu({ restoreFocus: true });
+        else if (event.key === 'ArrowDown') focusCanvasMenu(canvasMenuIndex + 1);
+        else if (event.key === 'ArrowUp') focusCanvasMenu(canvasMenuIndex - 1);
+        else if (event.key === 'Home') focusCanvasMenu(0);
+        else if (event.key === 'End') focusCanvasMenu(canvasMenuButtons().length - 1);
+        else if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) canvasMenuButtons()[canvasMenuIndex].click();
+        return;
+    }
+    if ((event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) && !event.ctrlKey && !event.metaKey && !event.altKey && emptyCanvasTarget(event.target)) {
+        if (openCanvasMenu(canvasKeyboardPoint())) event.preventDefault();
+        return;
+    }
+    if (canvasShortcut(event)) return;
     // A held Enter never presses a terminal's buttons: Enter on the board moves focus to a stopped
     // terminal's Start or Resume button, and only a separate press may start it.
     if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
     if (event.ctrlKey || event.metaKey) {
         const key = event.key.toLowerCase();
+        if (key === 'p' && event.shiftKey && !event.altKey && !event.isComposing) {
+            event.preventDefault(); if (!event.repeat) openTerminalSwitcher(); return;
+        }
         if (key === 'b' && event.shiftKey && !event.altKey) {
             event.preventDefault();
             if (!event.repeat) $('#sidebar-toggle').click();
@@ -1189,9 +1759,22 @@ window.addEventListener('resize', () => { if (ready) renderCamera(); });
 installPointerControls();
 if (bridge) {
     bridge.onEvent(event => {
+        if (bridge.remote && event.type === 'remote-workspace' && ready) remoteWorkspace(event.workspace, event.titleEpoch);
+        if (bridge.remote && event.type === 'remote-terminals' && ready) remoteTerminals(event.terminals);
+        if (bridge.remote && event.type === 'remote-disconnected') {
+            for (const s of sessions.values()) if (s.terminal) s.terminal.options.disableStdin = true;
+            const banner = $('#remote-banner');
+            if (banner) banner.textContent = event.message;
+            toast(event.message);
+        }
         const s = sessions.get(event.id);
+        if (event.type === 'title' && s && event.titleEpoch === titleEpoch) {
+            if (s.namingPending) {
+                if (Number.isSafeInteger(event.titleRevision) && event.titleRevision > (s.deferredTitle?.titleRevision || 0)) s.deferredTitle = event;
+            } else applyTitleEvent(event);
+        }
         if (event.type === 'metadata') {
-            const card = workspace?.cards.find(c => c.id === event.id);
+            const card = anyCard(event.id);
             if (card) {
                 if (s) s.metadataRevision++;
                 if (s && !event.initial && event.cwd !== card.cwd) s.cwd = event.cwd;
@@ -1201,6 +1784,7 @@ if (bridge) {
             }
         }
         if (event.type === 'data') {
+            markCanvasActivity(s, 'New output');
             if (s?.status === 'starting') {
                 const output = (s.startupQueryTail || '') + event.data;
                 s.startupCursorQueries += [...output.matchAll(/\x1b\[6n/g)].length;
@@ -1210,12 +1794,12 @@ if (bridge) {
             else bridge.acknowledge(event.id, event.data.length);
         }
         if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
-        if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); setStatus(workspace.cards.find(c => c.id === event.id), 'exited'); }
+        if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); markCanvasActivity(s, 'Exited'); setStatus(s.card, 'exited'); }
         if (event.type === 'error') toast(event.message);
         if (event.type === 'update') showUpdate(event);
         if (event.type === 'launch') requestTerminal(event);
         if (event.type === 'pointer') pointerEvent(event);
-        if (event.type === 'pointers-paused') { workspace.hooksPaused = true; renderLines(); renderPointerControls(); toast(event.message); }
+        if (event.type === 'pointers-paused') { setHooksPaused(true); renderLines(); renderPointerControls(); toast(event.message); }
         if (event.type === 'closing') run(async () => {
             if (event.running && !await confirmAction('Close Terminal Canvas?', `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
             clearTimeout(autosaveTimer); await invoke('close', workspace);
@@ -1230,9 +1814,31 @@ if (bridge) {
             const label = document.createElement('span'); label.textContent = p.name; button.append(label);
             const arrow = document.createElement('span'); arrow.className = 'launch-arrow'; arrow.innerHTML = icon('plus'); button.append(arrow);
             button.onclick = () => openLaunch(p.id); $('#profile-list').append(button);
+            const menuButton = document.createElement('button');
+            menuButton.type = 'button'; menuButton.setAttribute('role', 'menuitem'); menuButton.tabIndex = -1;
+            const menuLabel = document.createElement('span'); menuLabel.textContent = p.name;
+            menuButton.append(mark(p), menuLabel);
+            menuButton.onclick = () => { const point = canvasMenuPoint; openLaunch(p.id, { point }); };
+            $('#canvas-menu-profiles').append(menuButton);
         }
         $('#cwd').value = initial.home; $('#runtime-label').textContent = initial.preview ? 'Browser preview · shells unavailable' : initial.platform === 'win32' ? 'Windows · ConPTY' : 'Local · PTY';
-        loadWorkspace(initial.workspace); ready = true; markAppReady(); renderStyleToolbar();
+        loadWorkspace(initial.workspace, initial.titleEpoch); ready = true; markAppReady(); renderStyleToolbar();
+        if (bridge.remote) {
+            document.body.classList.add('remote-client');
+            $('#workspace-name').readOnly = true;
+            $('#save-state').lastChild.textContent = 'Desktop owns workspace';
+            $('#runtime-label').textContent = `Browser · ${initial.role === 'control' ? 'Controller' : 'Read-only viewer'}`;
+            const banner = document.createElement('div'); banner.id = 'remote-banner'; banner.className = 'remote-banner';
+            banner.setAttribute('role', 'status');
+            banner.textContent = initial.role === 'control' ? 'Controller · type in running terminals. Workspace and sizes follow desktop.' : 'Read-only viewer · workspace and sizes follow desktop.';
+            document.body.append(banner);
+            remoteTerminals(initial.terminals || []);
+            for (const [id, output] of Object.entries(initial.output || {})) {
+                const s = sessions.get(id);
+                if (s?.terminal) { s.replaying = true; s.terminal.write(output, () => { s.replaying = false; }); }
+            }
+        }
         if (initial.warning) toast(initial.warning);
+        if (initial.agentSetup) await openAgentSetup({ offer: true });
     });
 } else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');

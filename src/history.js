@@ -1,5 +1,5 @@
 /* Undo and redo for the board. Loaded after items.js; functions read renderer state when called.
-   A step restores board items plus terminal geometry and groups. Terminals are never created or
+   A step restores board items plus terminal geometry, groups, colors, and themes. Terminals are never created or
    closed by undo, because that would start or stop processes. */
 'use strict';
 const HISTORY_LIMIT = 100;
@@ -9,7 +9,7 @@ const cloneData = value => JSON.parse(JSON.stringify(value));
 // newest step can be discarded, so older cleared stacks are not kept.
 let clearedRedo = { step: null, redo: [] };
 // Board commands wait for a drag to finish, so the drag's undo step and theirs cannot interleave.
-const boardBusy = () => activeDrags > 0;
+const boardBusy = () => activeDrags > 0 || !!window.terminalCanvas?.remote;
 // Steps store each item as JSON text. An unchanged item reuses the previous step's string, so a step
 // only costs memory for the items that changed.
 let sharedItemJson = new Map();
@@ -21,7 +21,8 @@ function snapshotBoard() {
     sharedItemJson = new Map(workspace.items.map((item, index) => [item.id, items[index]]));
     const stacked = [...workspace.cards, ...workspace.items].filter(e => e.type !== 'line');
     return {
-        cards: workspace.cards.map(({ id, x, y, w, h, groups }) => cloneData({ id, x, y, w, h, groups })),
+        cards: workspace.cards.map(({ id, x, y, w, h, groups, color, theme }) => cloneData({ id, x, y, w, h, groups, color, theme })),
+        terminalTheme: workspace.terminalTheme,
         items,
         // Stacking order, so undoing a deletion returns items to their depth instead of on top.
         z: Object.fromEntries(stacked.map(e => [e.id, zOf(e.id)])),
@@ -31,7 +32,7 @@ function snapshotBoard() {
     };
 }
 const sameBoard = (a, b) => a.items.length === b.items.length && a.items.every((json, index) => json === b.items[index])
-    && JSON.stringify(a.cards) === JSON.stringify(b.cards);
+    && JSON.stringify(a.cards) === JSON.stringify(b.cards) && a.terminalTheme === b.terminalTheme;
 // Work that must not land inside a drag, such as an image whose import just finished, waits for it.
 let idleWaiters = [];
 function whenBoardIdle() { return boardBusy() ? new Promise(resolve => idleWaiters.push(resolve)) : Promise.resolve(); }
@@ -47,6 +48,8 @@ function renderHistoryButtons() {
 }
 // Call with a snapshot taken before a change, once the change is known to have happened.
 function commitHistory(snapshot) {
+    // Ordinary steps on another canvas must not undo a later workspace theme change.
+    snapshot.restoreTerminalTheme = snapshot.terminalTheme !== workspace.terminalTheme;
     clearedRedo = { step: snapshot, redo: boardHistory.redo };
     boardHistory.undo.push(snapshot);
     if (boardHistory.undo.length > HISTORY_LIMIT) boardHistory.undo.shift();
@@ -80,13 +83,15 @@ function undo() { if (canStepHistory()) stepHistory(boardHistory.undo, boardHist
 function redo() { if (canStepHistory()) stepHistory(boardHistory.redo, boardHistory.undo); }
 function stepHistory(from, to) {
     if (!from.length) return;
+    if (workspaceItemCount() - workspace.items.length + from.at(-1).items.length > ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
     const target = from.pop();
-    to.push(snapshotBoard());
+    to.push({ ...snapshotBoard(), restoreTerminalTheme: target.restoreTerminalTheme });
     restoreBoard(target);
     renderHistoryButtons();
 }
 // Items are updated in place so their views and event handlers stay attached.
 function restoreBoard(snapshot) {
+    if (snapshot.restoreTerminalTheme) setWorkspaceTerminalTheme(snapshot.terminalTheme);
     const parsed = snapshot.items.map(json => JSON.parse(json));
     // Arrows attached to a terminal closed since the snapshot were removed with it, so they stay removed.
     const present = new Set([...workspace.cards, ...parsed].map(e => e.id));
@@ -98,6 +103,10 @@ function restoreBoard(snapshot) {
         if (!card) continue;
         Object.assign(card, { x: saved.x, y: saved.y, w: saved.w, h: saved.h });
         setGroups(card, saved.groups ? [...saved.groups] : []);
+        for (const key of ['color', 'theme']) {
+            if (saved[key]) card[key] = saved[key];
+            else delete card[key];
+        }
         renderCardGeometry(card);
     }
     const current = new Map(workspace.items.map(item => [item.id, item]));
@@ -125,6 +134,8 @@ function restoreBoard(snapshot) {
         const node = elementNode(id);
         if (node && findElement(id)?.type !== 'frame') node.style.zIndex = String(z);
     }
+    for (const canvas of canvasStates) for (const card of canvas.board.cards) renderTerminalAppearance(card);
+    renderThemeControls();
     pruneGroups();
     setSelection(snapshot.selection.filter(id => findElement(id)));
     renderLines(); renderMinimap(); refresh(); changed();

@@ -5,11 +5,61 @@
     "legacyTolerance": 1.5,
     "engineTolerance": 0.5,
     "intended": {
+        "common": {
+            "reason": "The 76px canvas manager follows Your canvas and moves the remaining sidebar controls down. Canvas actions and the workspace theme selector are new controls, measured identically in current Chromium and WebKit. Find terminal adds an independent sidebar action without moving existing controls.",
+            "added": [".canvas-manager[0]", "#canvas-list[0]", "#canvas-add[0]", "#canvas-rename[0]", "#canvas-earlier[0]", "#canvas-later[0]", "#canvas-delete[0]", "#workspace-theme[0]", "#find-terminal[0]"],
+            "resized": {
+                ".section-label[1]": [0, 76, 0, 0],
+                ".section-label[2]": [0, 76, 0, 0],
+                ".nav-item[1]": [0, 76, 0, 0],
+                ".nav-item[2]": [0, 76, 0, 0],
+                ".nav-item[3]": [0, 76, 0, 0],
+                ".nav-item[4]": [0, 76, 0, 0],
+                ".nav-item[5]": [0, 76, 0, 0],
+                "#profile-list[0]": [0, 76, 0, 0],
+                ".profile-button[0]": [0, 76, 0, 0],
+                ".profile-button[1]": [0, 76, 0, 0],
+                ".profile-button[2]": [0, 76, 0, 0],
+                ".profile-button[3]": [0, 76, 0, 0],
+                ".profile-button[4]": [0, 76, 0, 0],
+                ".search[0]": [0, 76, 0, 0],
+                "#search[0]": [0, 76, 0, 0],
+                "#outline[0]": [0, 76, 0, 0],
+                ".sidebar-bottom[0]": [0, 76, 0, 0],
+                ".plugin-card[0]": [0, 76, 0, 0],
+                ".local-label[0]": [0, 76, 0, 0]
+            }
+        },
         "card": {
-            "reason": "The Claude account icon is the first card action; the title gives up its 26px width and the 3px gap.",
+            "reason": "Find terminal adds an independent sidebar action. The Claude account icon takes 26px and a 3px gap. The accessible rename button adds 2px to the title height and stays vertically centered.",
             "added": [".card-account-icon[0]"],
             "resized": {
-                ".card-title[0]": [0, 0, -29, 0]
+                ".card-title[0]": [0, -1, -29, 2]
+            }
+        },
+        "launch": {
+            "reason": "Find terminal remains visible behind the dialog. The automatic-title hint adds 41px after the Name input. With whole-pixel line boxes, the dialog grows 40px and recenters by 20px; the close icon also rounds its old normal line box.",
+            "added": ["#automatic-title-hint[0]"],
+            "resized": {
+                "#launch-dialog[0]": [0, -20, 0, 40],
+                ".dialog-heading[0]": [0, -20, 0, 0],
+                ".eyebrow[0]": [0, -20, 0, 0],
+                "h2[0]": [0, -21, 0, 0],
+                ".dialog-description[0]": [0, -21, 0, 0],
+                ".field-label[0]": [0, -21, 0, 0],
+                ".field-label[1]": [0, -21, 0, 0],
+                ".field-label[2]": [0, 20, 0, 0],
+                ".field-label[3]": [0, 20, 0, 0],
+                "#profile[0]": [0, -21, 0, 0],
+                "#terminal-title[0]": [0, -21, 0, 0],
+                "#cwd[0]": [0, 20, 0, 0],
+                "#command[0]": [0, 20, 0, 0],
+                "#browse-folder[0]": [0, 20, 0, 0],
+                ".field-hint:not(#automatic-title-hint)[0]": [0, 20, 0, 0],
+                ".dialog-footer[0]": [0, 20, 0, 0],
+                ".dialog-footer button[0]": [0, 20, 0, 0],
+                ".dialog-footer button[1]": [0, 20, 0, 0],
+                ".icon-button[0]": [0, -21, 0, 0]
             }
         }
     }

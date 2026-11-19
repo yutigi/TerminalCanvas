@@ -228,6 +228,40 @@ fn card(options: Value) -> Value {
     serde_json::to_value(create_card(&options).unwrap()).unwrap()
 }
 
+#[test]
+fn title_context_is_bound_to_the_current_launch_session_and_process_generation() {
+    let mut h = harness();
+    let card = card(json!({ "cwd": cwd() }));
+    let id = card["id"].as_str().unwrap();
+    h.start(&card).unwrap();
+    assert!(h.manager.name_request(id).is_none());
+    let launch = json!({"type":"launch","provider":"claude","token":"abcdef01-1234-4321-9876-123456789abc",
+        "sessionId":"12345678-1234-4321-9876-123456789abc","cwd":cwd()});
+    h.data(0, &osc(&launch));
+    let first = h.manager.name_request(id).unwrap();
+    assert_eq!(first.session.session_id, "12345678-1234-4321-9876-123456789abc");
+    h.data(0, &osc(&json!({"type":"end","token":launch["token"],"exitCode":0})));
+    assert!(h.manager.name_request(id).is_none());
+    h.data(
+        0,
+        &osc(&json!({"type":"launch","provider":"claude","token":"abcdef02-1234-4321-9876-123456789abc","cwd":cwd()})),
+    );
+    assert!(
+        h.manager.name_request(id).is_none(),
+        "a new launch must not inherit the previous session name"
+    );
+    h.manager.stop(id);
+    h.start(&card).unwrap();
+    h.data(0, &osc(&launch));
+    assert!(
+        h.manager.name_request(id).is_none(),
+        "late output from the old process is ignored"
+    );
+    h.data(1, &osc(&launch));
+    let second = h.manager.name_request(id).unwrap();
+    assert_ne!(first.key, second.key);
+}
+
 fn id(card: &Value) -> &str {
     card["id"].as_str().unwrap()
 }
@@ -293,6 +327,10 @@ fn pointer_lifecycle_reports_are_bound_to_the_current_conversation_and_process_g
     assert!(!h.manager.pointer_report_current(id(&c), key.generation + 1, &report));
     h.manager.stop(id(&c));
     assert!(!h.manager.pointer_report_current(id(&c), key.generation, &report));
+}
+
+fn osc(event: &Value) -> String {
+    metadata_event(event.clone())
 }
 
 fn arg_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {

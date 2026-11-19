@@ -12,8 +12,10 @@ e2e = []
 
 [dependencies]
 arboard.workspace = true
+axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+subtle.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-opener.workspace = true
@@ -32,6 +34,9 @@ tauri-build.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+futures-util = "=0.3.34"
+tower = { version = "=0.5.3", features = ["util"] }
+tokio-tungstenite = "=0.28.0"
 
 [lints]
 workspace = true

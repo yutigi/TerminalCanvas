@@ -199,6 +199,9 @@ impl Serialize for TerminalEvent {
                 map.serialize_entry("request", request_id)?;
                 map.serialize_entry("profile", &request.profile)?;
                 map.serialize_entry("title", &request.title)?;
+                if let Some(mode) = request.title_mode {
+                    map.serialize_entry("titleMode", &mode)?;
+                }
                 map.serialize_entry("cwd", &request.cwd)?;
                 map.serialize_entry("command", &request.command)?;
             }
@@ -300,6 +303,9 @@ pub enum PointerReadiness {
 }
 
 struct Session {
+    name_homes: [std::path::PathBuf; 2],
+    name_session: Option<tc_core::session::SessionMetadata>,
+    size: (u16, u16),
     generation: u64,
     process: Box<dyn Process>,
     integration: Option<Integration>,
@@ -520,6 +526,11 @@ impl TerminalManager {
         self.sessions.contains_key(id)
     }
 
+    /// The generation and actual PTY dimensions, for additional views of a desktop terminal.
+    pub fn view(&self, id: &str) -> Option<(u64, u16, u16)> {
+        self.sessions.get(id).map(|s| (s.generation, s.size.0, s.size.1))
+    }
+
     pub fn process_id(&self, id: &str) -> Option<u32> {
         self.sessions.get(id)?.process.pid()
     }
@@ -704,7 +715,18 @@ impl TerminalManager {
         };
         let pid = process.pid();
         let initial_command = integration.as_ref().and_then(|integration| integration.command.clone());
+        let name_homes = [("CLAUDE_CONFIG_DIR", ".claude"), ("CODEX_HOME", ".codex")].map(|(name, default)| {
+            request
+                .env
+                .iter()
+                .find(|(key, value)| !value.is_empty() && (*key == name || windows && key.eq_ignore_ascii_case(name)))
+                .map(|(_, value)| std::path::PathBuf::from(value))
+                .unwrap_or_else(|| std::path::PathBuf::from(&self.config.home).join(default))
+        });
         let session = Session {
+            name_session: None,
+            name_homes,
+            size: (cols, rows),
             generation: key.generation,
             process,
             integration,
@@ -816,6 +838,7 @@ impl TerminalManager {
                     _ => LaunchToken::Unmatchable,
                 };
                 if let (Some(session), Some(provider)) = (self.current(key), provider) {
+                    session.name_session = None;
                     session.launch = Some(Launch { provider, token });
                     session.pointer_state = PointerReadiness::Unknown;
                     session.pointer_dirty = false;
@@ -899,6 +922,15 @@ impl TerminalManager {
 
     /// A launch without an ID must not replace a known conversation with a guess.
     fn update_metadata(&mut self, id: &str, patch: MetadataPatch) {
+        if let Some(Some(metadata)) = &patch.session
+            && let Some(session) = self.sessions.get_mut(id)
+            && session
+                .parser
+                .launch()
+                .is_some_and(|launch| launch.provider == metadata.provider)
+        {
+            session.name_session = Some(metadata.clone());
+        }
         let Some(previous) = self.metadata.get(id) else { return };
         let next = CardMetadata {
             cwd: patch.cwd.unwrap_or_else(|| previous.cwd.clone()),
@@ -950,6 +982,28 @@ impl TerminalManager {
             self.poll_launches(&id);
             self.poll_pointer_requests(&id);
         }
+    }
+
+    /// A name belongs to this particular CLI launch, not merely a saved session on the card.
+    pub fn name_request(&self, id: &str) -> Option<crate::titles::NameRequest> {
+        let running = self.sessions.get(id)?;
+        let launch = running.parser.launch()?;
+        let LaunchToken::Text(token) = &launch.token else {
+            return None;
+        };
+        let session = running.name_session.as_ref()?;
+        if session.provider != launch.provider {
+            return None;
+        }
+        Some(crate::titles::NameRequest {
+            launch_token: token.clone(),
+            key: SessionKey {
+                id: id.to_owned(),
+                generation: running.generation,
+            },
+            session: session.clone(),
+            home: running.name_homes[usize::from(session.provider == Provider::Codex)].clone(),
+        })
     }
 
     /// Takes the terminal's pending launch requests. A refused request is reported on the
@@ -1215,7 +1269,11 @@ impl TerminalManager {
     pub fn resize(&mut self, id: &str, cols: &Value, rows: &Value) -> Result<()> {
         let (cols, rows) = dimensions(cols, rows)?;
         match self.sessions.get_mut(id) {
-            Some(session) => session.process.resize(cols, rows).map_err(Error::from),
+            Some(session) => {
+                session.process.resize(cols, rows)?;
+                session.size = (cols, rows);
+                Ok(())
+            }
             None => Ok(()),
         }
     }

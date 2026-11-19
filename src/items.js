@@ -198,7 +198,7 @@ function removeItems(ids) {
 }
 // Adds items as one undoable step and selects them. `edit` opens a single new item for typing.
 function addItems(list, { edit = false } = {}) {
-    if (workspace.items.length + list.length > ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
+    if (workspaceItemCount() + list.length > ITEM_LIMIT) { toast('A workspace can contain up to 1,000 canvas items.'); return null; }
     const before = snapshotBoard();
     commitHistory(before);
     workspace.items.push(...list);
@@ -219,7 +219,7 @@ function makeItem(kind, rect) {
 // Creation tools: click for a default size, or drag to draw. Lines attach to whatever they start or end on.
 function beginCreate(event) {
     const kind = activeTool, start = toWorld(event);
-    if (workspace.items.length >= ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
+    if (workspaceItemCount() >= ITEM_LIMIT) return toast('A workspace can contain up to 1,000 canvas items.');
     if (kind === 'line' || kind === 'arrow') {
         const from = attachableAt(start);
         recordHistory();
@@ -389,8 +389,11 @@ function importImageFiles(files, point) {
 function referencedImages() {
     const names = new Set();
     const add = items => { for (const item of items) if (item.type === 'image') names.add(item.asset); };
-    add(workspace.items);
-    for (const step of [...boardHistory.undo, ...boardHistory.redo]) for (const name of step.assets) names.add(name);
+    rememberCanvas();
+    for (const canvas of canvasStates) {
+        add(canvas.board.items);
+        for (const step of [...canvas.history.undo, ...canvas.history.redo]) for (const name of step.assets) names.add(name);
+    }
     if (boardClipboard) add(boardClipboard.items);
     return [...names];
 }
@@ -409,7 +412,7 @@ async function cleanUpImages() {
     toast(`Deleted ${result.deleted} unused image${result.deleted === 1 ? '' : 's'} (${formatBytes(result.bytes)}).${skipped}`);
 }
 // The style toolbar edits the color of selected items and the text size of those that hold text.
-const selectedItems = types => [...selection].map(findItem).filter(item => item && types.includes(item.type));
+const selectedItems = types => [...selection].map(findElement).filter(item => item && types.includes(item.type));
 function renderStyleToolbar() {
     renderPointerControls();
     const bar = $('#style-toolbar');
@@ -417,6 +420,10 @@ function renderStyleToolbar() {
     const texts = colored.filter(item => TEXT_TYPES.includes(item.type));
     bar.hidden = !colored.length;
     $('#style-sizes').hidden = $('#style-divider').hidden = !texts.length;
+    const terminals = colored.filter(item => item.type === 'terminal');
+    $('#style-themes').hidden = !terminals.length;
+    const theme = terminals.length && terminals.every(card => (card.theme || '') === (terminals[0].theme || '')) ? terminals[0].theme || '' : 'mixed';
+    $('#terminal-theme').value = theme;
     if (bar.hidden) return;
     const shared = (list, key, fallback) => (list.every(item => (item[key] || fallback) === (list[0][key] || fallback)) ? list[0][key] || fallback : null);
     const color = shared(colored, 'color', 'default'), size = texts.length ? shared(texts, 'fontSize', 'medium') : null;
@@ -431,10 +438,11 @@ function setItemColor(color) {
         for (const item of items) {
             if (color === 'default') delete item.color;
             else item.color = color;
-            renderItem(item);
+            if (item.type === 'terminal') renderTerminalAppearance(item);
+            else renderItem(item);
         }
     });
-    renderStyleToolbar(); changed();
+    renderStyleToolbar(); refresh(); changed();
 }
 function setItemFontSize(size) {
     if (boardBusy()) return;

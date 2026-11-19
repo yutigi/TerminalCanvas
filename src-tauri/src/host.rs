@@ -25,6 +25,7 @@ use tc_core::assets::{
 use tc_core::atomic::{self, Access};
 use tc_core::js::utf16_len;
 use tc_core::recovery::{CardMetadata, WorkspaceRecovery};
+use tc_core::titles::{SettledTitle, TitleMode};
 use tc_core::workspace::{PROFILES, Workspace, create_card, create_workspace, limits, validate_workspace};
 use tc_core::{Error, Platform as Os};
 use tc_pty::manager::{Backend, Config, DirectoryRequest, EventSink, Integrations, STOP_TIMEOUT};
@@ -66,12 +67,25 @@ pub trait Platform: Send + Sync + 'static {
     fn close_window(&self);
 }
 
+/// Where AI agents look for user-wide skills, for the agent setup (see [`tc_core::skills`]).
+#[derive(Debug, Clone)]
+pub struct AgentHome {
+    /// The user's home folder.
+    pub home: PathBuf,
+    /// The `CLAUDE_CONFIG_DIR` shells inherit, if set.
+    pub claude_config: Option<PathBuf>,
+    /// Whether the first launch offers the setup.
+    pub first_launch: bool,
+}
+
 /// Where the host keeps its files: the folder the Electron build used, so they carry over.
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub data: PathBuf,
     /// The `tc-hook` sidecar. Without it, shells run without AI session capture.
     pub hook: Option<PathBuf>,
+    /// Where the agent setup installs the skill. Without it, the setup is unavailable.
+    pub agents: Option<AgentHome>,
 }
 
 impl Paths {
@@ -91,6 +105,10 @@ impl Paths {
     /// Where programs outside the canvas ask for new terminals (see [`tc_core::launch`]).
     pub fn launch_requests(&self) -> PathBuf {
         tc_core::launch::app_inbox(&self.data)
+    }
+    /// Present once the user has installed the skill or declined the first-launch offer.
+    pub fn agent_setup(&self) -> PathBuf {
+        self.data.join("agent-setup.json")
     }
 }
 
@@ -135,12 +153,29 @@ struct InputOrder {
 }
 
 struct State {
+    names: Naming,
     manager: TerminalManager,
     recovery: WorkspaceRecovery,
     filename: Option<PathBuf>,
     inputs: HashMap<String, InputOrder>,
     launches: crate::launches::Launches,
     pointers: crate::pointers::Pointers,
+    mirror: Option<crate::remote_mirror::Mirror>,
+}
+
+#[derive(Default)]
+struct Naming {
+    epoch: u64,
+    busy: bool,
+    entries: HashMap<String, NameEntry>,
+}
+
+struct NameEntry {
+    request: tc_pty::titles::NameRequest,
+    revision: u64,
+    next_read: std::time::Instant,
+    settled: SettledTitle,
+    origin: std::time::Instant,
 }
 
 /// Where events for the UI go.
@@ -164,6 +199,7 @@ pub struct Host {
     writes: SerialQueue,
     assets: SerialQueue,
     events: Mutex<Option<Events>>,
+    remote_events: tokio::sync::broadcast::Sender<Value>,
     quitting: AtomicBool,
 }
 
@@ -258,12 +294,14 @@ impl Host {
             Err(error) => eprintln!("Could not create {}: {error}", inbox.display()),
         }
         let mut state = State {
+            names: Naming::default(),
             manager: TerminalManager::new(config, backend, integrations, sink),
             recovery: WorkspaceRecovery::new(),
             filename: None,
             inputs: HashMap::new(),
             launches: crate::launches::Launches::new(),
             pointers: crate::pointers::Pointers::default(),
+            mirror: None,
         };
         let host = Arc::new(Host {
             state: sender,
@@ -275,6 +313,7 @@ impl Host {
             writes: SerialQueue::new("tc-workspace-writes"),
             assets: SerialQueue::new("tc-assets"),
             events: Mutex::new(None),
+            remote_events: tokio::sync::broadcast::channel(64).0,
             quitting: AtomicBool::new(false),
         });
         let weak = Arc::downgrade(&host);
@@ -295,10 +334,19 @@ impl Host {
                         state.manager.stopping();
                         state.launches.idle();
                         host.poll_launch_requests(&mut state);
+                        host.poll_names(&mut state);
                     }
                     None => break,
                 }
                 host.dispatch(&mut state);
+                if let Some(mirror) = &mut state.mirror {
+                    mirror.sync(
+                        state.recovery.board(),
+                        state.recovery.epoch(),
+                        &state.manager,
+                        &host.remote_events,
+                    );
+                }
             }
         });
         host
@@ -306,6 +354,108 @@ impl Host {
 
     fn post(&self, task: impl FnOnce(&Host, &mut State) + Send + 'static) {
         let _ = self.state.send(Message::Task(Box::new(task)));
+    }
+
+    /// One bounded local metadata read at a time, off the PTY actor. Nothing contacts a provider.
+    fn poll_names(self: &Arc<Self>, state: &mut State) {
+        let epoch = state.recovery.epoch();
+        if state.names.epoch != epoch {
+            state.names.epoch = epoch;
+            state.names.entries.clear();
+        }
+        let now = std::time::Instant::now();
+        let cards = state.recovery.board().cards.clone();
+        state.names.entries.retain(|id, entry| {
+            cards.iter().any(|card| {
+                card.id == *id
+                    && card.title_mode == Some(TitleMode::Automatic)
+                    && card.title_revision == entry.revision
+                    && state.manager.name_request(id).as_ref() == Some(&entry.request)
+            })
+        });
+        for card in &cards {
+            if card.title_mode != Some(TitleMode::Automatic) {
+                continue;
+            }
+            let Some(request) = state.manager.name_request(&card.id) else {
+                continue;
+            };
+            let entry = state.names.entries.entry(card.id.clone()).or_insert_with(|| NameEntry {
+                request,
+                revision: card.title_revision,
+                next_read: now,
+                settled: SettledTitle::default(),
+                origin: now,
+            });
+            if let Some(title) = entry
+                .settled
+                .ready(&card.title, now.duration_since(entry.origin).as_secs())
+                && let Ok(named) = state.recovery.rename(&card.id, TitleMode::Automatic, Some(&title))
+            {
+                entry.revision = named.title_revision;
+                self.publish_title(state, &named);
+            }
+        }
+        if state.names.busy {
+            return;
+        }
+        let next = state
+            .names
+            .entries
+            .iter_mut()
+            .filter(|(_, entry)| entry.next_read <= now)
+            .min_by_key(|(_, entry)| entry.next_read);
+        let Some((id, entry)) = next else { return };
+        let (id, request, revision) = (id.clone(), entry.request.clone(), entry.revision);
+        entry.next_read = now + Duration::from_secs(5);
+        state.names.busy = true;
+        let weak = Arc::downgrade(self);
+        tauri::async_runtime::spawn(async move {
+            let reading = request.clone();
+            let name = tauri::async_runtime::spawn_blocking(move || reading.read())
+                .await
+                .ok()
+                .flatten();
+            if let Some(host) = weak.upgrade() {
+                host.post(move |_, state| {
+                    state.names.busy = false;
+                    if state.recovery.epoch() != epoch || state.manager.name_request(&id).as_ref() != Some(&request) {
+                        return;
+                    }
+                    let Some(card) = state.recovery.board().cards.iter().find(|card| card.id == id) else {
+                        return;
+                    };
+                    if card.title_mode != Some(TitleMode::Automatic) || card.title_revision != revision {
+                        return;
+                    }
+                    if let (Some(name), Some(entry)) = (name, state.names.entries.get_mut(&id)) {
+                        entry.settled.observe(name, entry.origin.elapsed().as_secs());
+                    }
+                });
+            }
+        });
+    }
+
+    fn publish_title(&self, state: &mut State, card: &tc_core::workspace::Card) {
+        // The naming change and its recovery write are queued in the same actor turn.
+        let (file, text, emitter) = (
+            self.paths.recovery(),
+            state.recovery.board().to_file_string(None),
+            self.emitter(),
+        );
+        self.writes.push(move || {
+            if let Err(error) = write_workspace_file(&file, &text)
+                && let Some(emit) = emitter
+            {
+                emit(json!({ "type": "error", "message": format!("Could not save terminal title: {error}") }));
+            }
+        });
+        let event = json!({ "type": "title", "id": card.id, "title": card.title,
+            "titleMode": card.title_mode, "titleRevision": card.title_revision, "titleEpoch": state.recovery.epoch() });
+        if let Some(mirror) = &mut state.mirror {
+            mirror.observe(&event, &self.remote_events);
+        }
+        self.emit(event);
     }
 
     async fn with_state<R: Send + 'static>(&self, task: impl FnOnce(&Host, &mut State) -> R + Send + 'static) -> R {
@@ -392,7 +542,11 @@ impl Host {
                     Err(error) => self.emit_error(None, format!("Could not save session recovery: {error}")),
                 }
             }
-            self.emit(serde_json::to_value(&event).expect("events serialize"));
+            let event = serde_json::to_value(&event).expect("events serialize");
+            if let Some(mirror) = &mut state.mirror {
+                mirror.observe(&event, &self.remote_events);
+            }
+            self.emit(event);
         }
     }
 
@@ -519,6 +673,9 @@ impl Host {
                         "type": "launch", "external": true, "request": id, "profile": request.profile,
                         "title": request.title, "cwd": request.cwd, "command": request.command,
                     });
+                    if let Some(mode) = request.title_mode {
+                        event["titleMode"] = json!(mode);
+                    }
                     if let Some(parent) = &request.parent {
                         event["parent"] = json!(parent);
                     }
@@ -649,22 +806,54 @@ impl Host {
                 if self.paths.hook.is_none() {
                     warnings.push(HELPER_MISSING.to_owned());
                 }
+                let offer_setup = self.paths.agents.as_ref().is_some_and(|agents| agents.first_launch)
+                    && !self.paths.agent_setup().exists();
                 let restored = workspace.clone();
-                self.with_state(move |_, state| {
-                    state.recovery.reset(restored);
-                    state.inputs.clear();
-                })
-                .await;
+                let title_epoch = self
+                    .with_state(move |_, state| {
+                        state.recovery.reset(restored);
+                        state.inputs.clear();
+                        state.recovery.epoch()
+                    })
+                    .await;
                 let mut result = json!({
-                    "workspace": workspace, "profiles": PROFILES, "home": self.home, "platform": node_platform(self.os)
+                    "workspace": workspace, "profiles": PROFILES, "home": self.home, "platform": node_platform(self.os), "titleEpoch": title_epoch
                 });
                 // One line each, the workspace first: the UI shows them together.
                 if !warnings.is_empty() {
                     result["warning"] = json!(warnings.join("\n"));
                 }
+                if offer_setup {
+                    result["agentSetup"] = json!(true);
+                }
                 Ok(result)
             }
             "create-card" => Ok(json!({ "card": create_card(payload.unwrap_or(&Value::Null)).map_err(message)? })),
+            "rename-title" => {
+                let id = field(payload, "id")
+                    .and_then(Value::as_str)
+                    .ok_or("Invalid terminal ID.")?
+                    .to_owned();
+                let mode = field(payload, "mode")
+                    .and_then(Value::as_str)
+                    .and_then(TitleMode::parse)
+                    .ok_or("Invalid title mode.")?;
+                let title = field(payload, "title").and_then(Value::as_str).map(str::to_owned);
+                let epoch = field(payload, "titleEpoch").and_then(Value::as_u64);
+                let (card, saved) = self
+                    .with_state(move |host, state| {
+                        if epoch.is_some_and(|epoch| epoch != state.recovery.epoch()) {
+                            return Err("The workspace has changed.".into());
+                        }
+                        let card = state.recovery.rename(&id, mode, title.as_deref()).map_err(message)?;
+                        state.names.entries.remove(&id);
+                        let saved = host.queue_save(host.paths.recovery(), state.recovery.board(), None);
+                        Ok::<_, String>((card, saved))
+                    })
+                    .await?;
+                saved.await?;
+                Ok(json!({ "card": card }))
+            }
             // Lists the Claude Code accounts; with `create`, first adds that account.
             "claude-accounts" => {
                 let root = self.paths.claude_accounts();
@@ -688,6 +877,75 @@ impl Host {
                         result["created"] = json!(created);
                     }
                     Ok(result)
+                })
+                .await
+                .map_err(message)?
+            }
+            // Lists where the Terminal Canvas skill goes; with `install`, first installs it to those
+            // targets; with `dismiss`, records that the first-launch offer was declined.
+            "agent-setup" => {
+                let agents = self
+                    .paths
+                    .agents
+                    .clone()
+                    .ok_or("Agent setup is unavailable: the home folder is unknown.")?;
+                let install = match field(payload, "install") {
+                    None => Vec::new(),
+                    Some(Value::Array(ids)) if ids.len() <= tc_core::skills::TARGETS.len() => ids
+                        .iter()
+                        .map(|id| {
+                            id.as_str()
+                                .and_then(|id| tc_core::skills::TARGETS.into_iter().find(|known| *known == id))
+                                .ok_or_else(|| "Unknown agent setup target.".to_owned())
+                        })
+                        .collect::<Result<_, _>>()?,
+                    Some(_) => return Err("Unknown agent setup target.".into()),
+                };
+                let done = !install.is_empty() || field(payload, "dismiss") == Some(&json!(true));
+                let (accounts, marker) = (self.paths.claude_accounts(), self.paths.agent_setup());
+                tokio::task::spawn_blocking(move || {
+                    let targets = || {
+                        let names = tc_core::accounts::list(&accounts).unwrap_or_default();
+                        let folders: Vec<PathBuf> = names
+                            .iter()
+                            .map(|name| tc_core::accounts::folder(&accounts, name))
+                            .collect();
+                        tc_core::skills::targets(&agents.home, agents.claude_config.as_deref(), &folders)
+                    };
+                    let mut failed = None;
+                    for target in targets().iter().filter(|target| install.contains(&target.id)) {
+                        if let Err(error) = tc_core::skills::install(target) {
+                            failed.get_or_insert(error);
+                        }
+                    }
+                    let save = || {
+                        marker
+                            .parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .and_then(|()| atomic::write(&marker, b"{\"offered\":true}\n", Access::Default))
+                    };
+                    if done && let Err(error) = save() {
+                        failed.get_or_insert(format!("Could not save the agent setup: {error}"));
+                    }
+                    // Folders as text: a path that is not Unicode is still shown, approximately.
+                    let targets: Vec<Value> = targets()
+                        .into_iter()
+                        .map(|target| {
+                            let folders: Vec<String> = target
+                                .folders
+                                .iter()
+                                .map(|folder| folder.display().to_string())
+                                .collect();
+                            json!({
+                                "id": target.id, "name": target.name, "folders": folders,
+                                "detected": target.detected, "status": target.status,
+                            })
+                        })
+                        .collect();
+                    match failed {
+                        Some(error) => Err(error),
+                        None => Ok(json!({ "targets": targets, "installed": install })),
+                    }
                 })
                 .await
                 .map_err(message)?
@@ -800,6 +1058,20 @@ impl Host {
                             raw["items"].as_array_mut().expect("validated items").retain(|item| {
                                 item.get("hook").is_none() || (item["start"]["id"] != id && item["end"]["id"] != id)
                             });
+                            let item_ids: std::collections::HashSet<String> = raw["items"]
+                                .as_array()
+                                .expect("validated items")
+                                .iter()
+                                .filter_map(|item| item["id"].as_str().map(str::to_owned))
+                                .collect();
+                            if let Some(canvases) = raw.get_mut("canvases").and_then(Value::as_array_mut) {
+                                for canvas in canvases {
+                                    canvas["itemIds"]
+                                        .as_array_mut()
+                                        .expect("validated canvas")
+                                        .retain(|item| item.as_str().is_some_and(|id| item_ids.contains(id)));
+                                }
+                            }
                             let board = state.recovery.accept(&raw).map_err(message)?.clone();
                             host.dispatch(state);
                             Ok::<_, String>(Some(host.queue_save(host.paths.recovery(), &board, None)))
@@ -976,17 +1248,19 @@ impl Host {
                 };
                 let workspace = self.read_workspace(&file).await.map_err(message)?;
                 let opened = workspace.clone();
-                self.with_state(move |host, state| {
-                    state.manager.stop_all();
-                    host.dispatch(state);
-                    state.manager.forget();
-                    state.pointers = crate::pointers::Pointers::default();
-                    state.recovery.reset(opened);
-                })
-                .await;
+                let title_epoch = self
+                    .with_state(move |host, state| {
+                        state.manager.stop_all();
+                        host.dispatch(state);
+                        state.manager.forget();
+                        state.pointers = crate::pointers::Pointers::default();
+                        state.recovery.reset(opened);
+                        state.recovery.epoch()
+                    })
+                    .await;
                 self.flush(None).await?;
                 self.with_state(move |_, state| state.filename = Some(file)).await;
-                Ok(json!({ "workspace": workspace }))
+                Ok(json!({ "workspace": workspace, "titleEpoch": title_epoch }))
             }
             "new" => {
                 self.with_state(|host, state| {
@@ -1000,7 +1274,9 @@ impl Host {
                 .await;
                 self.flush(None).await?;
                 Ok(self
-                    .with_state(|_, state| json!({ "workspace": state.recovery.board() }))
+                    .with_state(
+                        |_, state| json!({ "workspace": state.recovery.board(), "titleEpoch": state.recovery.epoch() }),
+                    )
                     .await)
             }
             "close" => {
@@ -1108,6 +1384,39 @@ impl Host {
     /// The folder `tc-asset` serves images from.
     pub fn assets_folder(&self) -> PathBuf {
         self.paths.assets()
+    }
+
+    /// Attaches to live state without desktop initialization, recovery reset, or input reset.
+    pub async fn remote_attach(&self) -> (Value, tokio::sync::broadcast::Receiver<Value>) {
+        self.with_state(|host, state| {
+            let mirror = state.mirror.get_or_insert_with(crate::remote_mirror::Mirror::new);
+            let events = host.remote_events.subscribe();
+            let mut snapshot = mirror.snapshot(state.recovery.board(), &state.manager);
+            snapshot["profiles"] = json!(PROFILES);
+            snapshot["home"] = json!(host.home);
+            snapshot["platform"] = json!(node_platform(host.os));
+            snapshot["titleEpoch"] = json!(state.recovery.epoch());
+            (snapshot, events)
+        })
+        .await
+    }
+
+    pub async fn remote_detach(&self) {
+        self.with_state(|_, state| state.mirror = None).await;
+    }
+
+    /// WebSocket order is already serial. It must not share the desktop bridge's sequence map.
+    /// Recheck revocation inside the actor so queued input cannot outlive its authorization.
+    pub async fn remote_input(&self, id: String, data: String, active: Arc<AtomicBool>) -> CommandResult {
+        self.with_state(move |_, state| {
+            if !active.load(Ordering::Acquire) {
+                return Err("Session revoked.".into());
+            }
+            state.manager.pointer_typed(&id);
+            state.manager.write(&id, &data).map_err(message)?;
+            Ok(json!({ "ok": true }))
+        })
+        .await
     }
 
     /// For tests: the number of running terminals.

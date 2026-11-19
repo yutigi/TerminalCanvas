@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use crate::js::{has_c0_control, serialize_number, trim, truthy, utf16_len};
 use crate::session::{SessionMetadata, session_metadata};
-use crate::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES, terminal_font_size};
+use crate::styles::{COLORED_TYPES, Color, FontSize, GROUP_DEPTH, TEXT_TYPES, TerminalTheme, terminal_font_size};
 use crate::{Result, invalid};
 
 /// The current workspace format. Formats 1 and 2 are migrated on load.
@@ -123,6 +123,9 @@ pub struct Card {
     pub id: String,
     pub profile: ProfileId,
     pub title: String,
+    /// Absent in legacy files: their names remain manual, even when equal to a profile default.
+    pub title_mode: Option<crate::titles::TitleMode>,
+    pub title_revision: u64,
     pub cwd: String,
     pub command: String,
     pub session: Option<SessionMetadata>,
@@ -132,6 +135,10 @@ pub struct Card {
     pub h: f64,
     /// Text size in CSS pixels. `None` is the default, `terminal_font_size::DEFAULT`.
     pub font_size: Option<u8>,
+    /// An absent color preserves the original frame; profile badges are independent.
+    pub color: Option<Color>,
+    /// `None` inherits the workspace theme; Current is an explicit override.
+    pub theme: Option<TerminalTheme>,
     /// The Claude Code account the terminal's shell runs as (see [`crate::accounts`]). `None`
     /// leaves the shell's own `CLAUDE_CONFIG_DIR`, normally `~/.claude`.
     pub claude_account: Option<String>,
@@ -209,6 +216,22 @@ pub struct Item {
     pub groups: Vec<String>,
 }
 
+/// Canvas ownership is optional format-3 metadata. The flat arrays remain authoritative for
+/// recovery, portable assets, and older readers; absent metadata retains the legacy serialization.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Canvas {
+    pub id: String,
+    pub name: String,
+    pub camera: Camera,
+    pub card_ids: Vec<String>,
+    pub item_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused: Option<String>,
+}
+
 /// A validated workspace in the current format.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workspace {
@@ -217,6 +240,10 @@ pub struct Workspace {
     pub camera: Camera,
     pub cards: Vec<Card>,
     pub items: Vec<Item>,
+    pub canvases: Vec<Canvas>,
+    pub active_canvas: Option<String>,
+    /// `None` uses Current and omits the field when serializing.
+    pub terminal_theme: Option<TerminalTheme>,
 }
 
 impl Workspace {
@@ -245,7 +272,7 @@ impl Serialize for Number {
 
 impl Serialize for Workspace {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(5))?;
+        let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("version", &VERSION)?;
         map.serialize_entry("name", &self.name)?;
         map.serialize_entry("camera", &self.camera)?;
@@ -253,6 +280,13 @@ impl Serialize for Workspace {
         map.serialize_entry("items", &self.items)?;
         if self.hooks_paused {
             map.serialize_entry("hooksPaused", &true)?;
+        }
+        if !self.canvases.is_empty() {
+            map.serialize_entry("canvases", &self.canvases)?;
+            map.serialize_entry("activeCanvas", &self.active_canvas)?;
+        }
+        if let Some(theme) = self.terminal_theme {
+            map.serialize_entry("terminalTheme", &theme)?;
         }
         map.end()
     }
@@ -274,11 +308,23 @@ impl Serialize for Card {
         map.serialize_entry("y", &Number(self.y))?;
         map.serialize_entry("w", &Number(self.w))?;
         map.serialize_entry("h", &Number(self.h))?;
+        if let Some(mode) = self.title_mode {
+            map.serialize_entry("titleMode", &mode)?;
+        }
+        if self.title_revision > 0 {
+            map.serialize_entry("titleRevision", &self.title_revision)?;
+        }
         if let Some(size) = self.font_size {
             map.serialize_entry("fontSize", &size)?;
         }
         if let Some(account) = &self.claude_account {
             map.serialize_entry("claudeAccount", account)?;
+        }
+        if let Some(color) = self.color {
+            map.serialize_entry("color", &color)?;
+        }
+        if let Some(theme) = self.theme {
+            map.serialize_entry("theme", &theme)?;
         }
         if !self.groups.is_empty() {
             map.serialize_entry("groups", &self.groups)?;
@@ -483,6 +529,17 @@ fn terminal_font(value: Option<&Value>) -> Option<u8> {
 
 /* ---------- Validation ---------- */
 
+fn terminal_theme(value: Option<&Value>) -> Result<Option<TerminalTheme>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .and_then(TerminalTheme::parse)
+            .map(Some)
+            .ok_or_else(|| crate::Error::Invalid("Unsupported terminal theme.".into())),
+    }
+}
+
 /// Validates a terminal card from a workspace in `version`'s format.
 pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
     if field(Some(card), "type").and_then(Value::as_str) != Some("terminal") {
@@ -513,10 +570,19 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
         .and_then(Value::as_str)
         .and_then(crate::accounts::name);
     let groups = groups(card, version)?;
+    let (color, _) = style(card, "terminal")?;
+    let theme = terminal_theme(field(raw, "theme"))?;
     Ok(Card {
         id,
         profile,
         title,
+        title_mode: field(raw, "titleMode")
+            .and_then(Value::as_str)
+            .and_then(crate::titles::TitleMode::parse),
+        title_revision: field(raw, "titleRevision")
+            .and_then(Value::as_u64)
+            .filter(|value| *value <= 9_007_199_254_740_991)
+            .unwrap_or(0),
         cwd,
         command,
         session,
@@ -525,6 +591,8 @@ pub fn validate_card(card: &Value, version: u32) -> Result<Card> {
         w,
         h,
         font_size,
+        color,
+        theme,
         claude_account,
         groups,
     })
@@ -726,6 +794,10 @@ pub fn validate_workspace(raw: &Value) -> Result<Workspace> {
     if name.is_empty() {
         "Untitled workspace".clone_into(&mut name);
     }
+    let terminal_theme =
+        terminal_theme(field(Some(raw), "terminalTheme"))?.filter(|theme| *theme != TerminalTheme::Current);
+    // Run canvas extension validation after main's checks to preserve their error precedence.
+    let (canvases, active_canvas) = validate_canvases(raw, &cards, &items)?;
     let hooks_paused = match raw.get("hooksPaused") {
         None | Some(Value::Null) => false,
         Some(Value::Bool(value)) => *value,
@@ -737,6 +809,9 @@ pub fn validate_workspace(raw: &Value) -> Result<Workspace> {
         camera: Camera { x, y, z },
         cards,
         items,
+        canvases,
+        active_canvas,
+        terminal_theme,
     };
     crate::pointers::validate_graph(&board)?;
     Ok(board)
@@ -754,7 +829,117 @@ pub fn create_workspace() -> Workspace {
         },
         cards: Vec::new(),
         items: Vec::new(),
+        canvases: Vec::new(),
+        active_canvas: None,
+        terminal_theme: None,
     }
+}
+
+fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec<Canvas>, Option<String>)> {
+    let Some(list) = raw.get("canvases") else {
+        if raw.get("activeCanvas").is_some() {
+            return invalid("Invalid active canvas.");
+        }
+        return Ok((Vec::new(), None));
+    };
+    let Some(list) = list.as_array().filter(|list| !list.is_empty()) else {
+        return invalid("Invalid canvases.");
+    };
+    let mut canvas_ids = HashSet::new();
+    let mut owners = HashMap::new();
+    let card_ids: HashSet<_> = cards.iter().map(|card| card.id.as_str()).collect();
+    let item_ids: HashSet<_> = items.iter().map(|item| item.id.as_str()).collect();
+    let mut canvases = Vec::with_capacity(list.len());
+    for canvas in list {
+        let id = identifier(canvas.get("id"), "canvas ID")?;
+        if !canvas_ids.insert(id.clone()) {
+            return invalid("Duplicate canvas IDs.");
+        }
+        let mut name = text(canvas.get("name"), 100, "canvas name")?;
+        if name.is_empty() {
+            "Untitled canvas".clone_into(&mut name);
+        }
+        let camera = canvas.get("camera");
+        let coordinate = |key| finite(field(camera, key), -limits::COORDINATE, limits::COORDINATE);
+        let (Some(x), Some(y), Some(z)) = (coordinate("x"), coordinate("y"), finite(field(camera, "z"), 0.35, 1.5))
+        else {
+            return invalid("Invalid canvas camera.");
+        };
+        let mut members = |key, allowed: &HashSet<&str>| -> Result<Vec<String>> {
+            let Some(list) = canvas.get(key).and_then(Value::as_array) else {
+                return invalid("Invalid canvas ownership.");
+            };
+            list.iter()
+                .map(|value| {
+                    let member = identifier(Some(value), "canvas member ID")?;
+                    if !allowed.contains(member.as_str()) || owners.insert(member.clone(), id.clone()).is_some() {
+                        return invalid("Invalid canvas ownership.");
+                    }
+                    Ok(member)
+                })
+                .collect()
+        };
+        let card_ids = members("cardIds", &card_ids)?;
+        let item_ids = members("itemIds", &item_ids)?;
+        let preference = |key, allowed: &[String]| -> Result<Option<String>> {
+            match canvas.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(value) => {
+                    let member = identifier(Some(value), "canvas focus")?;
+                    if !allowed.contains(&member) {
+                        return invalid("Invalid canvas focus.");
+                    }
+                    Ok(Some(member))
+                }
+            }
+        };
+        let selected = preference("selected", &[card_ids.clone(), item_ids.clone()].concat())?;
+        let focused = preference("focused", &card_ids)?;
+        canvases.push(Canvas {
+            id,
+            name,
+            camera: Camera { x, y, z },
+            card_ids,
+            item_ids,
+            selected,
+            focused,
+        });
+    }
+    if owners.len() != cards.len() + items.len() {
+        return invalid("Invalid canvas ownership.");
+    }
+    // Neither connectors nor groups can cross a canvas boundary.
+    let mut group_owners = HashMap::new();
+    for (id, groups) in cards
+        .iter()
+        .map(|card| (&card.id, &card.groups))
+        .chain(items.iter().map(|item| (&item.id, &item.groups)))
+    {
+        for group in groups {
+            if group_owners
+                .insert(group, &owners[id])
+                .is_some_and(|owner| owner != &owners[id])
+            {
+                return invalid("Groups cannot span canvases.");
+            }
+        }
+    }
+    for item in items {
+        if let ItemKind::Line { start, end, .. } = &item.kind {
+            for endpoint in [start, end] {
+                if let Endpoint::Element(id) = endpoint
+                    && owners[id] != owners[&item.id]
+                {
+                    return invalid("Connectors cannot span canvases.");
+                }
+            }
+        }
+    }
+    let active = identifier(raw.get("activeCanvas"), "active canvas")?;
+    if !canvas_ids.contains(&active) {
+        return invalid("Invalid active canvas.");
+    }
+    Ok((canvases, Some(active)))
 }
 
 /// A new card from the UI's options: `profile`, `title`, `cwd`, `command`, `x`, and `y`.
@@ -788,12 +973,47 @@ pub fn create_card(options: &Value) -> Result<Card> {
         "w": 660,
         "h": 430,
     });
-    validate_card(&raw, VERSION)
+    let mut card = validate_card(&raw, VERSION)?;
+    card.title_mode = option("titleMode")
+        .and_then(Value::as_str)
+        .and_then(crate::titles::TitleMode::parse);
+    if card.title_mode == Some(crate::titles::TitleMode::Automatic) {
+        card.title = crate::titles::fallback(&card);
+    }
+    Ok(card)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_intent_is_explicit_and_roundtrips_without_changing_legacy_defaults() {
+        use crate::titles::TitleMode;
+        let legacy = create_card(&json!({ "profile": "codex" })).unwrap();
+        assert_eq!(legacy.title_mode, None);
+        assert!(!json!(legacy).as_object().unwrap().contains_key("titleMode"));
+        let automatic =
+            create_card(&json!({ "profile": "codex", "cwd": "C:\\repo", "titleMode": "automatic" })).unwrap();
+        assert_eq!(automatic.title, "repo · Codex");
+        for version in [1, 2, 3] {
+            let mut board = create_workspace().to_value();
+            board["version"] = json!(version);
+            board["cards"] = json!([legacy, automatic]);
+            let saved = validate_workspace(&board).unwrap();
+            assert_eq!(saved.cards[0].title_mode, None);
+            assert_eq!(saved.cards[1].title_mode, Some(TitleMode::Automatic));
+            assert_eq!(validate_workspace(&saved.to_value()).unwrap(), saved);
+        }
+        for mode in [json!(null), json!(true), json!("AUTO"), json!({})] {
+            let mut card = json!(legacy);
+            card["titleMode"] = mode;
+            card["titleRevision"] = json!("1");
+            let card = validate_card(&card, VERSION).unwrap();
+            assert_eq!(card.title_mode, None);
+            assert_eq!(card.title_revision, 0);
+        }
+    }
 
     #[test]
     fn whole_number_versions_written_as_floats_are_accepted() {

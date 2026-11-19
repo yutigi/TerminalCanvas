@@ -10,6 +10,8 @@ pub mod launches;
 pub mod platform;
 pub mod pointers;
 pub mod protocol;
+pub mod remote;
+mod remote_mirror;
 pub mod updates;
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
 compile_error!("The e2e feature must never be enabled in release builds.");
@@ -28,7 +30,8 @@ use tauri::{LogicalSize, Manager, RunEvent, State, Url, Webview, WebviewUrl, Web
 use tc_pty::PtyBackend;
 use tc_pty::manager::{Backend, Config};
 
-use host::{Host, Paths};
+use host::{AgentHome, Host, Paths};
+use remote::Remote;
 use updates::Updates;
 
 /// Only the app's own pages: `tauri://localhost` on macOS and Linux, `http://tauri.localhost` on Windows.
@@ -75,7 +78,9 @@ macro_rules! actions {
 
 actions! {
     create_card => "create-card",
+    rename_title => "rename-title",
     claude_accounts => "claude-accounts",
+    agent_setup => "agent-setup",
     autosave => "autosave",
     pointer_configure => "pointer-configure",
     save => "save",
@@ -119,6 +124,24 @@ async fn initialize(
 async fn update_install(webview: Webview, updates: State<'_, Arc<Updates>>) -> Result<Value, String> {
     authorized(&webview)?;
     updates.install().await
+}
+
+macro_rules! remote_actions {
+    ($($name:ident => $action:literal),* $(,)?) => { $(
+        #[tauri::command]
+        async fn $name(webview: Webview, remote: State<'_, Remote>, request: Request<'_>) -> Result<Value, String> {
+            authorized(&webview)?;
+            remote.command($action, payload(&request).as_ref()).await
+        }
+    )* };
+}
+
+remote_actions! {
+    remote_start => "remote-start",
+    remote_stop => "remote-stop",
+    remote_status => "remote-status",
+    remote_rotate => "remote-rotate",
+    remote_revoke => "remote-revoke",
 }
 
 /// The image arrives as the raw IPC body, not as a JSON array of numbers.
@@ -282,7 +305,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialize,
             create_card,
+            rename_title,
             claude_accounts,
+            agent_setup,
             autosave,
             pointer_configure,
             save,
@@ -307,6 +332,11 @@ pub fn run() {
             resize,
             ack,
             update_install,
+            remote_start,
+            remote_stop,
+            remote_status,
+            remote_rotate,
+            remote_revoke,
             #[cfg(feature = "e2e")]
             e2e_state,
             #[cfg(feature = "e2e")]
@@ -335,17 +365,46 @@ pub fn run() {
                 )?;
                 profile
             };
+            // Test runs install the skill only inside their profile and never offer the setup.
+            let config = Config::from_environment();
+            // The setup installs where shells' agents look: the shells' home and CLAUDE_CONFIG_DIR.
+            #[cfg(not(feature = "e2e"))]
+            let agents = (!config.home.is_empty()).then(|| AgentHome {
+                home: PathBuf::from(&config.home),
+                claude_config: config
+                    .env
+                    .get(tc_core::accounts::ENV)
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from),
+                first_launch: true,
+            });
+            #[cfg(feature = "e2e")]
+            let agents = Some(AgentHome {
+                home: data.join("home"),
+                claude_config: None,
+                first_launch: false,
+            });
             let paths = Paths {
                 data,
                 hook: sidecar("tc-hook"),
+                agents,
             };
             let platform = Arc::new(platform::TauriPlatform::new(app.handle().clone()));
             #[cfg(not(feature = "e2e"))]
             let backend: Box<dyn Backend> = Box::new(PtyBackend);
             #[cfg(feature = "e2e")]
             let backend: Box<dyn Backend> = Box::new(e2e::TestBackend(PtyBackend));
-            let host = Host::new(paths, platform, backend, Config::from_environment());
+            let host = Host::new(paths, platform, backend, config);
             app.manage(Arc::clone(&host));
+            let resolver = app.asset_resolver();
+            app.manage(Remote::new(
+                Arc::clone(&host),
+                Arc::new(move |path| {
+                    resolver
+                        .get(path.to_owned())
+                        .map(|asset| (asset.bytes, asset.mime_type))
+                }),
+            ));
             let updates = Updates::new(app.handle());
             app.manage(Arc::clone(&updates));
             create_window(app, &host)?;

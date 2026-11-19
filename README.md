@@ -39,9 +39,13 @@ even without command-line flags. Release builds reject the `e2e` feature.
 ## Use the workspace
 
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
-- Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan. Use Ctrl + scroll to zoom the canvas; over the selected terminal, it changes that terminal's text size instead.
+- Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** opens the searchable terminal switcher; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior.
+- Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan.
+- Scroll or two-finger scroll over empty space to zoom the canvas at the pointer. Plain scrolling over terminals, board items, the minimap, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A gesture stays with its starting area until you pause, so crossing a terminal does not change zooming into terminal scrolling. Ctrl + scroll (Command on macOS) also zooms the canvas elsewhere; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
+- Select a terminal and use the canvas style bar to color its frame/title bar. The same seven colors work across terminals and board items; **Default color** restores the original look. Profile badges keep identifying the terminal's tool. Card colors also appear in the sidebar and minimap.
+- Choose **Default theme** above the canvas for all terminals, or **Theme** in the selected terminal's style bar to override it. **Workspace default** clears an override; **Current** explicitly keeps the original theme. Current, Midnight (dark blue), and Paper (light) include complete ANSI palettes. Changes apply immediately, preserving running shells and scrollback. Themes and colors are saved in the workspace and support undo/redo. Duplicate copies the source card's color and theme override.
 - Use the canvas icon in the top toolbar or **Ctrl/Cmd + Shift + B** to hide or show the sidebar, including while typing in a terminal. Click a sidebar section heading to collapse it; its terminal count stays visible. **/** outside text fields and terminals reveals the sidebar search. These choices are remembered on this device, separately from workspace files. Focus mode temporarily hides the sidebar and restores your choice when you return; the toggle or search can reveal it during Focus mode. Small windows keep your manual choice.
 - Move between terminals from the keyboard with **Alt + arrow keys**. See [Keyboard navigation](#keyboard-navigation).
 - Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
@@ -54,9 +58,91 @@ even without command-line flags. Release builds reject the `e2e` feature.
 
 On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text is selected. Windows behavior is tested with real native key events, clipboard IPC, and PowerShell. On macOS, these shortcuts were checked by hand in the native app. Linux desktop behavior has not been validated.
 
+### Browser access (first phase)
+
+View the live canvas and type into its running terminals from a browser **on the same computer**:
+
+1. Start Terminal Canvas, open **Browser access · Off** at the bottom of the sidebar, and choose a
+   port. Leave it at `0` to select an available port, or choose a fixed port from 1 to 65535.
+2. Click **Start**. The dialog shows `http://127.0.0.1:<port>` and separate controller/viewer tokens.
+   Open that exact URL in a browser and enter the appropriate token. The sidebar keeps showing the
+   connected-client count while access is running.
+3. Use the controller token to type into running terminals, including paste and terminal interrupts.
+   Only one remote controller can connect at once. The desktop can still type; simultaneous input
+   reaches the shell in arrival order. Viewer tokens allow additional read-only windows, up to
+   eight sessions in total. Use another browser or a private browser profile for a different token;
+   tabs in one profile share their login cookie. Each client can switch canvases independently and
+   keeps its own focus, selection, pan, and zoom on each canvas. Hidden terminals keep receiving output.
+4. Keep workspace editing, terminal start/stop, folder/file dialogs, image import/cleanup, and
+   updates in the desktop app. Browser output uses the desktop's PTY dimensions and scrolls when
+   necessary. Browser clipboard shortcuts use that browser's permission-controlled clipboard.
+5. **Revoke sessions** disconnects every browser without changing the tokens. **Rotate tokens**
+   also invalidates both tokens. **Stop access** stops listening and disconnects everyone. Starting
+   again generates fresh tokens. Reload a disconnected browser to reconnect or enter a new token.
+
+Browser access is off by default on every launch, including debug, test, and E2E builds. It never
+starts from an environment variable, saved setting, command-line argument, or remote request.
+Tokens are generated from OS randomness and kept only in memory. Login uses a same-origin POST;
+tokens never appear in URLs or browser storage. HttpOnly, SameSite=Strict cookies expire after
+12 hours. At most five failed login attempts are allowed per rolling minute, across all browsers.
+Stopping or revoking sessions invalidates queued shell input as well as active connections.
+
+This phase binds only IPv4 loopback and checks the exact Host and Origin. It rejects direct
+LAN/VPN access and arbitrary file paths, and keeps browser CSP separate from the unchanged desktop
+CSP. Terminal output is replayed from a bounded, memory-only buffer collected while browser access
+is running (2 MiB across terminals); older output and output before enabling access are unavailable.
+Slow clients disconnect and can reload for a fresh snapshot; they never acknowledge or stall the
+desktop's PTY output. Replay is a recent output stream, not an exact screen snapshot; full-screen
+programs may need a redraw after attachment. Treat controller tokens like access to your shells, and viewer tokens like
+access to terminal output and the workspace.
+
+**iPhone/iPad and Tailscale:** direct access at a Tailscale `100.x` address or a LAN address is not
+implemented in this phase. Installing Tailscale does not change that: `127.0.0.1` on an iPhone
+refers to the phone. Do not publish this HTTP endpoint through a proxy, Tailscale Serve/Funnel,
+or port forwarding; exact Host/Origin checks intentionally reject those URLs. A later phase must
+add explicit interface selection and TLS (or an explicitly configured encrypted VPN), before
+documenting the remote-device setup. QR pairing, touch gestures, a mobile extra-keys bar, and
+iPhone/iPad Safari validation remain open under [issue #39](https://github.com/yutigi/TerminalCanvas/issues/39).
+This PR does not provide background sessions (#35) or multiple canvases (#30); browsers attach
+to the one running desktop canvas, and closing the desktop still stops its terminals.
+
 Paste accepts plain text up to 1 MB (1,048,576 UTF-16 code units), the same limit as copying, and uses xterm to normalize line endings and respect bracketed-paste mode. Long pastes are sent in ordered pieces, and keys pressed afterward, Ctrl + C included, follow the whole paste. The limit keeps that wait bounded when a program reads its input slowly; the card's stop control ends a program that stops reading. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
 
 ![The in-app shortcut guide explaining selection-aware copy, paste, and interrupt.](docs/images/terminal-clipboard-shortcuts.png)
+
+### Multiple canvases
+
+Use the **Canvas** selector in the sidebar to switch boards. The buttons beneath it create,
+rename, reorder, or delete a canvas. There is no fixed canvas count limit. Each canvas keeps its
+own terminals, items, groups, camera, selection, Focus view, and undo history. The last canvas
+cannot be deleted; deleting another always asks for confirmation and stops only its terminals.
+
+Terminals keep running on hidden canvases. Their output is still parsed and acknowledged, with
+the same backpressure, directory tracking, and 5,000-line scrollback limit as visible terminals.
+Hidden canvases do not fit terminals or paint their board; terminals refit when shown. **New output**,
+**Bell**, and **Exited** indicators appear beside a hidden canvas's name and clear when it is shown.
+
+| Shortcut | Canvas action |
+| --- | --- |
+| Ctrl + Shift + K | Create a canvas |
+| Ctrl + Shift + R | Rename the current canvas |
+| Ctrl + Shift + PageUp / PageDown | Switch to the previous / next canvas |
+| Ctrl + Alt + Shift + PageUp / PageDown | Move the current canvas earlier / later |
+| Ctrl + Shift + Delete | Delete the current canvas, after confirmation |
+
+Use Command in place of Ctrl on macOS. These shortcuts also work inside terminals. Finish a
+drag, image import, terminal creation, or open dialog before changing canvases. Sidebar search,
+Arrange, Fit, and Alt + arrow navigation apply to the current canvas. A terminal jump by ID
+switches to its canvas first; an agent requesting a terminal beside a hidden parent also switches
+to that parent's canvas. Moving terminals between canvases is a follow-up; board items can be
+copied and pasted using the existing clipboard controls.
+
+Save, portable export, autosave, and recovery include all canvases and the last active canvas.
+Restoring a workspace leaves every terminal stopped. Existing format 1/2/3 single-board files
+open as one canvas. Canvas organization uses optional format-3 metadata; an unchanged legacy
+workspace retains its original serialized defaults. Older format-3 apps can read the flat items
+and terminals, but show them on a single board and discard canvas organization if they save.
+The 1,000-item and 64 MB workspace limits still apply across all canvases.
 
 ### Board items
 
@@ -69,7 +155,7 @@ The left canvas toolbar adds items around your terminals. Click to place an item
 - **Image** opens a file picker. You can also paste an image or drop image files onto the canvas. PNG, JPEG, GIF, and WebP files up to 15 MB are supported.
 - Shift + click adds or removes elements from the selection; Shift + drag on empty canvas selects every element fully inside the rectangle. Drag any selected element to move the whole selection. Click empty canvas to clear the selection.
 - **Ctrl + G** groups the selection so it selects and moves as one unit; **Ctrl + Shift + G** ungroups. Groups can include terminals and other groups, up to eight levels deep. Selecting any member selects the outermost group, and ungrouping removes one level at a time.
-- The style bar at the top of the canvas appears when the selection includes text labels, notes, shapes, frames, or lines. Pick one of seven colors or the default look, and a small, medium, large, or extra-large text size for items that hold text. Terminals and images have no style options.
+- The style bar at the top of the canvas appears when the selection includes terminals, text labels, notes, shapes, frames, or lines. Pick one of seven colors or the default look, and a small, medium, large, or extra-large text size for items that hold text. Terminals also offer a theme; their text size uses the terminal controls above. Images have no style options.
 - **Ctrl + C**, **Ctrl + X**, **Ctrl + V**, and **Ctrl + D** copy, cut, paste, and duplicate the selected board items, including everything inside a selected frame. Each paste is offset from the last, or lands in the middle of the view if the original is out of sight. Connectors between copied items stay attached; other attached ends become free. Terminals are not copied. Copying also puts the items' text on the system clipboard; if you copy something else afterwards, Ctrl + V pastes that instead.
 - **Ctrl + Z** undoes and **Ctrl + Shift + Z** or **Ctrl + Y** redoes board changes: creating, deleting, moving, resizing, and restyling items, editing text, connectors, grouping, and terminal moves, resizes, and Arrange. The canvas toolbar has matching buttons. Undo never creates or closes a terminal, because that would start or stop a process; a connector attached to a terminal you have since closed comes back with a free end. History keeps the last 100 changes and is cleared when you open or start a workspace.
 - **Delete** or **Backspace** removes selected board items. Terminals are only removed with their close button, which stops running shells safely.
@@ -82,6 +168,12 @@ An arrow between two terminals can submit work when its source finishes. Select 
 choose **Hook pointer…**, select a source event and target action, enter the command or prompt,
 then check **Arm this pointer** and save. New pointers start disarmed. Other arrows and plain
 lines retain their usual behavior. Remove the hook before reconnecting its endpoints.
+
+Both terminals and the arrow must belong to the same canvas; cross-canvas connectors
+are rejected. Pointers keep running when their canvas is hidden. Pause hooks applies to
+every canvas and stays available when only hidden canvases contain pointers. A new-terminal
+action reveals its source canvas before opening the new card. Configure and arm pointers
+in the desktop app; remote browsers can view their saved configuration.
 
 - **AI turn finished (Stop)** fires when Claude Code or Codex reports a completed turn through
   its lifecycle hook. Interrupts and failures do not count as successful completion.
@@ -173,6 +265,47 @@ except that a terminal started without integration (see above) has only `TC_CARD
 an instruction snippet for `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`, sandbox notes, and the security
 model. A new terminal does not inherit the requesting agent's sandbox.
 
+### Terminal titles
+
+New terminals use automatic names when you leave the suggested launch name untouched. The initial
+name uses the project folder and profile. Once the shell integration captures a Claude or Codex
+session, Terminal Canvas reuses that CLI's locally stored session name. It never types `/status`
+into your terminal, starts a second agent, or makes an additional model request.
+
+Click a card's title to **Rename terminal**; the title is a keyboard-accessible button too. **Save
+name** makes your choice manual immediately. Automatic updates cannot replace it. **Use automatic
+title** returns to the project/profile fallback and then follows available session names again.
+The header, sidebar search, and minimap share the effective title. Names and modes survive autosave,
+Save, portable export/import, and restart; restored terminals stay stopped.
+
+Existing workspace titles remain manual, even when equal to a profile's default. A duplicate gets
+a fresh automatic name for its new shell. Program requests with an explicit title remain manual;
+requests without a title use automatic naming. Workspace format stays at 3; formats 1 and 2 still
+load. Optional `titleMode` and `titleRevision` fields carry naming intent and protect newer host
+decisions from stale saves.
+
+Naming reads only dedicated name fields: Codex's `thread_name` in `session_index.jsonl`, matched
+by the captured session ID, and Claude's `customTitle` (preferred) or `aiTitle` in that captured
+project/session's JSONL metadata. It uses the terminal's launch-time `CODEX_HOME` or
+`CLAUDE_CONFIG_DIR`, including a selected Claude account, or their usual home-directory defaults.
+No prompts, raw scrollback, credential files, or other sessions' conversation histories are used
+as naming context. Nothing is sent to an external service, and this feature adds no token or
+subscription cost. Selecting a manual name disables further metadata reads for that card.
+
+Local metadata is checked at most once every five seconds per eligible card, with one background
+read at a time. A changed name settles for five seconds; subsequent visible changes are at least
+60 seconds apart during that launch. Unchanged context does not churn titles. Reads are bounded
+to 64 KiB for Codex and the first/last 64 KiB for Claude. Names are plain text, limited to 100
+UTF-16 units without splitting emoji. Missing, malformed, unavailable, or unsupported metadata
+keeps the last useful name or initial fallback. CLI versions without these fields, names outside
+the bounded windows, Claude project paths longer than 200 encoded characters, and config-home
+changes made inside an already running shell can use the fallback; restart a terminal after
+changing its config home. No shared history scan or new AI summary is performed. Metadata formats
+can change across CLI releases; real installed CLI versions still require manual verification.
+
+The adapters follow the public [Codex session index](https://github.com/openai/codex/blob/main/codex-rs/rollout/src/session_index.rs)
+and [Claude SDK metadata reader](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/sessions.py).
+
 ### Live terminal folders
 
 A running card shows its shell's last reported current folder, including changes made with `cd`, `Set-Location`, or directory-stack commands. The full path is available on hover. Each terminal tracks its own folder. The last valid folder is saved for reopening and fresh shell starts; AI resumes use the captured session folder. An unavailable live directory leaves the last valid saved folder intact.
@@ -190,10 +323,13 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl + Shift + P / Command + Shift + P | Open the terminal switcher, including while typing in a terminal |
 | Ctrl/Cmd + Shift + B | Hide / show sidebar, including inside terminals |
 | Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |
 | Enter, outside a terminal | Type in the selected terminal (a stopped one gets its Start button) |
 | Ctrl + Shift + E | Leave the terminal you are typing in, keeping it selected |
+| Scroll / two-finger scroll over empty canvas | Zoom at the pointer |
+| Ctrl + scroll (Command on macOS), outside the selected terminal | Zoom at the pointer outside Focus view |
 | Ctrl + scroll over the selected terminal, or in Focus | Change that terminal's text size |
 | Ctrl + 0 in a terminal | Reset its text size |
 | Ctrl + C in a terminal | Copy selected text, or interrupt with no selection |
@@ -215,6 +351,21 @@ Single-key and board shortcuts apply only when focus is outside a terminal or te
 The keyboard is either on the canvas or typing in one terminal. Selecting a terminal from the
 keyboard never types in it, and a terminal you type in receives every key except the app's
 Ctrl + Shift shortcuts, Alt + arrow keys included, so shells and full-screen programs keep them.
+
+**Find terminal:** press **Ctrl + Shift + P** (**Command + Shift + P** on macOS), or use the search
+button beside **ON THIS CANVAS**. The dialog focuses its query. Search by the displayed title,
+folder, or profile; words match together without regard to case. An empty query shows all terminals
+in sidebar order, initially highlighting the selected terminal. Folder/profile details and stable
+card IDs distinguish duplicate titles. Title, folder, creation, and removal updates keep the query
+and active terminal where possible; a removed result falls back to its next surviving row.
+
+Use **↑/↓** to choose a result, then **Enter** to reveal and highlight it at the current zoom.
+The keyboard stays on the canvas; press **Enter again** to type, or to focus a stopped terminal's
+Start/Resume button. In Focus view, confirmation changes the focused terminal and reveals it on
+the canvas when Focus ends. **Esc** or the dialog's close button cancels without changing selection
+or camera, restoring the previous input/button (or the canvas if it is gone or hidden). Dialog
+keystrokes stay out of shells. **Ctrl + P** remains available to terminal programs; **/** still
+focuses sidebar search and **Ctrl + Shift + F** still toggles Focus. Search works locally without AI.
 
 - **Alt + ←/→/↑/↓** on the canvas selects the nearest terminal that way. It works from the
   canvas itself, the sidebar, and the toolbars, but not inside a text field. With the minimap
@@ -300,6 +451,11 @@ For Windows E2E, install PowerShell 7 as well as the built-in Windows shells, bu
 process; the test build supplies it through the native API on elevated Windows. Test workspace/webview files stay under `.cache/tauri-smoke-profile` or
 `.cache/tauri-restoration-profile`. Controlled local CLI substitutes do not contact providers.
 Clipboard tests preserve native formats, and test-only PowerShell shells skip user profiles and disable file history/predictions to keep the fixtures isolated. Native screenshots are saved as `.cache/tauri-*.png`.
+
+The browser-access E2E test also requires Microsoft Edge. After building the isolated app and hook,
+run `node --test tests/e2e/remote-browser.test.cjs` for its focused controller/viewer check. It saves
+`.cache/tauri-remote-browser-controller.png` and `.cache/tauri-remote-browser-desktop.png`; the Windows
+CI screenshot artifact includes these. A local pass does not replace the ten complete native E2E runs.
 
 `tests/reference/node-host/` contains frozen, standalone compatibility oracles, not an application
 host. They use Node built-ins only, are invoked only by the golden capture, and are excluded from
