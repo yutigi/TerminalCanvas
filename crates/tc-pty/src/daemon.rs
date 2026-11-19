@@ -442,7 +442,8 @@ impl Server {
         if !same(text(&answer, "proof"), &proof(&self.secret, "client", &challenge)) {
             return Ok(());
         }
-        stream.set_read_timeout(None)?;
+        // On Windows a cloned socket keeps its own timeout, so clear it where the reading happens.
+        reader.get_ref().set_read_timeout(None)?;
         let request = receive(&mut reader)?;
         let card = text(&request, "id");
         if !matches!(text(&request, "op"), "list") && (card.is_empty() || card.len() > CARD_LIMIT) {
@@ -945,7 +946,8 @@ impl Connection {
 /// Turns an attached connection into a [`Process`] that reports to `events`.
 fn attachment((connection, reply): (Connection, Value), key: SessionKey, events: EventSink) -> io::Result<Attachment> {
     let Connection { writer, mut reader } = connection;
-    writer.set_read_timeout(None)?;
+    // On Windows a cloned socket keeps its own timeout, so clear it where the reading happens.
+    reader.get_ref().set_read_timeout(None)?;
     let pid = reply
         .get("pid")
         .and_then(Value::as_u64)
@@ -971,6 +973,9 @@ fn attachment((connection, reply): (Connection, Value), key: SessionKey, events:
                 _ => {}
             }
         }
+        // Close this side too: on Windows the helper's shutdown does not wake its own blocked read
+        // on a cloned socket, so its connection would otherwise stay open until the app's ends.
+        let _ = reader.get_ref().shutdown(Shutdown::Both);
         // Detaching ends the view without an error; a lost helper ends it with one.
         let code = if ended.load(Ordering::SeqCst) { 0 } else { 1 };
         let status = status.unwrap_or(ExitStatus { code, signal: None });

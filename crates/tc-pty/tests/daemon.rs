@@ -209,3 +209,60 @@ fn a_helper_that_cannot_prove_the_secret_is_refused() {
     assert_eq!(impostor.join().unwrap(), "");
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+/// The handshake's read timeout must not outlive it: a kept terminal, and the app watching it, may
+/// be silent for any length of time (an AI agent waiting at its prompt, say).
+#[test]
+fn a_quiet_kept_terminal_stays_attached_past_the_handshake_timeout() {
+    let folder = std::env::temp_dir().join(format!("tc-daemon-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let daemon = Daemon::new(PathBuf::from("unused"), folder.clone());
+    let state = daemon.state_file();
+    let server = std::thread::spawn(move || serve_until_idle(&state, Duration::from_secs(2)));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !daemon.state_file().is_file() {
+        assert!(Instant::now() < deadline, "the helper did not start");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (program, args, sum) = shell();
+    let request = SpawnRequest {
+        shell: program,
+        args,
+        cwd: folder.to_string_lossy().into_owned(),
+        cols: 80,
+        rows: 24,
+        env: std::env::vars().collect::<BTreeMap<_, _>>(),
+    };
+    let (events, receiver) = sink();
+    let mut view = View {
+        attachment: daemon.create("card", &request, None, key(1), events).unwrap(),
+        events: receiver,
+        output: String::new(),
+    };
+    view.attachment.process.write(&sum(40, 2)).unwrap();
+    assert_eq!(view.until("the first sum", |output| output.contains("42")), None);
+
+    // Neither side sends anything for longer than the handshake timeout (5 seconds).
+    let quiet = Instant::now() + Duration::from_secs(7);
+    while Instant::now() < quiet {
+        if let Ok(SessionEvent::Exit(status)) = view.events.recv_timeout(Duration::from_millis(100)) {
+            panic!("the quiet terminal was cut off: {status:?}");
+        }
+    }
+    view.attachment.process.write(&sum(1000, 337)).unwrap();
+    assert_eq!(
+        view.until("a sum after the quiet", |output| output.contains("1337")),
+        None
+    );
+
+    view.attachment.process.kill();
+    view.exit();
+    daemon.kill("card");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !daemon.terminals().is_empty() {
+        assert!(Instant::now() < deadline, "the terminal did not end");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    server.join().unwrap().unwrap();
+    let _ = std::fs::remove_dir_all(folder);
+}
