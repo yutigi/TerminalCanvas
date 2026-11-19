@@ -3661,6 +3661,94 @@ test('Settings › Set up AI agents installs the skill where the user chose and 
 });
 
 
+const TMUX_MISSING = {
+    installed: false, path: null, version: null, minimum: '3.3', manager: 'winget and MSYS2',
+    command: "winget install --id MSYS2.MSYS2 -e; & 'C:\\msys64\\usr\\bin\\bash.exe' -lc 'pacman -Sy --noconfirm --needed tmux util-linux'",
+};
+const tmuxPayloads = calls => structuredClone(calls.filter(c => c.action === 'tmux-setup').map(c => c.payload));
+
+test('the first launch offers tmux after the agent setup closes, once, and declining it is remembered', async () => {
+    const respond = action => action === 'initialize'
+        ? { workspace: createWorkspace(), profiles: PROFILES, home: '', platform: 'win32', agentSetup: true, tmuxSetup: true }
+        : action === 'agent-setup' ? { targets: structuredClone(AGENT_TARGETS) }
+            : action === 'tmux-setup' ? structuredClone(TMUX_MISSING) : null;
+    const { calls, elements } = await boot(createWorkspace(), { respond });
+    await flush();
+    assert.equal(elements.get('#agent-dialog').open, true);
+    assert.equal(!!elements.get('#tmux-dialog').open, false, 'one dialog at a time');
+    assert.deepEqual(tmuxPayloads(calls), []);
+    elements.get('#agent-dialog').close(); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    assert.equal(elements.get('#tmux-status').textContent, 'tmux is not installed.');
+    assert.equal(elements.get('#tmux-command').textContent, TMUX_MISSING.command);
+    assert.equal(elements.get('#tmux-plan').hidden, false);
+    assert.equal(elements.get('#tmux-cancel').textContent, 'Not now');
+    elements.get('#tmux-dialog').close(); await flush();
+    assert.deepEqual(tmuxPayloads(calls), [{}, { dismiss: true }]);
+    // Closing the agent setup again (from Settings) does not offer tmux again.
+    elements.get('#agent-setup').onclick(); await flush();
+    elements.get('#agent-dialog').close(); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, false);
+    // Reopened from Settings, closing it records nothing more.
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    elements.get('#tmux-dialog').close(); await flush();
+    assert.deepEqual(tmuxPayloads(calls), [{}, { dismiss: true }, {}]);
+});
+
+test('without the agent offer, the first launch offers tmux right away', async () => {
+    const respond = action => action === 'initialize'
+        ? { workspace: createWorkspace(), profiles: PROFILES, home: '', platform: 'darwin', tmuxSetup: true }
+        : action === 'tmux-setup' ? structuredClone(TMUX_MISSING) : null;
+    const { elements } = await boot(createWorkspace(), { respond });
+    await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+});
+
+test('Settings › Install tmux runs the install in its own terminal and reports failures in the dialog', async () => {
+    let status = { ...TMUX_MISSING, path: 'C:\\msys64\\usr\\bin\\tmux.exe', version: '3.2' }, fail = true;
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) }
+        : action !== 'tmux-setup' ? null
+            : payload.install && fail ? { error: 'Could not save the tmux setup: Access is denied.' } : structuredClone(status);
+    const { context, calls, elements } = await boot(createWorkspace(), { respond, terminals: true });
+    assert.deepEqual(calls.map(c => c.action), ['initialize'], 'nothing is offered after the first launch');
+    elements.get('#settings').onclick();
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.equal(elements.get('#settings-menu').hidden, true, 'choosing an item closes the menu');
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    assert.equal(elements.get('#tmux-status').textContent, 'tmux 3.2 is at C:\\msys64\\usr\\bin\\tmux.exe, but 3.3 or newer is needed.');
+    assert.equal(elements.get('#tmux-install').lastChild.textContent, 'Update tmux');
+    elements.get('#tmux-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    assert.equal(elements.get('#tmux-error').hidden, false);
+    assert.match(elements.get('#tmux-error').textContent, /Access is denied/);
+    assert.equal(json(context, 'workspace.cards.length'), 0, 'a failed request starts nothing');
+    fail = false;
+    elements.get('#tmux-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, false);
+    const install = json(context, 'workspace.cards[0]');
+    assert.deepEqual([install.title, install.command, install.profile], ['Install tmux', TMUX_MISSING.command, 'shell']);
+    assert.equal(calls.filter(c => c.action === 'start').at(-1).payload.card.id, install.id);
+    assert.match(elements.get('#toast').textContent, /installing in the new terminal/);
+    assert.deepEqual(tmuxPayloads(calls), [{}, { install: true }, { install: true }]);
+
+    // Once tmux is ready, the dialog only reports it.
+    status = { ...TMUX_MISSING, installed: true, path: '/opt/homebrew/bin/tmux', version: '3.8' };
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.equal(elements.get('#tmux-status').textContent, 'tmux 3.8 is installed: /opt/homebrew/bin/tmux');
+    assert.equal(elements.get('#tmux-status').classList.contains('ready'), true);
+    assert.deepEqual([elements.get('#tmux-plan').hidden, elements.get('#tmux-install').hidden], [true, true]);
+    assert.equal(elements.get('#tmux-cancel').textContent, 'Close');
+    elements.get('#tmux-dialog').close();
+
+    // Without a package manager it says what to do instead.
+    status = { ...TMUX_MISSING, manager: null, command: null };
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.match(elements.get('#tmux-status').textContent, /^tmux is not installed\. No supported package manager was found\. Install tmux 3\.3 or newer yourself/);
+    assert.equal(elements.get('#tmux-install').hidden, true);
+});
+
+
 test('automatic titles update hidden canvases and persist without switching or starting terminals', async () => {
     const board = twoCanvases();
     board.cards.forEach(card => { card.titleMode = 'automatic'; });

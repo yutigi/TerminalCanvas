@@ -1347,20 +1347,28 @@ $('#account-signin').onclick = () => {
     const card = applyAccountChoice();
     run(() => openAccountSignIn(card, name));
 };
-async function openAccountSignIn(beside, name) {
+function openAccountSignIn(beside, name) {
+    return openCommandTerminal({
+        beside, title: `Sign in · ${name}`, command: 'claude auth login', claudeAccount: name, again: 'sign in again',
+        notice: `Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`,
+    });
+}
+// Starts a shell terminal that runs `command`, beside `beside` while it is still on the board and
+// otherwise near the middle of the view, then shows `notice`.
+async function openCommandTerminal({ beside = null, title, command, claudeAccount = '', again, notice }) {
     await whenBoardIdle();
-    if (canvasLocked()) throw new Error('Finish the current canvas action, then sign in again.');
+    if (canvasLocked()) throw new Error(`Finish the current canvas action, then ${again}.`);
     canvasMutation = true;
     try {
         const size = { w: 660, h: 430 };
         const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
         const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-        const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
-        card.claudeAccount = name;
+        const { card } = await invoke('create-card', { profile: 'shell', title, command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+        if (claudeAccount) card.claudeAccount = claudeAccount;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
         else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
-        toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
+        toast(notice);
         await start(card);
     } finally { canvasMutation = false; }
 }
@@ -1441,6 +1449,65 @@ $('#agent-dialog').addEventListener('close', () => {
     if (!agentOffer) return;
     agentOffer = false;
     run(() => invoke('agent-setup', { dismiss: true }));
+});
+// The tmux setup checks for tmux and installs it with this computer's package manager, in a
+// terminal on the canvas where the user follows it and answers its prompts. The first launch
+// offers it once, after the agent setup; Settings offers it again at any time.
+let tmuxBusy = false, tmuxOffer = false, tmuxPending = false;
+function renderTmuxStatus(status) {
+    $('#tmux-minimum').textContent = status.minimum;
+    const found = status.version ? `tmux ${status.version}` : 'A tmux of unknown version';
+    $('#tmux-status').textContent = status.installed ? `tmux ${status.version} is installed: ${status.path}`
+        : (status.path ? `${found} is at ${status.path}, but ${status.minimum} or newer is needed.` : 'tmux is not installed.')
+            + (status.command ? '' : ` No supported package manager was found. Install tmux ${status.minimum} or newer yourself, then check again here.`);
+    $('#tmux-status').classList.toggle('ready', !!status.installed);
+    const offer = !status.installed && !!status.command;
+    $('#tmux-plan').hidden = !offer; $('#tmux-install').hidden = !offer;
+    $('#tmux-command').textContent = status.command || '';
+    $('#tmux-manager').textContent = status.manager || '';
+    $('#tmux-install').lastChild.textContent = status.path ? 'Update tmux' : 'Install tmux';
+    $('#tmux-cancel').textContent = offer ? 'Not now' : 'Close';
+}
+async function openTmuxSetup({ offer = false } = {}) {
+    if (!ready || tmuxBusy || document.querySelector('dialog[open]')) return;
+    const status = await invoke('tmux-setup', {});
+    if (document.querySelector('dialog[open]')) return;
+    tmuxOffer = offer;
+    renderTmuxStatus(status);
+    $('#tmux-error').hidden = true; $('#tmux-install').disabled = false;
+    $('#tmux-dialog').showModal();
+}
+// The first launch's offer waits for the agent setup's dialog to close.
+function offerTmuxSetup() {
+    if (!tmuxPending || document.querySelector('dialog[open]')) return;
+    tmuxPending = false;
+    run(() => openTmuxSetup({ offer: true }));
+}
+$('#agent-dialog').addEventListener('close', offerTmuxSetup);
+$('#tmux-setup').onclick = () => { setSettingsMenu(false); run(() => openTmuxSetup()); };
+$('#tmux-form').onsubmit = event => {
+    event.preventDefault(); if (tmuxBusy) return;
+    tmuxBusy = true; $('#tmux-install').disabled = true;
+    run(async () => {
+        let command;
+        try {
+            ({ command } = await invoke('tmux-setup', { install: true }));
+            tmuxOffer = false; $('#tmux-dialog').close();
+        } catch (error) {
+            $('#tmux-error').textContent = error.message; $('#tmux-error').hidden = false;
+            return;
+        } finally { tmuxBusy = false; $('#tmux-install').disabled = false; }
+        await openCommandTerminal({
+            title: 'Install tmux', command, again: 'install tmux again from Settings',
+            notice: 'tmux is installing in the new terminal. Answer any prompts there; Settings › Install tmux shows when it is ready.',
+        });
+    });
+};
+// Closing the first-launch offer without installing declines it, so it is not offered again.
+$('#tmux-dialog').addEventListener('close', () => {
+    if (!tmuxOffer) return;
+    tmuxOffer = false;
+    run(() => invoke('tmux-setup', { dismiss: true }));
 });
 $('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); if (!launchTitleEdited) $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
@@ -1830,6 +1897,8 @@ if (bridge) {
             }
         }
         if (initial.warning) toast(initial.warning);
+        tmuxPending = !!initial.tmuxSetup;
         if (initial.agentSetup) await openAgentSetup({ offer: true });
+        offerTmuxSetup();
     });
 } else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');

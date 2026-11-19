@@ -86,6 +86,47 @@ pub struct Paths {
     pub hook: Option<PathBuf>,
     /// Where the agent setup installs the skill. Without it, the setup is unavailable.
     pub agents: Option<AgentHome>,
+    /// Detects tmux for the tmux setup. Without it (test builds), the setup is unavailable.
+    pub tmux: Option<TmuxProbe>,
+}
+
+/// What the tmux setup knows about this machine (see [`tc_tmux::install`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TmuxState {
+    pub installed: Option<tc_tmux::install::Installed>,
+    /// How to install tmux here; `None` without a supported package manager.
+    pub plan: Option<tc_tmux::install::Plan>,
+}
+
+/// Runs programs (`tmux -V`), so the host calls it off its async threads.
+pub type TmuxProbe = fn() -> TmuxState;
+
+/// This machine's tmux and the command that installs it.
+pub fn detect_tmux() -> TmuxState {
+    use tc_tmux::install::{Os, installed, plan};
+    TmuxState {
+        installed: installed(),
+        plan: Os::current().and_then(|os| plan(os, tc_tmux::client::find_program)),
+    }
+}
+
+impl TmuxState {
+    fn usable(&self) -> bool {
+        self.installed.as_ref().is_some_and(tc_tmux::install::Installed::usable)
+    }
+
+    fn to_json(&self) -> Value {
+        let version = |v: tc_tmux::Version| format!("{}.{}", v.major, v.minor);
+        json!({
+            "installed": self.usable(),
+            // Paths as text: one that is not Unicode is still shown, approximately.
+            "path": self.installed.as_ref().map(|found| found.binary.display().to_string()),
+            "version": self.installed.as_ref().and_then(|found| found.version).map(version),
+            "minimum": version(tc_tmux::Version::MINIMUM),
+            "manager": self.plan.as_ref().map(|plan| plan.manager),
+            "command": self.plan.as_ref().map(|plan| plan.command.as_str()),
+        })
+    }
 }
 
 impl Paths {
@@ -109,6 +150,10 @@ impl Paths {
     /// Present once the user has installed the skill or declined the first-launch offer.
     pub fn agent_setup(&self) -> PathBuf {
         self.data.join("agent-setup.json")
+    }
+    /// Present once the user has started the tmux install or declined the first-launch offer.
+    pub fn tmux_setup(&self) -> PathBuf {
+        self.data.join("tmux-setup.json")
     }
 }
 
@@ -665,6 +710,16 @@ impl Host {
                 }
                 let offer_setup = self.paths.agents.as_ref().is_some_and(|agents| agents.first_launch)
                     && !self.paths.agent_setup().exists();
+                // Until it is answered, each launch offers tmux if it is still missing or too old.
+                let offer_tmux = match self.paths.tmux.filter(|_| !self.paths.tmux_setup().exists()) {
+                    Some(probe) => tokio::task::spawn_blocking(move || {
+                        let state = probe();
+                        !state.usable() && state.plan.is_some()
+                    })
+                    .await
+                    .unwrap_or(false),
+                    None => false,
+                };
                 let restored = workspace.clone();
                 let title_epoch = self
                     .with_state(move |_, state| {
@@ -682,6 +737,9 @@ impl Host {
                 }
                 if offer_setup {
                     result["agentSetup"] = json!(true);
+                }
+                if offer_tmux {
+                    result["tmuxSetup"] = json!(true);
                 }
                 Ok(result)
             }
@@ -803,6 +861,31 @@ impl Host {
                         Some(error) => Err(error),
                         None => Ok(json!({ "targets": targets, "installed": install })),
                     }
+                })
+                .await
+                .map_err(message)?
+            }
+            // Reports tmux and the command that installs it here. With `install`, the renderer runs
+            // that command in a new terminal; with `install` or `dismiss`, the first-launch offer
+            // is answered and not made again.
+            "tmux-setup" => {
+                let probe = self.paths.tmux.ok_or("The tmux setup is unavailable in this build.")?;
+                let install = field(payload, "install") == Some(&json!(true));
+                let dismiss = field(payload, "dismiss") == Some(&json!(true));
+                let marker = self.paths.tmux_setup();
+                tokio::task::spawn_blocking(move || {
+                    let state = probe();
+                    if install && state.plan.is_none() {
+                        return Err("No supported package manager was found to install tmux.".to_owned());
+                    }
+                    if install || dismiss {
+                        marker
+                            .parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .and_then(|()| atomic::write(&marker, b"{\"offered\":true}\n", Access::Default))
+                            .map_err(|error| format!("Could not save the tmux setup: {error}"))?;
+                    }
+                    Ok(state.to_json())
                 })
                 .await
                 .map_err(message)?

@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "rename_title",
     "claude_accounts",
     "agent_setup",
+    "tmux_setup",
     "autosave",
     "save",
     "save_as",

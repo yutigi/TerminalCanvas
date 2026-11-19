@@ -80,6 +80,7 @@ actions! {
     rename_title => "rename-title",
     claude_accounts => "claude-accounts",
     agent_setup => "agent-setup",
+    tmux_setup => "tmux-setup",
     autosave => "autosave",
     save => "save",
     save_as => "save-as",
@@ -306,6 +307,7 @@ pub fn run() {
             rename_title,
             claude_accounts,
             agent_setup,
+            tmux_setup,
             autosave,
             save,
             save_as,
@@ -385,6 +387,8 @@ pub fn run() {
                 data,
                 hook: sidecar("tc-hook"),
                 agents,
+                // Test builds never offer or run the install.
+                tmux: (!cfg!(feature = "e2e")).then_some(host::detect_tmux as host::TmuxProbe),
             };
             let platform = Arc::new(platform::TauriPlatform::new(app.handle().clone()));
             #[cfg(not(feature = "e2e"))]

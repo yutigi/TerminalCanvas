@@ -57,7 +57,10 @@ and, for requests that ask, logs the new terminal's output there as plain text f
 ## tmux control-mode spike
 
 Issue #35 phase 1 adds `tc-tmux`, a workspace crate with no Tauri or process-layer dependencies.
-It is not wired into `tc-pty` or the host. Plain PTYs, format 3 validation, capabilities and close
+It is not wired into `tc-pty`. The host uses only `tc_tmux::install` for the tmux setup: the
+`tmux-setup` action reports the detected tmux and one install command, and records in
+`tmux-setup.json` that the first-launch offer was answered. The renderer runs the command in an
+ordinary shell card, so no install runs inside the host; `e2e` builds have no setup. Plain PTYs, format 3 validation, capabilities and close
 semantics are unchanged. The spike uses **pipes and `tmux -C`**; `-CC` adds terminal-emulator DCS
 framing and terminal-mode changes that pipes do not need.
 
@@ -87,8 +90,16 @@ All connections require an explicit absolute socket path. Native probes create o
 temporary profiles, pass `-S` to every subprocess, ignore user tmux configuration, and clean up
 only their own server/profile. They are explicitly ignored in normal workspace tests and run
 separately in macOS/Linux CI, against current tmux and checksum-pinned 3.3a. The API accepts a
-configured binary path and otherwise searches PATH and common macOS installation directories.
-Windows native attachment returns an unsupported-platform error; WSL and SSH are later work.
+configured binary path and otherwise searches PATH, common macOS installation directories, and on
+Windows MSYS2's `C:\msys64\usr\bin`. WSL and SSH are later work.
+
+Windows support uses MSYS2 tmux and is experimental. A control client normally passes its stdin and
+stdout to the server as descriptors; MSYS2's emulated `AF_UNIX` cannot, and the server log shows
+`IDENTIFY_STDIN -1`. MSYS2 tmux reopens a client's terminal by name instead, so on Windows the
+client runs `tmux -C` under `script` on an MSYS2 pty in raw mode, which keeps protocol bytes and
+`\n` line endings unchanged. Every MSYS2 child gets `MSYS=noglob`: MSYS2 programs started by native
+processes otherwise glob and brace-expand their arguments, turning `#{session_id}` into
+`#session_id`.
 
 Two source findings change the issue's initial assumptions:
 
@@ -102,7 +113,9 @@ Two source findings change the issue's initial assumptions:
   The native probe checks pause/continue notifications and capture recovery of a finite backlog;
   it does not claim lossless replay of program bytes.
 
-The Windows development machine passes pure tests but cannot establish real-tmux behavior.
+On the Windows development machine both native probes pass against MSYS2 tmux 3.8; Windows CI
+does not run them. Panes in those probes run MSYS2's `/bin/sh`; PowerShell and native agents
+inside MSYS2 tmux panes, and Windows/MSYS2 path translation, are unverified.
 PID/history survival in these library probes is not desktop crash/restart recovery. Phase 2 still
 needs host-owned connection/generation routing, ownership tags, persistent integration folders,
 bindings/validation/migration, history/live-stream coordination and the three-way close dialog.

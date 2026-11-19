@@ -4562,6 +4562,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tc-core",
  "tc-pty",
+ "tc-tmux",
  "tokio",
  "tokio-tungstenite",
  "tower",

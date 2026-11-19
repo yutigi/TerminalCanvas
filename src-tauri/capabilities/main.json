@@ -12,6 +12,7 @@
     "allow-rename-title",
     "allow-claude-accounts",
     "allow-agent-setup",
+    "allow-tmux-setup",
     "allow-autosave",
     "allow-save",
     "allow-save-as",

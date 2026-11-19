@@ -43,6 +43,7 @@ uuid = { version = "=1.29.2", features = ["v4"] }
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects"] }
 tc-core = { path = "crates/tc-core" }
 tc-pty = { path = "crates/tc-pty" }
+tc-tmux = { path = "crates/tc-tmux" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

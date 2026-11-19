@@ -46,13 +46,26 @@ impl Version {
         })
     }
 
-    pub fn probe(binary: &Path) -> io::Result<Self> {
-        let output = OsCommand::new(binary).arg("-V").output()?;
+    /// Asks `binary -V`, whatever the version.
+    pub fn read(binary: &Path) -> io::Result<Self> {
+        let mut command = OsCommand::new(binary);
+        if cfg!(windows) {
+            command.env("MSYS", "noglob").env("CYGWIN", "noglob");
+        }
+        let output = command.arg("-V").stdin(Stdio::null()).stderr(Stdio::null()).output()?;
         if !output.status.success() {
             return Err(io::Error::other("tmux -V failed."));
         }
-        let version = Self::parse(&String::from_utf8_lossy(&output.stdout))?;
-        if version < Self::MINIMUM {
+        Self::parse(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    pub fn supported(self) -> bool {
+        self >= Self::MINIMUM
+    }
+
+    pub fn probe(binary: &Path) -> io::Result<Self> {
+        let version = Self::read(binary)?;
+        if !version.supported() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "tmux 3.3 or newer is required for per-window control-client sizing.",
@@ -76,24 +89,39 @@ pub fn find_binary(configured: Option<&Path>) -> io::Result<PathBuf> {
             "Configured tmux binary was not found.",
         ));
     }
+    find_program("tmux").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "tmux was not found. Install tmux 3.3+ (MSYS2 on Windows) or configure its binary path.",
+        )
+    })
+}
+
+/// Where the MSYS2 installer puts its POSIX tools by default, tmux among them once installed.
+pub const MSYS2_BIN: &str = r"C:\msys64\usr\bin";
+
+/// Finds `name` (`name.exe` on Windows) on PATH, then in the folders a GUI-started app's PATH
+/// often lacks: Homebrew's and the system's on macOS/Linux, MSYS2's on Windows.
+pub fn find_program(name: &str) -> Option<PathBuf> {
     let mut directories: Vec<_> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
-    directories.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-        PathBuf::from("/usr/bin"),
-    ]);
+    let file = if cfg!(windows) {
+        directories.push(PathBuf::from(MSYS2_BIN));
+        format!("{name}.exe")
+    } else {
+        directories.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+        ]);
+        name.to_owned()
+    };
     directories
         .into_iter()
-        .map(|p| p.join("tmux"))
-        .find(|p| p.is_file())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "tmux was not found. Install native tmux 3.3+ or configure its binary path.",
-            )
-        })
+        .filter(|directory| directory.is_absolute())
+        .map(|directory| directory.join(&file))
+        .find(|path| path.is_file())
 }
 
 /// Experimental MSYS2/Cygwin transport. A control client normally hands its stdin/stdout to the
@@ -173,14 +201,6 @@ pub struct Client {
 
 impl Client {
     pub fn attach(options: Options) -> io::Result<Self> {
-        // Windows has no native tmux. An explicitly configured MSYS2/Cygwin build is an
-        // experimental opt-in; there is no automatic discovery there.
-        if !cfg!(unix) && options.binary.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "On Windows, configure an MSYS2/Cygwin tmux binary path; WSL integration is a later phase.",
-            ));
-        }
         if !options.socket.is_absolute() {
             return Err(invalid("An absolute private tmux socket path is required."));
         }

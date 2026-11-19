@@ -358,26 +358,45 @@ The supported resume commands and Claude hook input are described in the [Codex 
 
 ## tmux protocol spike (issue #35, phase 1)
 
-`crates/tc-tmux` is a development-only protocol spike, not an app feature yet. Closing Terminal
-Canvas still stops its terminals; no background-running toggle or session attachment UI is shipped
-in this phase. The crate has no desktop runtime dependency and never falls back to the default server.
+`crates/tc-tmux` is a protocol spike; terminals do not run in tmux yet. Closing Terminal Canvas
+still stops its terminals; no background-running toggle or session attachment UI is shipped in this
+phase. The app uses the crate only to detect and install tmux, and it never contacts the default server.
 
 | Platform | Phase 1 |
 | --- | --- |
 | macOS / Linux | Native tmux protocol probes on an explicit private socket |
-| Windows | Pure Rust protocol tests; real tmux checks unavailable locally |
+| Windows (MSYS2 tmux) | Experimental; probes pass locally against MSYS2 tmux 3.8, not in CI |
 | Windows via WSL / SSH hosts | Deferred; no transport or path translation implemented |
 
-Install native tmux with `brew install tmux` or your Linux package manager. The candidate minimum
-is **tmux 3.3+**, because 3.2 lacks per-window control-client sizing. Discovery checks `PATH`,
-`/opt/homebrew/bin`, `/usr/local/bin`, and `/usr/bin`; library callers may supply `Options.binary`.
-The native test override is `TC_TMUX_BINARY`. CI probes both the runner's current tmux and a
-checksum-pinned 3.3a build. These probes have not been run on this Windows development machine.
+The minimum is **tmux 3.3+**, because 3.2 lacks per-window control-client sizing. Discovery checks
+`PATH`, then `/opt/homebrew/bin`, `/usr/local/bin`, and `/usr/bin`, or `C:\msys64\usr\bin` on
+Windows; library callers may supply `Options.binary`. The native test override is `TC_TMUX_BINARY`.
+CI probes both the runner's current tmux and a checksum-pinned 3.3a build.
+
+**Installing tmux from the app.** On launch, if tmux 3.3+ is missing and a supported package
+manager is found, Terminal Canvas offers to install it (after the agent setup, if that is offered).
+Declining is remembered in `tmux-setup.json`; **Settings → Install tmux…** checks again and offers the
+install at any time. The install runs in a new terminal on the canvas, so you follow its progress and
+answer any UAC, `sudo`, or package-manager prompt there:
+
+| Platform | Command |
+| --- | --- |
+| Windows | `winget install MSYS2.MSYS2` (skipped when MSYS2's `pacman` is found), then `pacman -Sy --needed tmux util-linux` in MSYS2 |
+| macOS | `brew install tmux` (Homebrew is required) |
+| Linux | `sudo` with the first of `apt-get`, `dnf`, `pacman`, `zypper`, `apk` |
+
+Test (`e2e`) builds never detect, offer, or run the install.
+
+Windows tmux comes from MSYS2, a POSIX layer. Its control clients cannot hand their stdin/stdout to
+the server over MSYS2's emulated Unix socket, so the client runs `tmux -C` on an MSYS2 pty created by
+`script`, in raw mode, and sets `MSYS=noglob` so `#{...}` arguments are not brace-expanded.
 
 ```sh
 cargo test -p tc-tmux
-# Native macOS/Linux only; creates and cleans up disposable private servers, never the default:
+# Creates and cleans up disposable private servers, never the default:
 cargo test -p tc-tmux --test native -- --ignored --nocapture --test-threads=1
+# Windows, against MSYS2 tmux (PowerShell):
+$env:TC_TMUX_BINARY = 'C:\msys64\usr\bin\tmux.exe'; cargo test -p tc-tmux --test native -- --ignored --nocapture --test-threads=1
 ```
 
 The probes check raw OSC 7/777 and UTF-8 output, literal hex input, subscriptions, independent
