@@ -28,7 +28,7 @@ use tc_core::recovery::{CardMetadata, WorkspaceRecovery};
 use tc_core::titles::{SettledTitle, TitleMode};
 use tc_core::workspace::{PROFILES, Workspace, create_card, create_workspace, limits, validate_workspace};
 use tc_core::{Error, Platform as Os};
-use tc_pty::manager::{Backend, Config, DirectoryRequest, EventSink, Integrations, STOP_TIMEOUT};
+use tc_pty::manager::{Backend, Config, DirectoryRequest, EventSink, Integrations, Keeper, STOP_TIMEOUT};
 use tc_pty::{SessionEvent, SessionKey, TerminalEvent, TerminalManager};
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -42,6 +42,12 @@ const CLIPBOARD_UNITS: usize = 1024 * 1024;
 /// Shown at startup when the `tc-hook` sidecar is missing: without it, terminals have no
 /// integration, so nothing in them can ask for a new terminal.
 pub const HELPER_MISSING: &str = "Terminal Canvas could not find its helper, tc-hook, so AI sessions will not be saved and programs in terminals cannot open new ones. Reinstall Terminal Canvas (in a development build, run cargo build -p tc-hook), then restart it.";
+
+/// Shown when keeping terminals running is turned on but tmux cannot be found (macOS and Linux).
+pub const TMUX_MISSING: &str = "Keeping terminals running needs tmux, which was not found. Install it (for example with Homebrew or your package manager), or name it as \"tmuxProgram\" in settings.json in the app's data folder.";
+
+/// Shown when keeping terminals running is turned on without the `tc-hook` helper (Windows).
+pub const KEEPER_MISSING: &str = "Keeping terminals running needs Terminal Canvas's helper, tc-hook, which was not found. Reinstall Terminal Canvas (in a development build, run cargo build -p tc-hook), then try again.";
 
 /// Added to the answer of a program whose new terminal started without integration, since it may
 /// plan to save that terminal's AI session or open more terminals from it.
@@ -86,6 +92,47 @@ pub struct Paths {
     pub hook: Option<PathBuf>,
     /// Where the agent setup installs the skill. Without it, the setup is unavailable.
     pub agents: Option<AgentHome>,
+    /// Detects tmux for the tmux setup. Without it (test builds), the setup is unavailable.
+    pub tmux: Option<TmuxProbe>,
+}
+
+/// What the tmux setup knows about this machine (see [`tc_tmux::install`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TmuxState {
+    pub installed: Option<tc_tmux::install::Installed>,
+    /// How to install tmux here; `None` without a supported package manager.
+    pub plan: Option<tc_tmux::install::Plan>,
+}
+
+/// Runs programs (`tmux -V`), so the host calls it off its async threads.
+pub type TmuxProbe = fn() -> TmuxState;
+
+/// This machine's tmux and the command that installs it.
+pub fn detect_tmux() -> TmuxState {
+    use tc_tmux::install::{Os, installed, plan};
+    TmuxState {
+        installed: installed(),
+        plan: Os::current().and_then(|os| plan(os, tc_tmux::client::find_program)),
+    }
+}
+
+impl TmuxState {
+    fn usable(&self) -> bool {
+        self.installed.as_ref().is_some_and(tc_tmux::install::Installed::usable)
+    }
+
+    fn to_json(&self) -> Value {
+        let version = |v: tc_tmux::Version| format!("{}.{}", v.major, v.minor);
+        json!({
+            "installed": self.usable(),
+            // Paths as text: one that is not Unicode is still shown, approximately.
+            "path": self.installed.as_ref().map(|found| found.binary.display().to_string()),
+            "version": self.installed.as_ref().and_then(|found| found.version).map(version),
+            "minimum": version(tc_tmux::Version::MINIMUM),
+            "manager": self.plan.as_ref().map(|plan| plan.manager),
+            "command": self.plan.as_ref().map(|plan| plan.command.as_str()),
+        })
+    }
 }
 
 impl Paths {
@@ -109,6 +156,75 @@ impl Paths {
     /// Present once the user has installed the skill or declined the first-launch offer.
     pub fn agent_setup(&self) -> PathBuf {
         self.data.join("agent-setup.json")
+    }
+    /// Present once the user has started the tmux install or declined the first-launch offer.
+    pub fn tmux_setup(&self) -> PathBuf {
+        self.data.join("tmux-setup.json")
+    }
+    /// App settings that belong to this machine rather than a workspace.
+    pub fn settings(&self) -> PathBuf {
+        self.data.join("settings.json")
+    }
+    /// Where the helper that keeps terminals running keeps its state (Windows).
+    pub fn terminal_helper(&self) -> PathBuf {
+        self.data.join("terminal-helper")
+    }
+}
+
+/// Whether terminals keep running after the app quits: in the app's helper on Windows (see
+/// [`tc_pty::daemon`]), in tmux sessions elsewhere (see [`tc_pty::tmux`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeepRunning {
+    pub enabled: bool,
+    /// A tmux executable chosen by hand in the settings file; otherwise tmux is looked up.
+    pub tmux_program: Option<PathBuf>,
+}
+
+impl KeepRunning {
+    /// The saved setting. A missing or unreadable file means it is off.
+    pub fn read(file: &Path) -> Self {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            return KeepRunning::default();
+        };
+        let Ok(saved) = serde_json::from_str::<Value>(&text) else {
+            return KeepRunning::default();
+        };
+        KeepRunning {
+            enabled: saved.get("keepRunning") == Some(&Value::Bool(true)),
+            tmux_program: saved
+                .get("tmuxProgram")
+                .and_then(Value::as_str)
+                .filter(|program| !program.is_empty())
+                .map(PathBuf::from),
+        }
+    }
+
+    /// Saves the setting, keeping the file's other fields.
+    pub fn write(&self, file: &Path) -> std::io::Result<()> {
+        let mut saved = std::fs::read_to_string(file)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        saved["keepRunning"] = json!(self.enabled);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        atomic::write(file, format!("{saved}\n").as_bytes(), Access::Default)
+    }
+
+    /// What would keep terminals running on this machine, whether or not the setting is on, or why
+    /// nothing can.
+    pub fn keeper(&self, paths: &Paths, env: &BTreeMap<String, String>, os: Os) -> Result<Keeper, &'static str> {
+        if os.is_windows() {
+            let hook = paths.hook.clone().ok_or(KEEPER_MISSING)?;
+            return Ok(Keeper::Daemon(tc_pty::daemon::Daemon::new(
+                hook,
+                paths.terminal_helper(),
+            )));
+        }
+        let program = tc_pty::tmux::find(self.tmux_program.as_deref(), env).ok_or(TMUX_MISSING)?;
+        Ok(Keeper::Tmux(tc_pty::tmux::Tmux::new(program, env.clone())))
     }
 }
 
@@ -263,9 +379,14 @@ impl Host {
             Ok(()) => tc_core::launch::discard_requests(&inbox),
             Err(error) => eprintln!("Could not create {}: {error}", inbox.display()),
         }
+        let mut manager = TerminalManager::new(config, backend, integrations, sink);
+        let setting = KeepRunning::read(&paths.settings());
+        if setting.enabled {
+            manager.set_keeper(setting.keeper(&paths, manager.environment(), os).ok());
+        }
         let mut state = State {
             names: Naming::default(),
-            manager: TerminalManager::new(config, backend, integrations, sink),
+            manager,
             recovery: WorkspaceRecovery::new(),
             filename: None,
             inputs: HashMap::new(),
@@ -665,6 +786,16 @@ impl Host {
                 }
                 let offer_setup = self.paths.agents.as_ref().is_some_and(|agents| agents.first_launch)
                     && !self.paths.agent_setup().exists();
+                // Until it is answered, each launch offers tmux if it is still missing or too old.
+                let offer_tmux = match self.paths.tmux.filter(|_| !self.paths.tmux_setup().exists()) {
+                    Some(probe) => tokio::task::spawn_blocking(move || {
+                        let state = probe();
+                        !state.usable() && state.plan.is_some()
+                    })
+                    .await
+                    .unwrap_or(false),
+                    None => false,
+                };
                 let restored = workspace.clone();
                 let title_epoch = self
                     .with_state(move |_, state| {
@@ -683,7 +814,47 @@ impl Host {
                 if offer_setup {
                     result["agentSetup"] = json!(true);
                 }
+                if offer_tmux {
+                    result["tmuxSetup"] = json!(true);
+                }
+                result["keepRunning"] = self.keep_status().await;
                 Ok(result)
+            }
+            // Reports whether terminals keep running after the app quits; with `enabled`, first
+            // turns that on or off.
+            "keep-running" => {
+                let enable = match field(payload, "enabled") {
+                    None => None,
+                    Some(Value::Bool(enable)) => Some(*enable),
+                    Some(_) => return Err("Invalid setting.".into()),
+                };
+                let env = self.with_state(|_, state| state.manager.environment().clone()).await;
+                let (paths, os) = (self.paths.clone(), self.os);
+                let (setting, keeper) = tokio::task::spawn_blocking(move || {
+                    let file = paths.settings();
+                    let mut setting = KeepRunning::read(&file);
+                    let keeper = setting.keeper(&paths, &env, os);
+                    if let Some(enable) = enable {
+                        if let (true, Err(missing)) = (enable, &keeper) {
+                            return Err((*missing).to_owned());
+                        }
+                        setting.enabled = enable;
+                        setting
+                            .write(&file)
+                            .map_err(|error| format!("Could not save the setting: {error}"))?;
+                    }
+                    Ok::<_, String>((setting, keeper))
+                })
+                .await
+                .map_err(message)??;
+                if enable.is_some() {
+                    let keeper = keeper.clone().ok().filter(|_| setting.enabled);
+                    self.with_state(move |_, state| state.manager.set_keeper(keeper)).await;
+                }
+                let mut status = self.keep_status().await;
+                status["enabled"] = json!(setting.enabled);
+                status["available"] = json!(keeper.is_ok());
+                Ok(status)
             }
             "create-card" => Ok(json!({ "card": create_card(payload.unwrap_or(&Value::Null)).map_err(message)? })),
             "rename-title" => {
@@ -807,6 +978,31 @@ impl Host {
                 .await
                 .map_err(message)?
             }
+            // Reports tmux and the command that installs it here. With `install`, the renderer runs
+            // that command in a new terminal; with `install` or `dismiss`, the first-launch offer
+            // is answered and not made again.
+            "tmux-setup" => {
+                let probe = self.paths.tmux.ok_or("The tmux setup is unavailable in this build.")?;
+                let install = field(payload, "install") == Some(&json!(true));
+                let dismiss = field(payload, "dismiss") == Some(&json!(true));
+                let marker = self.paths.tmux_setup();
+                tokio::task::spawn_blocking(move || {
+                    let state = probe();
+                    if install && state.plan.is_none() {
+                        return Err("No supported package manager was found to install tmux.".to_owned());
+                    }
+                    if install || dismiss {
+                        marker
+                            .parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .and_then(|()| atomic::write(&marker, b"{\"offered\":true}\n", Access::Default))
+                            .map_err(|error| format!("Could not save the tmux setup: {error}"))?;
+                    }
+                    Ok(state.to_json())
+                })
+                .await
+                .map_err(message)?
+            }
             "duplicate-directory" => {
                 let raw = payload.cloned().unwrap_or(Value::Null);
                 let request = self
@@ -862,7 +1058,8 @@ impl Host {
                     })
                     .await?;
                 if let Err(error) = saved.await {
-                    self.with_state(move |_, state| state.manager.stop(&id)).await;
+                    self.with_state(move |_, state| state.manager.stop_within(&id, STOP_TIMEOUT))
+                        .await;
                     return Err(error);
                 }
                 Ok(json!(started))
@@ -1019,7 +1216,8 @@ impl Host {
                     .await;
                 self.flush(None).await?;
                 self.with_state(move |_, state| state.filename = Some(file)).await;
-                Ok(json!({ "workspace": workspace, "titleEpoch": title_epoch }))
+                let keep = self.keep_status().await;
+                Ok(json!({ "workspace": workspace, "titleEpoch": title_epoch, "keepRunning": keep }))
             }
             "new" => {
                 self.with_state(|host, state| {
@@ -1051,6 +1249,24 @@ impl Host {
             }
             _ => Err("Unsupported desktop command.".into()),
         }
+    }
+
+    /// Whether terminals keep running after the app quits, how (`helper` or `tmux`), and the cards
+    /// whose terminals are still running, which the renderer attaches to.
+    async fn keep_status(&self) -> Value {
+        let keeper = self.with_state(|_, state| state.manager.keeper().cloned()).await;
+        let via = match &keeper {
+            Some(Keeper::Daemon(_)) => Some("helper"),
+            Some(Keeper::Tmux(_)) => Some("tmux"),
+            None => None,
+        };
+        let sessions = match keeper {
+            Some(keeper) => tokio::task::spawn_blocking(move || keeper.sessions())
+                .await
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        json!({ "enabled": via.is_some(), "via": via, "sessions": sessions })
     }
 
     /// `import-image`: the image arrives as the raw IPC body.

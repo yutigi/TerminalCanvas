@@ -23,8 +23,10 @@ use tc_core::session::{Launch, LaunchToken, MetadataEvent, MetadataParser, Metad
 use tc_core::workspace::{VERSION, validate_card};
 use tc_core::{Error, Platform, Result};
 
+use crate::daemon::Daemon;
 use crate::integration::{self, Integration};
 use crate::shell::{POWERSHELL_BOOTSTRAP, powershell_args};
+use crate::tmux::{self, Tmux};
 
 /// The most input one write may carry, in UTF-16 units.
 pub const MAX_INPUT_UNITS: usize = 65536;
@@ -60,6 +62,9 @@ pub enum SessionEvent {
     Exit(ExitStatus),
     /// A polled process directory (macOS and Linux), or `None` when unknown.
     Directory(Option<String>),
+    /// Integration escape sequences read from tmux (see [`crate::tmux`]). The manager handles them
+    /// like output, but they are never shown.
+    Report(String),
 }
 
 pub type EventSink = Arc<dyn Fn(SessionKey, SessionEvent) + Send + Sync>;
@@ -96,6 +101,53 @@ pub trait Backend: Send {
     /// Polls `pid`'s directory on macOS and Linux, reporting [`SessionEvent::Directory`] until the
     /// returned handle is dropped.
     fn watch_directory(&mut self, pid: u32, platform: Platform, key: SessionKey, events: EventSink) -> Box<dyn Send>;
+}
+
+/// What keeps terminals running after the app quits (see [`TerminalManager::set_keeper`]). Each
+/// kept terminal is named by its card ID.
+#[derive(Debug, Clone)]
+pub enum Keeper {
+    /// The app's own helper process (Windows; see [`crate::daemon`]).
+    Daemon(Daemon),
+    /// tmux sessions (macOS and Linux; see [`crate::tmux`]).
+    Tmux(Tmux),
+}
+
+impl Keeper {
+    /// The cards whose terminals are kept running.
+    pub fn sessions(&self) -> Vec<String> {
+        match self {
+            Keeper::Daemon(daemon) => daemon.terminals().into_iter().map(|kept| kept.id).collect(),
+            Keeper::Tmux(tmux) => tmux.sessions(),
+        }
+    }
+
+    /// Whether the card's terminal is kept running, with the integration it started with.
+    fn find(&self, card: &str) -> Option<Option<Integration>> {
+        match self {
+            Keeper::Daemon(daemon) => daemon
+                .terminals()
+                .into_iter()
+                .find(|kept| kept.id == card)
+                .map(|kept| kept.integration),
+            Keeper::Tmux(tmux) => tmux.has_session(card).then(|| tmux.integration(card)),
+        }
+    }
+
+    fn has_session(&self, card: &str) -> bool {
+        match self {
+            Keeper::Daemon(_) => self.find(card).is_some(),
+            Keeper::Tmux(tmux) => tmux.has_session(card),
+        }
+    }
+
+    /// Ends the card's kept terminal and everything running in it.
+    pub fn kill_session(&self, card: &str) {
+        match self {
+            Keeper::Daemon(daemon) => daemon.kill(card),
+            Keeper::Tmux(tmux) => tmux.kill_session(card),
+        }
+    }
 }
 
 /// Writes a terminal's integration files, given its shell and platform.
@@ -202,16 +254,22 @@ pub struct Started {
     pub pid: Option<u32>,
     pub shell: String,
     pub metadata: CardMetadata,
+    /// The terminal outlives the app (tmux, or the Windows helper).
+    pub kept: bool,
 }
 
 impl Serialize for Started {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(5))?;
+        let mut map = serializer.serialize_map(Some(if self.kept { 6 } else { 5 }))?;
         map.serialize_entry("id", &self.id)?;
         map.serialize_entry("pid", &self.pid)?;
         map.serialize_entry("cwd", &self.metadata.cwd)?;
         map.serialize_entry("shell", &self.shell)?;
         map.serialize_entry("session", &self.metadata.session)?;
+        // Only kept terminals add a field, so other results keep the JavaScript host's shape.
+        if self.kept {
+            map.serialize_entry("kept", &true)?;
+        }
         map.end()
     }
 }
@@ -296,6 +354,8 @@ struct Session {
     reports: DirectoryReports,
     launch: Option<Launch>,
     watch: Option<Box<dyn Send>>,
+    /// What keeps this terminal running after the app lets go of it.
+    keeper: Option<Keeper>,
 }
 
 struct Stopping {
@@ -317,6 +377,9 @@ pub struct TerminalManager {
     /// The last terminal started without the integration it should have had. A folder that stays
     /// broken fails every start, and one notice covers them until a start succeeds.
     integration_failing: bool,
+    /// When set, terminals start kept running, so they outlive the app.
+    keeper: Option<Keeper>,
+    tmux_watch: Option<tmux::Watch>,
 }
 
 /// Set for every terminal, apart from its integration's variables.
@@ -484,7 +547,29 @@ impl TerminalManager {
             generation: 0,
             outbox: Vec::new(),
             integration_failing: false,
+            keeper: None,
+            tmux_watch: None,
         }
+    }
+
+    /// The environment new shells inherit, before each terminal's own variables.
+    pub fn environment(&self) -> &BTreeMap<String, String> {
+        &self.config.env
+    }
+
+    /// Keeps terminals started from now on running after the app quits, or stops doing so. Running
+    /// terminals keep how they started, and the tmux watch keeps reporting for tmux clients.
+    pub fn set_keeper(&mut self, keeper: Option<Keeper>) {
+        if let Some(Keeper::Tmux(tmux)) = &keeper
+            && self.tmux_watch.is_none()
+        {
+            self.tmux_watch = Some(tmux::Watch::new(tmux.clone(), Arc::clone(&self.events)));
+        }
+        self.keeper = keeper;
+    }
+
+    pub fn keeper(&self) -> Option<&Keeper> {
+        self.keeper.as_ref()
     }
 
     /// Events for the UI since the last call, in order.
@@ -560,6 +645,16 @@ impl TerminalManager {
         }
         let platform = self.config.platform;
         let windows = platform.is_windows();
+        // A card whose terminal is still kept running attaches to it; a fresh shell replaces it.
+        if let Some(keeper) = self.keeper.clone()
+            && let Some(integration) = keeper.find(&card.id)
+        {
+            if mode != "fresh" {
+                let homes = self.name_homes(&self.config.env);
+                return self.attach(&keeper, &card, cols, rows, integration, homes, None);
+            }
+            keeper.kill_session(&card.id);
+        }
         let saved = match (mode, &card.session) {
             ("resume", Some(session)) => &session.cwd,
             _ => &card.cwd,
@@ -665,6 +760,23 @@ impl TerminalManager {
             let prompt = format!("$E]9;9;$P$E\\{prompt}");
             env.insert("PROMPT".into(), prompt);
         }
+        if let Some(keeper) = self.keeper.clone() {
+            return self.start_kept(
+                &keeper,
+                &card,
+                KeptStart {
+                    shell,
+                    args,
+                    cwd,
+                    cols,
+                    rows,
+                    env,
+                    integration,
+                    failure,
+                    command,
+                },
+            );
+        }
         self.generation += 1;
         let key = SessionKey {
             id: card.id.clone(),
@@ -689,14 +801,7 @@ impl TerminalManager {
         };
         let pid = process.pid();
         let initial_command = integration.as_ref().and_then(|integration| integration.command.clone());
-        let name_homes = [("CLAUDE_CONFIG_DIR", ".claude"), ("CODEX_HOME", ".codex")].map(|(name, default)| {
-            request
-                .env
-                .iter()
-                .find(|(key, value)| !value.is_empty() && (*key == name || windows && key.eq_ignore_ascii_case(name)))
-                .map(|(_, value)| std::path::PathBuf::from(value))
-                .unwrap_or_else(|| std::path::PathBuf::from(&self.config.home).join(default))
-        });
+        let name_homes = self.name_homes(&request.env);
         let session = Session {
             name_session: None,
             name_homes,
@@ -712,6 +817,7 @@ impl TerminalManager {
             reports: DirectoryReports::new(platform, &self.config.hostname),
             launch: None,
             watch: None,
+            keeper: None,
         };
         self.sessions.insert(card.id.clone(), session);
         let metadata = CardMetadata {
@@ -754,6 +860,202 @@ impl TerminalManager {
             pid,
             shell,
             metadata: self.metadata[&card.id].clone(),
+            kept: false,
+        })
+    }
+
+    /// Where Claude Code and Codex keep their sessions for a shell with `env`, for naming.
+    fn name_homes(&self, env: &BTreeMap<String, String>) -> [std::path::PathBuf; 2] {
+        let windows = self.config.platform.is_windows();
+        [("CLAUDE_CONFIG_DIR", ".claude"), ("CODEX_HOME", ".codex")].map(|(name, default)| {
+            env.iter()
+                .find(|(key, value)| !value.is_empty() && (*key == name || windows && key.eq_ignore_ascii_case(name)))
+                .map(|(_, value)| std::path::PathBuf::from(value))
+                .unwrap_or_else(|| std::path::PathBuf::from(&self.config.home).join(default))
+        })
+    }
+
+    /// Starts the card's shell kept running, and attaches to it.
+    fn start_kept(&mut self, keeper: &Keeper, card: &tc_core::workspace::Card, start: KeptStart) -> Result<Started> {
+        let KeptStart {
+            shell,
+            args,
+            cwd,
+            cols,
+            rows,
+            env,
+            integration,
+            failure,
+            command,
+        } = start;
+        let initial_command = integration.as_ref().and_then(|integration| integration.command.clone());
+        let homes = self.name_homes(&env);
+        let mut fresh = card.clone();
+        fresh.cwd.clone_from(&cwd);
+        let leftover = integration.clone();
+        let started = match keeper {
+            Keeper::Tmux(tmux) => {
+                // The pane gets what this terminal adds to the shared environment; tmux sets its own TERM.
+                let added: Vec<(String, String)> = env
+                    .iter()
+                    .filter(|(key, value)| *key != "TERM" && self.config.env.get(*key) != Some(*value))
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect();
+                tmux.new_session(&tmux::NewSession {
+                    card: &card.id,
+                    cwd: &cwd,
+                    cols,
+                    rows,
+                    shell: &shell,
+                    args: &args,
+                    env: &added,
+                    integration: integration.as_ref(),
+                })
+                .map_err(Error::from)
+                .and_then(|()| {
+                    self.attach(keeper, &fresh, cols, rows, integration, homes, None)
+                        .inspect_err(|_| tmux.kill_session(&card.id))
+                })
+            }
+            Keeper::Daemon(_) => {
+                let request = SpawnRequest {
+                    shell,
+                    args,
+                    cwd,
+                    cols,
+                    rows,
+                    env,
+                };
+                self.attach(keeper, &fresh, cols, rows, integration, homes, Some(request))
+            }
+        };
+        let started = match started {
+            Ok(started) => started,
+            Err(error) => {
+                if let Some(integration) = &leftover {
+                    integration.cleanup();
+                }
+                return Err(error);
+            }
+        };
+        if let Some(error) = failure
+            && !std::mem::replace(&mut self.integration_failing, true)
+        {
+            self.emit(TerminalEvent::Error {
+                id: card.id.clone(),
+                message: integration_warning(&error),
+            });
+        }
+        let typed = initial_command
+            .into_iter()
+            .chain((!command.is_empty()).then_some(command));
+        for line in typed {
+            if let Err(error) = self.write(&card.id, &format!("{line}\r")) {
+                self.stop(&card.id);
+                return Err(error);
+            }
+        }
+        Ok(started)
+    }
+
+    /// Attaches to the card's kept terminal: a tmux client in a PTY, or a connection to the helper.
+    /// With `new`, the helper first starts that terminal.
+    #[allow(clippy::too_many_arguments)]
+    fn attach(
+        &mut self,
+        keeper: &Keeper,
+        card: &tc_core::workspace::Card,
+        cols: u16,
+        rows: u16,
+        integration: Option<Integration>,
+        name_homes: [std::path::PathBuf; 2],
+        new: Option<SpawnRequest>,
+    ) -> Result<Started> {
+        let platform = self.config.platform;
+        // The folder shown until the shell reports one; a tmux client also starts there, so it must exist.
+        let known = self.metadata.get(&card.id).map(|metadata| metadata.cwd.clone());
+        let cwd = [
+            known.as_deref(),
+            Some(card.cwd.as_str()),
+            Some(self.config.home.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|cwd| !cwd.is_empty() && is_directory(cwd))
+        .unwrap_or(&self.config.home)
+        .to_owned();
+        self.generation += 1;
+        let key = SessionKey {
+            id: card.id.clone(),
+            generation: self.generation,
+        };
+        let events = Arc::clone(&self.events);
+        let (process, shell) = match (keeper, new) {
+            (Keeper::Tmux(tmux), _) => {
+                let (program, args) = tmux.attach(&card.id);
+                let mut env = self.config.env.clone();
+                env.insert("TERM".into(), "xterm-256color".into());
+                env.insert("COLORTERM".into(), "truecolor".into());
+                env.remove("ELECTRON_RUN_AS_NODE");
+                // An app started inside tmux would otherwise refuse to nest the client.
+                env.remove("TMUX");
+                let request = SpawnRequest {
+                    shell: program.clone(),
+                    args,
+                    cwd: cwd.clone(),
+                    cols,
+                    rows,
+                    env,
+                };
+                (self.backend.spawn(&request, key.clone(), events)?, program)
+            }
+            (Keeper::Daemon(daemon), Some(request)) => {
+                let attached = daemon.create(&card.id, &request, integration.as_ref(), key.clone(), events)?;
+                (attached.process, attached.shell)
+            }
+            (Keeper::Daemon(daemon), None) => {
+                let attached = daemon.attach(&card.id, cols, rows, key.clone(), events)?;
+                (attached.process, attached.shell)
+            }
+        };
+        let pid = process.pid();
+        let session = Session {
+            name_session: None,
+            name_homes,
+            size: (cols, rows),
+            generation: key.generation,
+            process,
+            integration,
+            cwd: None,
+            ready: false,
+            pending: 0,
+            paused: false,
+            parser: MetadataParser::new(cwd.clone(), platform, false),
+            reports: DirectoryReports::new(platform, &self.config.hostname),
+            launch: None,
+            watch: None,
+            keeper: Some(keeper.clone()),
+        };
+        self.sessions.insert(card.id.clone(), session);
+        if let (Keeper::Tmux(_), Some(watch)) = (keeper, &self.tmux_watch) {
+            watch.add(key);
+        }
+        let metadata = CardMetadata {
+            cwd,
+            session: card.session.clone(),
+        };
+        self.metadata.insert(card.id.clone(), metadata.clone());
+        self.emit(TerminalEvent::Metadata {
+            id: card.id.clone(),
+            metadata: metadata.clone(),
+            initial: true,
+        });
+        Ok(Started {
+            id: card.id.clone(),
+            pid,
+            shell,
+            metadata,
+            kept: true,
         })
     }
 
@@ -763,6 +1065,24 @@ impl TerminalManager {
             SessionEvent::Output(data) => self.output(&key, data),
             SessionEvent::Exit(status) => self.exit(&key, status),
             SessionEvent::Directory(cwd) => self.report_directory(&key, cwd),
+            SessionEvent::Report(text) => self.report(&key, &text),
+        }
+    }
+
+    /// Integration reports from tmux: parsed like output, never shown.
+    fn report(&mut self, key: &SessionKey, text: &str) {
+        let Some(session) = self.current(key) else { return };
+        let mut parsed = Vec::new();
+        session.parser.feed(text, &mut |event| parsed.push(event));
+        let mut reports = Vec::new();
+        session.reports.feed(text, |report| reports.push(report));
+        for event in parsed {
+            self.metadata_event(key, event);
+        }
+        for report in reports {
+            if let Report::Cwd(cwd) = report {
+                self.report_directory(key, cwd);
+            }
         }
     }
 
@@ -869,7 +1189,7 @@ impl TerminalManager {
         // A request made just before the shell ended still opens its terminal.
         self.poll_launches(&key.id);
         if let Some(session) = self.sessions.remove(&key.id) {
-            dispose(session);
+            self.release(&key.id, session, false);
         }
         self.emit(TerminalEvent::Exit {
             id: key.id.clone(),
@@ -1027,7 +1347,8 @@ impl TerminalManager {
         };
         let platform = self.config.platform;
         if platform.is_windows() {
-            let current = if session.ready {
+            // tmux does not pass on the prompt's idle reports; its directory comes from tmux itself.
+            let current = if session.ready || matches!(session.keeper, Some(Keeper::Tmux(_))) {
                 session.cwd.clone().flatten()
             } else {
                 None
@@ -1130,13 +1451,18 @@ impl TerminalManager {
         }
     }
 
+    /// Stops a terminal, ending its kept terminal too.
     pub fn stop(&mut self, id: &str) {
-        self.stop_within(id, STOP_TIMEOUT);
+        self.end(id, STOP_TIMEOUT, true);
     }
 
     /// Kills a terminal and tracks its exit for up to `timeout`, even when Stop or a workspace
-    /// switch comes before quitting.
+    /// switch comes before quitting. A kept terminal keeps running.
     pub fn stop_within(&mut self, id: &str, timeout: Duration) {
+        self.end(id, timeout, false);
+    }
+
+    fn end(&mut self, id: &str, timeout: Duration, end_kept: bool) {
         if !self.sessions.contains_key(id) {
             return;
         }
@@ -1148,7 +1474,7 @@ impl TerminalManager {
             id: id.to_owned(),
             generation: session.generation,
         };
-        let mut process = dispose(session);
+        let mut process = self.release(id, session, end_kept);
         process.kill();
         self.stopping.push(Stopping {
             key,
@@ -1157,11 +1483,29 @@ impl TerminalManager {
         });
     }
 
+    /// Stops every terminal. Kept terminals keep running, to attach to later.
     pub fn stop_all(&mut self) {
         let ids: Vec<String> = self.sessions.keys().cloned().collect();
         for id in ids {
-            self.stop(&id);
+            self.stop_within(&id, STOP_TIMEOUT);
         }
+    }
+
+    /// Stops watching a terminal and returns its process. Integration files stay while the
+    /// terminal is kept running, unless `end_kept` ends it.
+    fn release(&self, id: &str, session: Session, end_kept: bool) -> Box<dyn Process> {
+        if let Some(keeper) = &session.keeper {
+            if let (Keeper::Tmux(_), Some(watch)) = (keeper, &self.tmux_watch) {
+                watch.remove(id);
+            }
+            if end_kept {
+                keeper.kill_session(id);
+            } else if keeper.has_session(id) {
+                drop(session.watch);
+                return session.process;
+            }
+        }
+        dispose(session)
     }
 
     /// Stops every terminal. The host then keeps handling events until [`Self::stopping`] is zero,
@@ -1184,6 +1528,19 @@ impl TerminalManager {
     pub fn next_stop_deadline(&self) -> Option<Instant> {
         self.stopping.iter().map(|stopping| stopping.deadline).min()
     }
+}
+
+/// What [`TerminalManager::start`] prepared for a terminal kept running.
+struct KeptStart {
+    shell: String,
+    args: Vec<String>,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    env: BTreeMap<String, String>,
+    integration: Option<Integration>,
+    failure: Option<io::Error>,
+    command: String,
 }
 
 /// Stops directory polling and removes integration files, returning the process.

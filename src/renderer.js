@@ -731,6 +731,15 @@ function mount(card) {
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
         s.terminal.onData(data => {
             if (bridge?.remote && (bridge.role !== 'control' || s.replaying || !s.userInput)) return;
+            // A kept (tmux) terminal is not told when the whole app loses focus, so a program that
+            // dims while unfocused (Claude Code does) stays active while you use another app.
+            // Moving to another card or control in the app still reports focus out. The check waits a
+            // task, as the browser may blur the terminal before the window itself.
+            if (s.kept && data === '\x1b[O') {
+                const generation = s.generation;
+                setTimeout(() => { if (document.hasFocus() && s.generation === generation && s.status === 'running') bridge.input(card.id, data); });
+                return;
+            }
             // ConPTY can ask for its cursor before the start invoke resolves.
             // Answer an observed query while keeping early user typing blocked.
             const startupReply = s.status === 'starting' && s.startupCursorQueries > 0 && /^\x1b\[\d+;\d+R$/.test(data);
@@ -936,7 +945,7 @@ async function start(card, mode = card.session ? 'resume' : 'start', launch) {
     if (!s || ['running', 'starting'].includes(s.status)) return;
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
     s.generation++;
-    s.startupCursorQueries = 0; s.startupQueryTail = '';
+    s.startupCursorQueries = 0; s.startupQueryTail = ''; s.kept = false;
     s.terminal.reset(); fitTerminal(s); showDirectory(s, null); setStatus(card, 'starting');
     try {
         clearTimeout(autosaveTimer);
@@ -944,6 +953,7 @@ async function start(card, mode = card.session ? 'resume' : 'start', launch) {
         const metadataRevision = s.metadataRevision;
         const result = await invoke('start', { card, cols: s.terminal.cols, rows: s.terminal.rows, mode, ...(launch ? { launch } : {}) });
         if (sessions.get(card.id) !== s) return;
+        s.kept = !!result.kept;
         if (s.metadataRevision === metadataRevision) {
             if (result.cwd) card.cwd = result.cwd;
             if (result.session) card.session = result.session;
@@ -1347,20 +1357,28 @@ $('#account-signin').onclick = () => {
     const card = applyAccountChoice();
     run(() => openAccountSignIn(card, name));
 };
-async function openAccountSignIn(beside, name) {
+function openAccountSignIn(beside, name) {
+    return openCommandTerminal({
+        beside, title: `Sign in · ${name}`, command: 'claude auth login', claudeAccount: name, again: 'sign in again',
+        notice: `Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`,
+    });
+}
+// Starts a shell terminal that runs `command`, beside `beside` while it is still on the board and
+// otherwise near the middle of the view, then shows `notice`.
+async function openCommandTerminal({ beside = null, title, command, claudeAccount = '', again, notice }) {
     await whenBoardIdle();
-    if (canvasLocked()) throw new Error('Finish the current canvas action, then sign in again.');
+    if (canvasLocked()) throw new Error(`Finish the current canvas action, then ${again}.`);
     canvasMutation = true;
     try {
         const size = { w: 660, h: 430 };
         const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
         const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-        const { card } = await invoke('create-card', { profile: 'shell', title: `Sign in · ${name}`, command: 'claude auth login', x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
-        card.claudeAccount = name;
+        const { card } = await invoke('create-card', { profile: 'shell', title, command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+        if (claudeAccount) card.claudeAccount = claudeAccount;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
         else if (!Geometry.intersects(visibleWorld(), card)) centerCard(card);
-        toast(`Finish signing in to “${name}” in your browser. Close the sign-in terminal when it is done.`);
+        toast(notice);
         await start(card);
     } finally { canvasMutation = false; }
 }
@@ -1421,6 +1439,38 @@ document.addEventListener('pointerdown', event => {
     if (!$('#settings-menu').hidden && !event.target.closest?.('#settings-menu,#settings')) setSettingsMenu(false);
 }, true);
 $('#agent-setup').onclick = () => { setSettingsMenu(false); run(() => openAgentSetup()); };
+// Kept terminals outlive the app (in the host's helper on Windows, in tmux elsewhere). The host
+// reports the setting and the cards whose terminals still run; those cards attach again as soon as
+// their workspace loads.
+let keepEnabled = false;
+function showKeep(status) {
+    keepEnabled = !!status?.enabled;
+    $('#keep-setting').setAttribute('aria-checked', String(keepEnabled));
+    $('#keep-state').textContent = keepEnabled ? 'On' : 'Off';
+    $('#keep-toggle').setAttribute('aria-pressed', String(keepEnabled));
+    $('#keep-toggle-state').textContent = keepEnabled ? 'On' : 'Off';
+}
+function attachKept(status) {
+    showKeep(status);
+    if (!keepEnabled || bridge?.remote) return;
+    for (const id of status.sessions || []) {
+        const s = sessions.get(id);
+        if (s?.card && !['running', 'starting'].includes(s.status)) run(() => start(s.card));
+    }
+}
+// The Settings menu item and the footer button both switch it.
+async function toggleKeep() {
+    const button = $('#keep-toggle');
+    if (button.disabled) return;
+    button.disabled = true;
+    try { showKeep(await invoke('keep-running', { enabled: !keepEnabled })); }
+    finally { button.disabled = false; }
+    toast(keepEnabled
+        ? 'Terminals you start now keep running after you quit, and attach again when you reopen. Stop ends a terminal.'
+        : 'Terminals you start now stop when you quit. Terminals already kept running continue until you stop them.');
+}
+$('#keep-setting').onclick = () => { setSettingsMenu(false); run(toggleKeep); };
+$('#keep-toggle').onclick = () => run(toggleKeep);
 $('#agent-form').onsubmit = event => {
     event.preventDefault(); if (agentBusy) return;
     const chosen = [...agentChoices.values()].filter(choice => choice.box.checked);
@@ -1441,6 +1491,65 @@ $('#agent-dialog').addEventListener('close', () => {
     if (!agentOffer) return;
     agentOffer = false;
     run(() => invoke('agent-setup', { dismiss: true }));
+});
+// The tmux setup checks for tmux and installs it with this computer's package manager, in a
+// terminal on the canvas where the user follows it and answers its prompts. The first launch
+// offers it once, after the agent setup; Settings offers it again at any time.
+let tmuxBusy = false, tmuxOffer = false, tmuxPending = false;
+function renderTmuxStatus(status) {
+    $('#tmux-minimum').textContent = status.minimum;
+    const found = status.version ? `tmux ${status.version}` : 'A tmux of unknown version';
+    $('#tmux-status').textContent = status.installed ? `tmux ${status.version} is installed: ${status.path}`
+        : (status.path ? `${found} is at ${status.path}, but ${status.minimum} or newer is needed.` : 'tmux is not installed.')
+            + (status.command ? '' : ` No supported package manager was found. Install tmux ${status.minimum} or newer yourself, then check again here.`);
+    $('#tmux-status').classList.toggle('ready', !!status.installed);
+    const offer = !status.installed && !!status.command;
+    $('#tmux-plan').hidden = !offer; $('#tmux-install').hidden = !offer;
+    $('#tmux-command').textContent = status.command || '';
+    $('#tmux-manager').textContent = status.manager || '';
+    $('#tmux-install').lastChild.textContent = status.path ? 'Update tmux' : 'Install tmux';
+    $('#tmux-cancel').textContent = offer ? 'Not now' : 'Close';
+}
+async function openTmuxSetup({ offer = false } = {}) {
+    if (!ready || tmuxBusy || document.querySelector('dialog[open]')) return;
+    const status = await invoke('tmux-setup', {});
+    if (document.querySelector('dialog[open]')) return;
+    tmuxOffer = offer;
+    renderTmuxStatus(status);
+    $('#tmux-error').hidden = true; $('#tmux-install').disabled = false;
+    $('#tmux-dialog').showModal();
+}
+// The first launch's offer waits for the agent setup's dialog to close.
+function offerTmuxSetup() {
+    if (!tmuxPending || document.querySelector('dialog[open]')) return;
+    tmuxPending = false;
+    run(() => openTmuxSetup({ offer: true }));
+}
+$('#agent-dialog').addEventListener('close', offerTmuxSetup);
+$('#tmux-setup').onclick = () => { setSettingsMenu(false); run(() => openTmuxSetup()); };
+$('#tmux-form').onsubmit = event => {
+    event.preventDefault(); if (tmuxBusy) return;
+    tmuxBusy = true; $('#tmux-install').disabled = true;
+    run(async () => {
+        let command;
+        try {
+            ({ command } = await invoke('tmux-setup', { install: true }));
+            tmuxOffer = false; $('#tmux-dialog').close();
+        } catch (error) {
+            $('#tmux-error').textContent = error.message; $('#tmux-error').hidden = false;
+            return;
+        } finally { tmuxBusy = false; $('#tmux-install').disabled = false; }
+        await openCommandTerminal({
+            title: 'Install tmux', command, again: 'install tmux again from Settings',
+            notice: 'tmux is installing in the new terminal. Answer any prompts there; Settings › Install tmux shows when it is ready.',
+        });
+    });
+};
+// Closing the first-launch offer without installing declines it, so it is not offered again.
+$('#tmux-dialog').addEventListener('close', () => {
+    if (!tmuxOffer) return;
+    tmuxOffer = false;
+    run(() => invoke('tmux-setup', { dismiss: true }));
 });
 $('#profile').onchange = () => { const p = profiles.find(p => p.id === $('#profile').value); if (!launchTitleEdited) $('#terminal-title').value = p.name; $('#command').value = p.command; };
 $('#browse-folder').onclick = () => run(async () => { const result = await invoke('pick-folder', { cwd: $('#cwd').value.trim() }); if (result.path) $('#cwd').value = result.path; });
@@ -1567,11 +1676,11 @@ function remoteTerminals(terminals) {
 async function canReplace() {
     if (canvasMutation || boardBusy() || imageImports || formBusy || duplicateBusy) return false;
     if (canvasStates.length === 1 && !workspace.cards.length && !workspace.items.length) return true;
-    return confirmAction('Replace this workspace?', 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
+    return confirmAction('Replace this workspace?', keepEnabled ? 'Save a workspace file first if you want to keep this layout. Kept terminals keep running and attach again when you reopen this workspace; others stop.' : 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
 }
 async function save() { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.'); }
 $('#save').onclick = () => run(save);
-$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); } });
+$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); attachKept(result.keepRunning); } });
 $('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('new'); loadWorkspace(result.workspace, result.titleEpoch); changed(); });
 $('#workspace-name').oninput = () => { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; changed(); };
 $('#canvas-list').onchange = () => { if (!switchCanvas($('#canvas-list').value)) renderCanvases(); };
@@ -1750,6 +1859,30 @@ $('#update').onclick = () => run(async () => {
     clearTimeout(autosaveTimer); await invoke('close', workspace);
 });
 window.addEventListener('resize', () => { if (ready) renderCamera(); });
+// Output is acknowledged once xterm has parsed it, which paces the program writing it. xterm parses
+// on timers, and a minimized or covered window throttles them to as little as one a minute, which
+// would stall the program at the host's high watermark. While the window is hidden, output is
+// acknowledged as it arrives instead, leaving at most this many UTF-16 units waiting to be parsed.
+const HIDDEN_PARSE_BACKLOG = 4_000_000;
+// The host ignores a larger acknowledgment.
+const ACK_CHUNK = 1024 * 1024;
+function writeOutput(s, id, data) {
+    s.ackId = id;
+    s.unacknowledged = (s.unacknowledged || 0) + data.length;
+    s.unparsed = (s.unparsed || 0) + data.length;
+    s.terminal.write(data, () => { s.unparsed -= data.length; acknowledgeOutput(s); });
+    acknowledgeOutput(s);
+}
+function acknowledgeOutput(s) {
+    const held = document.hidden ? Math.max(0, s.unparsed - HIDDEN_PARSE_BACKLOG) : s.unparsed;
+    for (let amount = s.unacknowledged - held; amount > 0; amount -= ACK_CHUNK) {
+        const part = Math.min(amount, ACK_CHUNK);
+        s.unacknowledged -= part;
+        bridge.acknowledge(s.ackId, part);
+    }
+}
+// Output already waiting when the window is hidden would otherwise hold the terminal paused.
+document.addEventListener('visibilitychange', () => { for (const s of sessions.values()) if (s.unacknowledged) acknowledgeOutput(s); });
 if (bridge) {
     bridge.onEvent(event => {
         if (bridge.remote && event.type === 'remote-workspace' && ready) remoteWorkspace(event.workspace, event.titleEpoch);
@@ -1783,7 +1916,7 @@ if (bridge) {
                 s.startupCursorQueries += [...output.matchAll(/\x1b\[6n/g)].length;
                 s.startupQueryTail = output.slice(-3);
             }
-            if (s?.terminal) s.terminal.write(event.data, () => bridge.acknowledge(event.id, event.data.length));
+            if (s?.terminal) writeOutput(s, event.id, event.data);
             else bridge.acknowledge(event.id, event.data.length);
         }
         if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
@@ -1792,7 +1925,7 @@ if (bridge) {
         if (event.type === 'update') showUpdate(event);
         if (event.type === 'launch') requestTerminal(event);
         if (event.type === 'closing') run(async () => {
-            if (event.running && !await confirmAction('Close Terminal Canvas?', `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
+            if (event.running && !await confirmAction('Close Terminal Canvas?', keepEnabled ? `Kept terminals keep running and attach again when you reopen; others stop. Your layout will be saved.` : `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
             clearTimeout(autosaveTimer); await invoke('close', workspace);
         });
     });
@@ -1830,6 +1963,9 @@ if (bridge) {
             }
         }
         if (initial.warning) toast(initial.warning);
+        tmuxPending = !!initial.tmuxSetup;
+        if (!bridge.remote) attachKept(initial.keepRunning);
         if (initial.agentSetup) await openAgentSetup({ offer: true });
+        offerTmuxSetup();
     });
 } else toast('Desktop bridge unavailable. Run cargo run -p terminal-canvas.');

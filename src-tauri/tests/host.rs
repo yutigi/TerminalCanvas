@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use tc_core::workspace::{create_card, create_workspace};
 use tc_pty::manager::{Backend, Config, EventSink, ExitStatus, Process, SessionEvent, SessionKey, SpawnRequest};
-use terminal_canvas::host::{AgentHome, BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform};
+use tc_tmux::install::{Installed, Plan};
+use terminal_canvas::host::{
+    AgentHome, BoxFuture, FileKind, HELPER_MISSING, Host, NO_INTEGRATION, Paths, Platform, TmuxProbe, TmuxState,
+};
 
 #[derive(Default)]
 struct FakePlatform {
@@ -134,13 +137,17 @@ impl Harness {
     /// With `hook`, the host is told `tc-hook` is in the test folder; nothing runs it unless a
     /// terminal starts.
     fn with_hook(hook: bool) -> Self {
-        Self::build(hook, false)
+        Self::build(hook, false, None)
     }
     /// With an agent home in the test folder that offers the setup on the first launch.
     fn with_agents() -> Self {
-        Self::build(false, true)
+        Self::build(false, true, None)
     }
-    fn build(hook: bool, agents: bool) -> Self {
+    /// With a tmux setup that sees what `probe` reports instead of this machine.
+    fn with_tmux(probe: TmuxProbe) -> Self {
+        Self::build(false, false, Some(probe))
+    }
+    fn build(hook: bool, agents: bool, tmux: Option<TmuxProbe>) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let folder = std::env::temp_dir().join(format!(
             "tc-host-{}-{}",
@@ -162,6 +169,7 @@ impl Harness {
                     claude_config: None,
                     first_launch: true,
                 }),
+                tmux,
             },
             platform.clone(),
             Box::new(backend),
@@ -1127,4 +1135,165 @@ async fn the_agent_setup_is_offered_once_and_installs_the_skill_where_agents_loo
         None
     );
     assert!(!h.folder.join("home").exists());
+}
+
+fn tmux_missing() -> TmuxState {
+    TmuxState {
+        installed: None,
+        plan: Some(Plan {
+            manager: "Homebrew",
+            command: "'/opt/homebrew/bin/brew' install tmux".into(),
+        }),
+    }
+}
+fn tmux_too_old() -> TmuxState {
+    TmuxState {
+        installed: Some(Installed {
+            binary: PathBuf::from("/usr/bin/tmux"),
+            version: Some(tc_tmux::Version { major: 3, minor: 2 }),
+        }),
+        ..tmux_missing()
+    }
+}
+fn tmux_ready() -> TmuxState {
+    TmuxState {
+        installed: Some(Installed {
+            binary: PathBuf::from("/usr/bin/tmux"),
+            version: Some(tc_tmux::Version { major: 3, minor: 8 }),
+        }),
+        ..tmux_missing()
+    }
+}
+fn tmux_uninstallable() -> TmuxState {
+    TmuxState::default()
+}
+
+#[tokio::test]
+async fn the_tmux_setup_reports_tmux_and_is_offered_until_answered() {
+    // Test builds have no tmux setup: nothing is detected, offered, or installed.
+    let h = Harness::new();
+    assert_eq!(h.host.command("initialize", None).await.unwrap().get("tmuxSetup"), None);
+    assert_eq!(
+        h.host.command("tmux-setup", Some(&json!({}))).await.unwrap_err(),
+        "The tmux setup is unavailable in this build."
+    );
+
+    let h = Harness::with_tmux(tmux_missing);
+    let marker = h.folder.join("tmux-setup.json");
+    assert_eq!(h.host.command("initialize", None).await.unwrap()["tmuxSetup"], true);
+    let status = h.host.command("tmux-setup", Some(&json!({}))).await.unwrap();
+    assert_eq!(
+        status,
+        json!({
+            "installed": false, "path": null, "version": null, "minimum": "3.3",
+            "manager": "Homebrew", "command": "'/opt/homebrew/bin/brew' install tmux",
+        })
+    );
+    // Looking changes nothing, so the offer stands.
+    assert!(!marker.exists());
+    assert_eq!(h.host.command("initialize", None).await.unwrap()["tmuxSetup"], true);
+    // Starting the install answers the offer; the command itself runs in a terminal.
+    let install = h
+        .host
+        .command("tmux-setup", Some(&json!({ "install": true })))
+        .await
+        .unwrap();
+    assert_eq!(install, status);
+    assert!(marker.exists());
+    assert_eq!(h.host.command("initialize", None).await.unwrap().get("tmuxSetup"), None);
+
+    // Declining is remembered too.
+    let h = Harness::with_tmux(tmux_too_old);
+    assert_eq!(h.host.command("initialize", None).await.unwrap()["tmuxSetup"], true);
+    let status = h
+        .host
+        .command("tmux-setup", Some(&json!({ "dismiss": true })))
+        .await
+        .unwrap();
+    assert_eq!(
+        (&status["installed"], &status["version"]),
+        (&json!(false), &json!("3.2"))
+    );
+    assert_eq!(h.host.command("initialize", None).await.unwrap().get("tmuxSetup"), None);
+
+    // A usable tmux is not offered, but the setup still reports it.
+    let h = Harness::with_tmux(tmux_ready);
+    assert_eq!(h.host.command("initialize", None).await.unwrap().get("tmuxSetup"), None);
+    let status = h.host.command("tmux-setup", Some(&json!({}))).await.unwrap();
+    assert_eq!(
+        (&status["installed"], &status["path"], &status["version"]),
+        (&json!(true), &json!("/usr/bin/tmux"), &json!("3.8"))
+    );
+
+    // Without a package manager there is nothing to offer or run.
+    let h = Harness::with_tmux(tmux_uninstallable);
+    assert_eq!(h.host.command("initialize", None).await.unwrap().get("tmuxSetup"), None);
+    assert_eq!(
+        h.host
+            .command("tmux-setup", Some(&json!({ "install": true })))
+            .await
+            .unwrap_err(),
+        "No supported package manager was found to install tmux."
+    );
+    assert!(!h.folder.join("tmux-setup.json").exists());
+}
+
+#[test]
+fn keeping_terminals_running_is_off_until_saved_and_keeps_other_settings() {
+    use tc_core::Platform as Os;
+    use tc_pty::manager::Keeper;
+    use terminal_canvas::host::KeepRunning;
+    let folder = std::env::temp_dir().join(format!("tc-settings-{}", uuid::Uuid::new_v4()));
+    let file = folder.join("settings.json");
+    assert_eq!(KeepRunning::read(&file), KeepRunning::default());
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(&file, r#"{"tmuxProgram":"/opt/tmux","other":1}"#).unwrap();
+    let mut setting = KeepRunning::read(&file);
+    assert!(!setting.enabled);
+    assert_eq!(setting.tmux_program, Some(PathBuf::from("/opt/tmux")));
+    setting.enabled = true;
+    setting.write(&file).unwrap();
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        json!({ "tmuxProgram": "/opt/tmux", "other": 1, "keepRunning": true })
+    );
+    assert!(KeepRunning::read(&file).enabled);
+    // An unreadable file turns it off rather than failing startup.
+    std::fs::write(&file, "not json").unwrap();
+    assert_eq!(KeepRunning::read(&file), KeepRunning::default());
+
+    // Windows keeps terminals in the app's helper, which needs tc-hook; elsewhere tmux must be found.
+    let mut paths = Paths {
+        data: folder.clone(),
+        hook: Some(folder.join("tc-hook.exe")),
+        agents: None,
+        tmux: None,
+    };
+    let env = Default::default();
+    assert!(matches!(
+        setting.keeper(&paths, &env, Os::Windows),
+        Ok(Keeper::Daemon(_))
+    ));
+    paths.hook = None;
+    assert_eq!(
+        setting.keeper(&paths, &env, Os::Windows).err(),
+        Some(terminal_canvas::host::KEEPER_MISSING)
+    );
+    let missing = KeepRunning {
+        enabled: true,
+        tmux_program: Some(folder.join("missing")),
+    };
+    assert_eq!(
+        missing.keeper(&paths, &env, Os::Linux).err(),
+        Some(terminal_canvas::host::TMUX_MISSING)
+    );
+    let tmux = folder.join("tmux");
+    std::fs::write(&tmux, b"").unwrap();
+    let found = KeepRunning {
+        enabled: true,
+        tmux_program: Some(tmux.clone()),
+    };
+    assert!(matches!(found.keeper(&paths, &env, Os::MacOs), Ok(Keeper::Tmux(found)) if found.program == tmux));
+    std::fs::remove_dir_all(folder).unwrap();
 }

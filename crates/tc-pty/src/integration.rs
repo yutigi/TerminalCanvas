@@ -7,6 +7,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use serde_json::{Value, json};
 use tc_core::Platform;
 
 use crate::shell::{bash_source, claude_settings, powershell_args, powershell_source, sh_quote};
@@ -60,6 +61,46 @@ impl Integration {
     pub fn with_launch_dir(mut self, folder: PathBuf) -> Self {
         self.launch_dir = Some(folder);
         self
+    }
+
+    /// Also removes `files` on [`Self::cleanup`], for an integration restored with [`Self::restore`].
+    #[must_use]
+    pub fn with_files(mut self, files: Vec<PathBuf>) -> Self {
+        self.files = files;
+        self
+    }
+
+    /// The files [`Self::cleanup`] removes besides the session file.
+    pub fn files(&self) -> &[PathBuf] {
+        &self.files
+    }
+
+    /// What a terminal that outlives the app keeps of its integration, so a later attach can still
+    /// read its AI session, take its launch requests, and remove its files (see [`Self::restore`]).
+    pub fn saved(&self) -> Value {
+        let path = |path: &Path| path.to_string_lossy().into_owned();
+        json!({
+            "session": path(&self.session_file),
+            "launch": self.launch_dir.as_deref().map(path),
+            "files": self.files.iter().map(|file| path(file)).collect::<Vec<_>>(),
+        })
+    }
+
+    /// An integration from [`Self::saved`]. The shell already runs, so it has no arguments,
+    /// command, or variables.
+    pub fn restore(saved: &Value) -> Option<Integration> {
+        let session = PathBuf::from(saved.get("session")?.as_str()?);
+        let files = saved
+            .get("files")?
+            .as_array()?
+            .iter()
+            .map(|file| file.as_str().map(PathBuf::from))
+            .collect::<Option<Vec<_>>>()?;
+        let integration = Integration::new(None, None, session, Vec::new()).with_files(files);
+        Some(match saved.get("launch").and_then(Value::as_str) {
+            Some(launch) => integration.with_launch_dir(PathBuf::from(launch)),
+            None => integration,
+        })
     }
 
     /// Removes the integration's files and any requests it never handled. Missing files are fine.
@@ -237,5 +278,21 @@ mod tests {
         write_all_private(&[(&settings, b"{}")]).unwrap();
         assert_eq!(fs::read_to_string(&settings).unwrap(), "{}");
         fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn a_saved_integration_restores_its_files_for_a_later_attach() {
+        let integration = Integration::new(None, None, PathBuf::from("C:\\tc\\a.json"), Vec::new())
+            .with_files(vec![
+                PathBuf::from("C:\\tc\\a.settings.json"),
+                PathBuf::from("C:\\tc\\a.ps1"),
+            ])
+            .with_launch_dir(PathBuf::from("C:\\Temp\\tc-launch-1"));
+        let restored = Integration::restore(&integration.saved()).unwrap();
+        assert_eq!(restored.session_file, integration.session_file);
+        assert_eq!(restored.launch_dir, integration.launch_dir);
+        assert_eq!(restored.files(), integration.files());
+        assert!(Integration::restore(&json!({ "session": 1 })).is_none());
+        assert!(Integration::restore(&Value::Null).is_none());
     }
 }

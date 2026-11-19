@@ -6,6 +6,8 @@
 //! tc-hook emit launch <provider> <session>   report an AI CLI launch to the host (OSC 633)
 //! tc-hook emit end <exit code>               report that it ended
 //! tc-hook new-terminal [options]             ask the app for a new terminal (see `new_terminal`)
+//! tc-hook terminal-daemon <state file>       keep terminals running after the app quits; the app
+//!                                            starts it (see `tc_pty::daemon`)
 //! ```
 //!
 //! CLI hook input can contain private fields; only recovery metadata is kept. A hook never blocks
@@ -37,13 +39,20 @@ fn main() -> ExitCode {
     match arg(0) {
         Some("emit") => emit(arg(1), arg(2), arg(3)),
         Some("new-terminal") => new_terminal::run(&args[1..]),
+        Some(tc_pty::daemon::COMMAND) if args.len() == 2 => match tc_pty::daemon::serve(Path::new(&args[1])) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("tc-hook: the terminal helper failed: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Some("record") if arg(1).is_some() => {
             let _ = record(arg(1).unwrap_or_default());
             ExitCode::SUCCESS
         }
         _ => {
             eprintln!(
-                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options]"
+                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | terminal-daemon <state file>"
             );
             ExitCode::from(2)
         }
@@ -79,15 +88,34 @@ fn emit(kind: Option<&str>, first: Option<&str>, second: Option<&str>) -> ExitCo
         event.insert("token".into(), token.into());
     }
     let json = Value::Object(event).to_string();
-    let report = format!(
-        "\x1b]633;TC;{}\x07",
-        base64::engine::general_purpose::STANDARD.encode(json)
-    );
+    let encoded = base64::engine::general_purpose::STANDARD.encode(json);
+    tmux_report(kind == Some("launch"), &encoded);
+    let report = format!("\x1b]633;TC;{encoded}\x07");
     let mut stdout = io::stdout().lock();
     match stdout.write_all(report.as_bytes()).and_then(|()| stdout.flush()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) => ExitCode::FAILURE,
     }
+}
+
+/// tmux does not pass OSC 633 on, so in a Terminal Canvas tmux pane the report also goes to a pane
+/// option, which the host polls (see `tc_pty::tmux`). Failures are ignored, like a lost OSC.
+fn tmux_report(launch: bool, encoded: &str) {
+    let (Some(tmux), Some(pane)) = (env::var_os("TC_TMUX"), env::var_os("TMUX_PANE")) else {
+        return;
+    };
+    let option = if launch { "@tc_launch" } else { "@tc_end" };
+    let sequence = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let _ = std::process::Command::new(tmux)
+        .args(["set-option", "-p", "-t"])
+        .arg(pane)
+        .args([option, &format!("{sequence};{encoded}")])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 /// `Number(text)` as JSON: whole numbers as integers, and `NaN` or infinities as `null`.

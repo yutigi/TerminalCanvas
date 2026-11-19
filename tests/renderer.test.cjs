@@ -208,6 +208,51 @@ test('hidden canvases keep complete writes, acknowledgments, cwd and session met
     await bridge.invoke('noop');
 });
 
+test('a hidden window acknowledges output on arrival so throttled parsing cannot pause the terminal', async () => {
+    const board = createWorkspace(), card = createCard(); board.cards.push(card);
+    const { context, onEvent, document, documentListeners } = await boot(board, { terminals: true });
+    context.id = card.id;
+    vm.runInContext(`
+        globalThis.parsed = []; globalThis.acks = [];
+        // Writes wait for xterm's (throttled) parse timer until the test runs it.
+        sessions.get(id).terminal.write = (data, done) => parsed.push(done);
+        bridge.acknowledge = (terminal, amount) => acks.push({ terminal, amount });
+    `, context);
+    const total = () => json(context, 'acks.reduce((sum, ack) => sum + ack.amount, 0)');
+    const parse = () => vm.runInContext('parsed.shift()()', context);
+
+    onEvent({ type: 'data', id: card.id, data: 'visible' });
+    assert.equal(total(), 0, 'a visible window acknowledges only parsed output');
+    parse();
+    assert.deepEqual(json(context, 'acks'), [{ terminal: card.id, amount: 7 }]);
+
+    onEvent({ type: 'data', id: card.id, data: 'waiting 日本語' });
+    document.hidden = true; documentListeners.get('visibilitychange')();
+    assert.equal(total(), 7 + 11, 'output already waiting is released when the window hides');
+    onEvent({ type: 'data', id: card.id, data: '😀 while hidden' });
+    assert.equal(total(), 7 + 11 + 15, 'hidden output is acknowledged on arrival');
+    parse(); parse();
+    assert.equal(total(), 7 + 11 + 15, 'parsing later never acknowledges twice');
+
+    const chunk = 'x'.repeat(1_000_000);
+    for (let index = 0; index < 5; index++) onEvent({ type: 'data', id: card.id, data: chunk });
+    assert.equal(total(), 7 + 11 + 15 + 4_000_000, 'the unparsed backlog is bounded');
+    assert.ok(json(context, 'acks.every(ack => ack.amount <= 1024 * 1024)'), 'each acknowledgment stays within the host limit');
+    parse();
+    assert.equal(total(), 33 + 5_000_000, 'parsing releases what the bound held back');
+    onEvent({ type: 'data', id: card.id, data: 'held' });
+    assert.equal(total(), 33 + 5_000_000, 'at the bound, output waits for parsing');
+    parse();
+    assert.equal(total(), 33 + 5_000_004);
+
+    document.hidden = false; documentListeners.get('visibilitychange')();
+    onEvent({ type: 'data', id: card.id, data: 'visible again' });
+    assert.equal(total(), 33 + 5_000_004, 'a shown window waits for parsing again');
+    while (json(context, 'parsed.length')) parse();
+    assert.equal(total(), 33 + 5_000_004 + 13);
+    assert.equal(json(context, 'sessions.get(id).unacknowledged'), 0);
+});
+
 test('canvas switches restore selection, fullscreen focus, and hide SVG connectors as well as cards', async () => {
     const board = twoCanvases();
     board.items = [{ id: 'connector', type: 'line', start: { id: board.cards[0].id }, end: { x: 12, y: 34 }, arrow: true }];
@@ -2402,6 +2447,38 @@ test('startup cursor replies reach the PTY before the start response without acc
     assert.deepEqual(sent.at(-1), { id: card.id, data: 'ready typing\r' });
 });
 
+test('kept terminals hear focus out only while the app itself still has focus', async () => {
+    const board = createWorkspace(), kept = createCard(), plain = createCard(); board.cards.push(kept, plain);
+    const { context, bridge, document } = await boot(board, { terminals: true,
+        respond: (action, payload) => action === 'start' ? { cwd: payload.card.cwd, kept: payload.card.id === kept.id } : undefined });
+    const timers = [];
+    context.setTimeout = callback => timers.push(callback);
+    let appFocused = true; document.hasFocus = () => appFocused;
+    const terminal = id => vm.runInContext(`sessions.get(${JSON.stringify(id)}).terminal`, context);
+    for (const card of [kept, plain]) { terminal(card.id).write = (_data, done) => done(); context.card = card; await vm.runInContext('start(anyCard(card.id))', context); }
+    const sent = []; bridge.input = (id, data) => sent.push({ id, data });
+    const runTimers = () => { while (timers.length) timers.shift()(); };
+
+    appFocused = false; // Another app took focus; the browser blurs the terminal and reports focus out.
+    terminal(kept.id).dataHandler('\x1b[O');
+    terminal(plain.id).dataHandler('\x1b[O');
+    runTimers();
+    assert.deepEqual(sent, [{ id: plain.id, data: '\x1b[O' }], 'only the plain terminal is told the app lost focus');
+
+    appFocused = true; sent.length = 0; // Back in the app; focus moved to another card.
+    terminal(kept.id).dataHandler('\x1b[I');
+    terminal(kept.id).dataHandler('\x1b[O');
+    assert.deepEqual(sent, [{ id: kept.id, data: '\x1b[I' }], 'focus out waits a task for the window to settle');
+    runTimers();
+    assert.deepEqual(sent.at(-1), { id: kept.id, data: '\x1b[O' }, 'moving within the app still reports focus out');
+
+    sent.length = 0;
+    terminal(kept.id).dataHandler('\x1b[O');
+    vm.runInContext(`setStatus(anyCard(${JSON.stringify(kept.id)}), 'exited')`, context);
+    runTimers();
+    assert.deepEqual(sent, [], 'a deferred report never reaches a terminal that has ended');
+});
+
 test('terminal hyperlinks open only on a trusted primary click, without confirmation', async () => {
     let options;
     const terminal = {
@@ -3661,6 +3738,94 @@ test('Settings › Set up AI agents installs the skill where the user chose and 
 });
 
 
+const TMUX_MISSING = {
+    installed: false, path: null, version: null, minimum: '3.3', manager: 'winget and MSYS2',
+    command: "winget install --id MSYS2.MSYS2 -e; & 'C:\\msys64\\usr\\bin\\bash.exe' -lc 'pacman -Sy --noconfirm --needed tmux util-linux'",
+};
+const tmuxPayloads = calls => structuredClone(calls.filter(c => c.action === 'tmux-setup').map(c => c.payload));
+
+test('the first launch offers tmux after the agent setup closes, once, and declining it is remembered', async () => {
+    const respond = action => action === 'initialize'
+        ? { workspace: createWorkspace(), profiles: PROFILES, home: '', platform: 'win32', agentSetup: true, tmuxSetup: true }
+        : action === 'agent-setup' ? { targets: structuredClone(AGENT_TARGETS) }
+            : action === 'tmux-setup' ? structuredClone(TMUX_MISSING) : null;
+    const { calls, elements } = await boot(createWorkspace(), { respond });
+    await flush();
+    assert.equal(elements.get('#agent-dialog').open, true);
+    assert.equal(!!elements.get('#tmux-dialog').open, false, 'one dialog at a time');
+    assert.deepEqual(tmuxPayloads(calls), []);
+    elements.get('#agent-dialog').close(); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    assert.equal(elements.get('#tmux-status').textContent, 'tmux is not installed.');
+    assert.equal(elements.get('#tmux-command').textContent, TMUX_MISSING.command);
+    assert.equal(elements.get('#tmux-plan').hidden, false);
+    assert.equal(elements.get('#tmux-cancel').textContent, 'Not now');
+    elements.get('#tmux-dialog').close(); await flush();
+    assert.deepEqual(tmuxPayloads(calls), [{}, { dismiss: true }]);
+    // Closing the agent setup again (from Settings) does not offer tmux again.
+    elements.get('#agent-setup').onclick(); await flush();
+    elements.get('#agent-dialog').close(); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, false);
+    // Reopened from Settings, closing it records nothing more.
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    elements.get('#tmux-dialog').close(); await flush();
+    assert.deepEqual(tmuxPayloads(calls), [{}, { dismiss: true }, {}]);
+});
+
+test('without the agent offer, the first launch offers tmux right away', async () => {
+    const respond = action => action === 'initialize'
+        ? { workspace: createWorkspace(), profiles: PROFILES, home: '', platform: 'darwin', tmuxSetup: true }
+        : action === 'tmux-setup' ? structuredClone(TMUX_MISSING) : null;
+    const { elements } = await boot(createWorkspace(), { respond });
+    await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+});
+
+test('Settings › Install tmux runs the install in its own terminal and reports failures in the dialog', async () => {
+    let status = { ...TMUX_MISSING, path: 'C:\\msys64\\usr\\bin\\tmux.exe', version: '3.2' }, fail = true;
+    const respond = (action, payload) => action === 'create-card' ? { card: createCard(payload) }
+        : action !== 'tmux-setup' ? null
+            : payload.install && fail ? { error: 'Could not save the tmux setup: Access is denied.' } : structuredClone(status);
+    const { context, calls, elements } = await boot(createWorkspace(), { respond, terminals: true });
+    assert.deepEqual(calls.map(c => c.action), ['initialize'], 'nothing is offered after the first launch');
+    elements.get('#settings').onclick();
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.equal(elements.get('#settings-menu').hidden, true, 'choosing an item closes the menu');
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    assert.equal(elements.get('#tmux-status').textContent, 'tmux 3.2 is at C:\\msys64\\usr\\bin\\tmux.exe, but 3.3 or newer is needed.');
+    assert.equal(elements.get('#tmux-install').lastChild.textContent, 'Update tmux');
+    elements.get('#tmux-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, true);
+    assert.equal(elements.get('#tmux-error').hidden, false);
+    assert.match(elements.get('#tmux-error').textContent, /Access is denied/);
+    assert.equal(json(context, 'workspace.cards.length'), 0, 'a failed request starts nothing');
+    fail = false;
+    elements.get('#tmux-form').onsubmit({ preventDefault() {} }); await flush();
+    assert.equal(elements.get('#tmux-dialog').open, false);
+    const install = json(context, 'workspace.cards[0]');
+    assert.deepEqual([install.title, install.command, install.profile], ['Install tmux', TMUX_MISSING.command, 'shell']);
+    assert.equal(calls.filter(c => c.action === 'start').at(-1).payload.card.id, install.id);
+    assert.match(elements.get('#toast').textContent, /installing in the new terminal/);
+    assert.deepEqual(tmuxPayloads(calls), [{}, { install: true }, { install: true }]);
+
+    // Once tmux is ready, the dialog only reports it.
+    status = { ...TMUX_MISSING, installed: true, path: '/opt/homebrew/bin/tmux', version: '3.8' };
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.equal(elements.get('#tmux-status').textContent, 'tmux 3.8 is installed: /opt/homebrew/bin/tmux');
+    assert.equal(elements.get('#tmux-status').classList.contains('ready'), true);
+    assert.deepEqual([elements.get('#tmux-plan').hidden, elements.get('#tmux-install').hidden], [true, true]);
+    assert.equal(elements.get('#tmux-cancel').textContent, 'Close');
+    elements.get('#tmux-dialog').close();
+
+    // Without a package manager it says what to do instead.
+    status = { ...TMUX_MISSING, manager: null, command: null };
+    elements.get('#tmux-setup').onclick(); await flush();
+    assert.match(elements.get('#tmux-status').textContent, /^tmux is not installed\. No supported package manager was found\. Install tmux 3\.3 or newer yourself/);
+    assert.equal(elements.get('#tmux-install').hidden, true);
+});
+
+
 test('automatic titles update hidden canvases and persist without switching or starting terminals', async () => {
     const board = twoCanvases();
     board.cards.forEach(card => { card.titleMode = 'automatic'; });
@@ -3703,4 +3868,32 @@ test('pending title renames finish on their owning canvas after a canvas switch'
     assert.equal(vm.runInContext(`anyCard('${id}').title`, context), 'Chosen name');
     assert.equal(vm.runInContext(`anyCard('${id}').titleRevision`, context), 2);
     assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+});
+
+test('the footer Keep running button and the Settings item switch together and show the host state', async () => {
+    let enabled = false;
+    const respond = (action, payload) => {
+        if (action !== 'keep-running') return null;
+        enabled = payload.enabled;
+        return { enabled, via: enabled ? 'helper' : null, available: true, sessions: [] };
+    };
+    const { elements, calls } = await boot(createWorkspace(), { respond });
+    const button = elements.get('#keep-toggle');
+    const shown = () => [button.attributes.get('aria-pressed'), elements.get('#keep-toggle-state').textContent,
+        elements.get('#keep-setting').attributes.get('aria-checked')];
+    button.onclick(); await flush();
+    assert.deepEqual(shown(), ['true', 'On', 'true']);
+    elements.get('#keep-setting').onclick(); await flush();
+    assert.deepEqual(shown(), ['false', 'Off', 'false']);
+    assert.deepEqual(structuredClone(calls.filter(call => call.action === 'keep-running').map(call => call.payload)), [{ enabled: true }, { enabled: false }]);
+    assert.equal(button.disabled, false);
+});
+
+test('a refused Keep running switch keeps the shown state and reports why', async () => {
+    const respond = action => action === 'keep-running' ? { error: 'Keeping terminals running needs tmux, which was not found.' } : null;
+    const { elements } = await boot(createWorkspace(), { respond });
+    elements.get('#keep-toggle').onclick(); await flush();
+    assert.equal(elements.get('#keep-toggle').attributes.get('aria-pressed'), 'false');
+    assert.equal(elements.get('#keep-toggle').disabled, false);
+    assert.match(elements.get('#toast').textContent, /needs tmux, which was not found/);
 });

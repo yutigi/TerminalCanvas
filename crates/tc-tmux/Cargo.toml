@@ -1,0 +1,10 @@
+[package]
+name = "tc-tmux"
+description = "UI-independent tmux control-mode protocol spike."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
