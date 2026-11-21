@@ -179,6 +179,18 @@ pub enum TerminalEvent {
         id: String,
         message: String,
     },
+    /// A lifecycle report from this terminal's private inbox, answered by the host actor.
+    Hook {
+        id: String,
+        generation: u64,
+        inbox: std::path::PathBuf,
+        request_id: String,
+        report: tc_core::pointers::Report,
+    },
+    CommandExit {
+        id: String,
+        code: i64,
+    },
     /// A program in terminal `id` asked for a new terminal; the UI creates it next to `id`. The
     /// host answers request `request_id` in `inbox` once the UI reports the outcome.
     Launch {
@@ -193,6 +205,9 @@ impl Serialize for TerminalEvent {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         match self {
+            TerminalEvent::Hook { .. } | TerminalEvent::CommandExit { .. } => {
+                map.serialize_entry("type", "internal-hook")?;
+            }
             TerminalEvent::Data { id, data } => {
                 map.serialize_entry("type", "data")?;
                 map.serialize_entry("id", id)?;
@@ -336,6 +351,15 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerReadiness {
+    Closed,
+    Unknown,
+    Typing,
+    Idle,
+    Busy,
+}
+
 struct Session {
     name_homes: [std::path::PathBuf; 2],
     name_session: Option<tc_core::session::SessionMetadata>,
@@ -347,6 +371,8 @@ struct Session {
     cwd: Option<Option<String>>,
     /// Whether the shell is idle at a prompt (Windows integration).
     ready: bool,
+    pointer_state: PointerReadiness,
+    pointer_dirty: bool,
     /// Output sent to the UI and not yet acknowledged, in UTF-16 units.
     pending: usize,
     paused: bool,
@@ -811,6 +837,8 @@ impl TerminalManager {
             integration,
             cwd: None,
             ready: false,
+            pointer_state: PointerReadiness::Unknown,
+            pointer_dirty: false,
             pending: 0,
             paused: false,
             parser: MetadataParser::new(cwd.clone(), platform, false),
@@ -1028,6 +1056,8 @@ impl TerminalManager {
             integration,
             cwd: None,
             ready: false,
+            pointer_state: PointerReadiness::Unknown,
+            pointer_dirty: false,
             pending: 0,
             paused: false,
             parser: MetadataParser::new(cwd.clone(), platform, false),
@@ -1111,6 +1141,9 @@ impl TerminalManager {
                 Report::Ready(ready) => {
                     if let Some(session) = self.current(key) {
                         session.ready = ready;
+                        if ready {
+                            session.pointer_dirty = false;
+                        }
                     }
                 }
             }
@@ -1129,6 +1162,8 @@ impl TerminalManager {
                 if let (Some(session), Some(provider)) = (self.current(key), provider) {
                     session.name_session = None;
                     session.launch = Some(Launch { provider, token });
+                    session.pointer_state = PointerReadiness::Unknown;
+                    session.pointer_dirty = false;
                 }
             }
             MetadataEvent::Warning(message) => self.emit(TerminalEvent::Error {
@@ -1144,6 +1179,15 @@ impl TerminalManager {
                     return;
                 }
                 self.poll_metadata(&key.id);
+                self.poll_pointer_requests(&key.id);
+                if let Some(session) = self.current(key) {
+                    session.launch = None;
+                    session.pointer_state = PointerReadiness::Unknown;
+                }
+                self.emit(TerminalEvent::CommandExit {
+                    id: key.id.clone(),
+                    code: event.get("exitCode").and_then(Value::as_i64).unwrap_or(1),
+                });
                 if truthy(event.get("exitCode")) {
                     self.emit(TerminalEvent::Error {
                         id: key.id.clone(),
@@ -1188,6 +1232,7 @@ impl TerminalManager {
         self.poll_metadata(&key.id);
         // A request made just before the shell ended still opens its terminal.
         self.poll_launches(&key.id);
+        self.poll_pointer_requests(&key.id);
         if let Some(session) = self.sessions.remove(&key.id) {
             self.release(&key.id, session, false);
         }
@@ -1257,6 +1302,7 @@ impl TerminalManager {
         for id in ids {
             self.poll_metadata(&id);
             self.poll_launches(&id);
+            self.poll_pointer_requests(&id);
         }
     }
 
@@ -1324,6 +1370,163 @@ impl TerminalManager {
                 }
             };
             self.emit(event);
+        }
+    }
+
+    fn poll_pointer_requests(&mut self, id: &str) {
+        let Some(session) = self.sessions.get(id) else {
+            return;
+        };
+        let generation = session.generation;
+        let Some(inbox) = session
+            .integration
+            .as_ref()
+            .and_then(|integration| integration.launch_dir.clone())
+        else {
+            return;
+        };
+        for (request_id, report) in tc_core::pointers::take(&inbox) {
+            if report.kind == "trigger" || self.pointer_report_current(id, generation, &report) {
+                self.emit(TerminalEvent::Hook {
+                    id: id.to_owned(),
+                    generation,
+                    inbox: inbox.clone(),
+                    request_id,
+                    report,
+                });
+            } else {
+                let _ = tc_core::pointers::answer(
+                    &inbox,
+                    &request_id,
+                    &serde_json::json!({"error":"Stale or unauthenticated lifecycle hook."}),
+                );
+            }
+        }
+    }
+
+    pub fn pointer_report_current(&self, id: &str, generation: u64, report: &tc_core::pointers::Report) -> bool {
+        self.sessions.get(id).is_some_and(|session| {
+            session.generation == generation
+                && (report.kind == "trigger"
+                    || session.launch.as_ref().is_some_and(|launch| {
+                        launch.provider.as_str() == report.provider
+                            && launch.token.matches(Some(&Value::String(report.token.clone())))
+                            && !report.session_id.is_empty()
+                            && self
+                                .metadata
+                                .get(id)
+                                .and_then(|metadata| metadata.session.as_ref())
+                                .is_none_or(|current| {
+                                    current.provider.as_str() == report.provider
+                                        && current.session_id.eq_ignore_ascii_case(&report.session_id)
+                                })
+                    }))
+        })
+    }
+
+    pub fn pointer_generation(&self, id: &str) -> Option<u64> {
+        self.sessions.get(id).map(|session| session.generation)
+    }
+
+    pub fn pointer_identity(&self, id: &str) -> Option<String> {
+        let session = self.sessions.get(id)?;
+        let LaunchToken::Text(token) = &session.launch.as_ref()?.token else {
+            return None;
+        };
+        let conversation = self
+            .metadata
+            .get(id)
+            .and_then(|metadata| metadata.session.as_ref())
+            .map_or("", |session| session.session_id.as_str());
+        Some(format!("{}:{token}:{conversation}", session.generation))
+    }
+
+    pub fn pointer_source_ready(&self, id: &str, event: tc_core::pointers::Event) -> Option<bool> {
+        use tc_core::pointers::Event;
+
+        let session = self.sessions.get(id)?;
+        Some(match event {
+            Event::Stop => {
+                session.launch.is_some()
+                    && matches!(session.pointer_state, PointerReadiness::Idle | PointerReadiness::Busy)
+            }
+            Event::Exit => true,
+            Event::Trigger => session
+                .integration
+                .as_ref()
+                .is_some_and(|integration| integration.launch_dir.is_some()),
+        })
+    }
+
+    pub fn pointer_readiness(&self, id: &str, prompt: bool) -> PointerReadiness {
+        let Some(session) = self.sessions.get(id) else {
+            return PointerReadiness::Closed;
+        };
+        if session.pointer_dirty {
+            return PointerReadiness::Typing;
+        }
+        if prompt {
+            if session.launch.is_some() {
+                session.pointer_state
+            } else {
+                PointerReadiness::Unknown
+            }
+        } else if session.launch.is_none() && session.ready {
+            PointerReadiness::Idle
+        } else {
+            PointerReadiness::Unknown
+        }
+    }
+
+    pub fn pointer_prompt_inbox(&self, id: &str) -> Option<&std::path::Path> {
+        let integration = self.sessions.get(id)?.integration.as_ref()?;
+        if integration.files().is_empty() {
+            return None;
+        }
+        integration.launch_dir.as_deref()
+    }
+
+    pub fn pointer_start_prompt(&mut self, target: &str, request: &str) -> Result<()> {
+        debug_assert!(tc_core::launch::is_request_id(request));
+        let command = if self.config.platform.is_windows() {
+            format!("& $env:TC_HOOK launch-prompt {request}\r")
+        } else {
+            format!("\"$TC_HOOK\" launch-prompt {request}\r")
+        };
+        self.write(target, &command)?;
+        self.pointer_delivered(target, false);
+        Ok(())
+    }
+
+    pub fn pointer_lifecycle(&mut self, id: &str, report: &tc_core::pointers::Report, continuing: bool) {
+        let Some(session) = self.sessions.get_mut(id) else {
+            return;
+        };
+        session.pointer_state = match report.kind.as_str() {
+            "busy" => PointerReadiness::Busy,
+            "stop" if continuing => PointerReadiness::Busy,
+            "stop" => PointerReadiness::Idle,
+            _ => PointerReadiness::Unknown,
+        };
+        if matches!(report.kind.as_str(), "busy" | "stop") {
+            session.pointer_dirty = false;
+        }
+    }
+
+    pub fn pointer_typed(&mut self, id: &str) {
+        if let Some(session) = self.sessions.get_mut(id) {
+            session.pointer_dirty = true;
+        }
+    }
+
+    pub fn pointer_delivered(&mut self, id: &str, prompt: bool) {
+        if let Some(session) = self.sessions.get_mut(id) {
+            session.pointer_state = if prompt {
+                PointerReadiness::Busy
+            } else {
+                PointerReadiness::Unknown
+            };
+            session.pointer_dirty = false;
         }
     }
 

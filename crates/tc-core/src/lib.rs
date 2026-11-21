@@ -46,6 +46,7 @@ pub mod launch;
 pub mod node;
 pub mod osc;
 pub mod plain;
+pub mod pointers;
 pub mod recovery;
 pub mod session;
 pub mod skills;

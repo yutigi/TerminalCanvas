@@ -112,6 +112,8 @@ function restoreBoard(snapshot) {
     const current = new Map(workspace.items.map(item => [item.id, item]));
     const next = savedItems.map(saved => {
         const item = current.get(saved.id);
+        // History changes layout, never restores deleted automation or changes its arming.
+        if (item?.hook) saved.hook = cloneData(item.hook); else delete saved.hook;
         if (!item) return saved;
         for (const key of Object.keys(item)) delete item[key];
         return Object.assign(item, saved);

@@ -162,6 +162,85 @@ The left canvas toolbar adds items around your terminals. Click to place an item
 
 Line styles and fonts other than the size choices are not configurable.
 
+### Hook pointers
+
+An arrow between two terminals can submit work when its source finishes. Select the arrow and
+choose **Add automation**. Pick **When** it should run and what to **Do**, then enter the prompt or
+command. **Save disabled** saves the rule for later. **Save & enable** lets it run when its trigger
+fires. **Check setup** reports what the host knows about both terminals without sending input.
+For a manual trigger, choose the source shell and use **Copy command**. Remove the automation
+before reconnecting its endpoints.
+
+Both terminals and the arrow must belong to the same canvas; cross-canvas connectors
+are rejected. Pointers keep running when their canvas is hidden. **Pause automations** applies to
+every canvas and stays available when only hidden canvases contain pointers. A new-terminal
+action reveals its source canvas before opening the new card. Configure and arm pointers
+in the desktop app; remote browsers can view their saved configuration.
+
+- **AI turn finished (Stop)** fires when Claude Code or Codex reports a completed turn through
+  its lifecycle hook. Interrupts and failures do not count as successful completion.
+- **AI CLI / terminal process exited** fires when an integrated Claude/Codex launch returns,
+  or when the terminal process exits. Choose any exit, success (0), or failure (nonzero).
+  An ordinary command returning to a shell prompt does not fire this event; scripts can use
+  an explicit trigger after their command instead.
+- **Explicit trigger** fires when a script or agent in the source terminal runs
+  `"$TC_HOOK" trigger reviewed` (Bash) or `& $env:TC_HOOK trigger reviewed` (PowerShell).
+  A configured name matches exactly; an empty name matches every trigger. The command returns
+  JSON counts and exits nonzero if a pointer fails. It works from captured agent shell tools,
+  and a user's own CLI hooks can call it. It cannot configure or arm pointers.
+
+Target actions:
+
+- **Run a shell command** submits one line and Enter to an idle integrated PowerShell or Bash
+  shell. Unknown readiness, Command Prompt, unsupported shells, busy shells, and stopped targets
+  fail without sending input.
+- **Send a prompt** offers **Use the running session**, **Start Claude Code**, and **Start Codex**.
+  Select a provider to start it with the prompt in the arrow's target terminal. Leave that terminal
+  at an idle integrated PowerShell or Bash prompt. Choose or enter a model ID, or leave **Model**
+  empty to use the CLI's configured default.
+  **Use the running session** requires a running Claude or Codex session with lifecycle hooks.
+  An idle session receives bracketed paste and Enter. A busy session queues the prompt until its
+  next Stop hook, which returns `decision: "block"` with the prompt as its continuation reason;
+  no keystrokes are sent into the busy agent. Outgoing Stop pointers wait until that continuation
+  finishes before firing the next step. Optional context appends the source session ID,
+  exit code when available, and up to 1,000 UTF-16 units of its last assistant message. Context
+  is plain prompt data; it is never interpolated into a shell command.
+- **Start a new terminal** uses the arrow target as a template for its profile, name, folder
+  and Claude account, and runs the configured command in a fresh shell beside the source.
+  The template can be stopped. The new terminal is independent; the template's session and
+  output are not copied. Removing or disarming the pointer before startup cancels the action.
+
+The per-terminal integration installs Claude `UserPromptSubmit`, `Stop`, `StopFailure` and
+`SessionEnd` hooks, and Codex `UserPromptSubmit`, `Stop`, `Interrupt` and `SessionEnd` hooks,
+alongside session capture. No global CLI settings are changed. On Codex, approve the new commands
+once in **/hooks**, then restart the CLI. Existing trust checks remain in force. Custom Claude
+`--settings`, disabled hooks, older CLIs, absolute executable paths and nested shells can prevent
+integration; unknown readiness fails rather than guessing from output.
+
+Each matching outgoing arrow fires independently. Incoming arrows also fire independently;
+there is no wait-for-all join. Directed cycles, including disarmed cycles, are rejected.
+Each pointer allows one firing per second and eight per minute; all pointers together allow
+60 per minute. Busy AI queues hold at most 16 prompts per target and 256 total. Messages expire
+after 60 seconds, and an agent receives at most eight consecutive hook continuations before a
+user prompt must reset the count. Closed, restarted or changed sessions cannot receive old work.
+Failures, interruptions and session end cancel that target's queue.
+
+Use **Disable** on the selected arrow or **Pause automations** above the canvas to cancel pending
+work immediately. Resuming does not replay canceled events. Editing/removing a pointer also cancels
+its queued work. Closing either terminal removes its pointers. The arrow shows whether the rule is
+disabled, paused, waiting, queued, delivered or failed. Delivery sends a pulse toward the target.
+Reduced motion uses a static highlight. Select the arrow to see more detail.
+
+Automation will not submit input after the host observes user typing at an idle target. Hooks
+cannot detect text already entered outside the app's input path; avoid editing a target while
+automation is armed. Bracketed paste and Enter constitute an automatic submission, so arm only
+commands and prompts you intend to run. Configuration persists as optional format-3 fields;
+old files remain valid. Runtime readiness, queues, source messages and rate counters are not
+saved. Copy/paste and undo never restore deleted automation or change its arming.
+
+Provider-specific native checks, all three CI platforms, ten consecutive Windows E2E passes,
+manual desktop checks, and clean-machine installer/portable checks remain release gates.
+
 On Windows, cards open the built-in Windows PowerShell (`powershell.exe`) by default. PowerShell cards start with a `RemoteSigned` execution policy for that shell only, so script shims such as `npm.ps1` run even when the system policy is `Restricted`. Policies set through Group Policy still take precedence, and no system setting is changed. Optional launch commands run inside PowerShell, except the plain shell launchers described below. Use `pwsh` as the launch command for PowerShell 7 if installed, or `cmd.exe` for Command Prompt. Other systems use the login shell selected by `SHELL`, falling back to Bash. macOS has been checked natively; Linux desktop behavior has not been validated.
 
 ### Terminals opened by agents

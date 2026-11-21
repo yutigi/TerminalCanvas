@@ -77,6 +77,7 @@ impl Platform for FakePlatform {
 struct FakeProcess {
     writes: Vec<String>,
     killed: bool,
+    env: std::collections::BTreeMap<String, String>,
 }
 struct ProcessHandle {
     state: Arc<Mutex<FakeProcess>>,
@@ -110,8 +111,11 @@ type Launch = (SessionKey, EventSink, Arc<Mutex<FakeProcess>>);
 #[derive(Default)]
 struct FakeBackend(Arc<Mutex<Vec<Launch>>>);
 impl Backend for FakeBackend {
-    fn spawn(&mut self, _: &SpawnRequest, key: SessionKey, events: EventSink) -> io::Result<Box<dyn Process>> {
-        let state = Arc::new(Mutex::new(FakeProcess::default()));
+    fn spawn(&mut self, request: &SpawnRequest, key: SessionKey, events: EventSink) -> io::Result<Box<dyn Process>> {
+        let state = Arc::new(Mutex::new(FakeProcess {
+            env: request.env.clone(),
+            ..FakeProcess::default()
+        }));
         self.0
             .lock()
             .unwrap()
@@ -1066,6 +1070,401 @@ async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_ap
             .await
             .is_err()
     );
+}
+
+const POINTER_TOKEN: &str = "abcdef01-1234-4321-9876-123456789abc";
+const POINTER_SESSION: &str = "12345678-1234-4321-9876-123456789abc";
+
+impl Harness {
+    async fn pointer_output(&self, index: usize, data: String) {
+        let (key, events, _) = self.launches.lock().unwrap()[index].clone();
+        events(key, SessionEvent::Output(data));
+        self.host.running().await;
+    }
+    async fn pointer_agent(&self, index: usize) {
+        use base64::Engine;
+        let report = json!({"type":"launch", "provider":"claude", "token":POINTER_TOKEN, "sessionId":POINTER_SESSION,"cwd":self.folder});
+        self.pointer_output(
+            index,
+            format!(
+                "\x1b]633;TC;{}\x07",
+                base64::engine::general_purpose::STANDARD.encode(report.to_string())
+            ),
+        )
+        .await;
+    }
+    async fn pointer_request(&self, index: usize, kind: &str) -> Value {
+        self.pointer_custom_request(index, kind, POINTER_TOKEN).await
+    }
+    async fn pointer_custom_request(&self, index: usize, kind: &str, token: &str) -> Value {
+        let (_, _, process) = self.launches.lock().unwrap()[index].clone();
+        let inbox = PathBuf::from(&process.lock().unwrap().env["TC_LAUNCH_DIR"]);
+        let report = tc_core::pointers::Report {
+            kind: kind.into(),
+            provider: "claude".into(),
+            token: token.into(),
+            session_id: POINTER_SESSION.into(),
+            message: "Finished safely".into(),
+            name: "done".into(),
+            exit_code: None,
+            stop_hook_active: false,
+            expires: tc_core::pointers::now_ms() + 3000,
+        };
+        let (id, _) = tc_core::pointers::write_request(&inbox, &report).unwrap();
+        let path = tc_core::pointers::answer_path(&inbox, &id);
+        for _ in 0..160 {
+            if let Ok(bytes) = std::fs::read(&path) {
+                return serde_json::from_slice(&bytes).unwrap();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("No answer for {kind}");
+    }
+    async fn pointer_config(&self, source: &Value, target: &Value, id: &str, action: &str, event: &str) {
+        let mut board = self.read_saved();
+        board["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":id,"type":"line","start":{"id":source["id"]},"end":{"id":target["id"]},"arrow":true}));
+        self.host.command("pointer-configure", Some(&json!({"workspace":board,"id":id,"hook":{"event":event,"action":action,"text":"echo delivered","armed":true}}))).await.unwrap();
+    }
+    fn pointer_writes(&self, index: usize) -> Vec<String> {
+        self.launches.lock().unwrap()[index].2.lock().unwrap().writes.clone()
+    }
+}
+
+#[tokio::test]
+async fn pointer_setup_checks_readiness_without_saving_or_sending_input() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let mut check = json!({"source":source["id"], "target":target["id"], "event":"trigger", "action":"shell"});
+    let saved = h.read_saved();
+    let before = (h.pointer_writes(0), h.pointer_writes(1));
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert_eq!(status["source"], "The terminal can accept manual triggers.");
+    assert_eq!(
+        status["target"],
+        "Wait for an idle prompt in an integrated PowerShell or Bash shell."
+    );
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert_eq!(status["target"], "The shell is idle and can run a command.");
+    check["event"] = json!("stop");
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert!(status["source"].as_str().unwrap().contains("/hooks"));
+    assert_eq!((h.pointer_writes(0), h.pointer_writes(1)), before);
+    assert_eq!(h.read_saved(), saved);
+    check["target"] = json!("missing");
+    assert!(h.host.command("pointer-check", Some(&check)).await.is_err());
+}
+
+#[tokio::test]
+async fn pointer_launches_the_selected_ai_in_only_the_idle_target() {
+    use tc_core::pointers::PromptLaunch;
+
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let id = target["id"].as_str().unwrap();
+    let mut board = h.read_saved();
+    board["items"] = json!([{"id":"review","type":"line","start":{"id":source["id"]},"end":{"id":id},"arrow":true}]);
+    let prompt = "--review\nUse \"quotes\", $variables and & as text.";
+    let rule = json!({"workspace":board,"id":"review","hook":{
+        "event":"trigger", "action":"prompt", "armed":true, "provider":"claude", "model":"sonnet[1m]", "text":prompt
+    }});
+    h.host.command("pointer-configure", Some(&rule)).await.unwrap();
+    let check = json!({"source":source["id"], "target":id, "event":"trigger", "action":"prompt", "provider":"claude"});
+    let before = h.pointer_writes(1).len();
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert!(status["target"].as_str().unwrap().contains("Leave an integrated"));
+    assert_eq!(h.pointer_writes(1).len(), before);
+
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert!(status["target"].as_str().unwrap().contains("can start the selected"));
+    assert_eq!(h.pointer_request(0, "trigger").await["failed"], 0);
+    let writes = h.pointer_writes(1);
+    assert_eq!(writes.len(), before + 1);
+    let request = writes
+        .last()
+        .unwrap()
+        .trim_end()
+        .split_once(" launch-prompt ")
+        .unwrap()
+        .1;
+    assert!(tc_core::launch::is_request_id(request));
+    let (_, _, process) = h.launches.lock().unwrap()[1].clone();
+    let inbox = PathBuf::from(&process.lock().unwrap().env["TC_LAUNCH_DIR"]);
+    let launch = PromptLaunch::take(&inbox, request).unwrap();
+    assert_eq!(launch.provider, tc_core::session::Provider::Claude);
+    assert_eq!(launch.model.as_deref(), Some("sonnet[1m]"));
+    assert_eq!(launch.text, prompt);
+    assert!(PromptLaunch::take(&inbox, request).is_err());
+
+    tokio::time::sleep(std::time::Duration::from_millis(1010)).await;
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    h.host.input(id, "my draft".into(), 0);
+    h.host.running().await;
+    let before = h.pointer_writes(1).len();
+    assert_eq!(h.pointer_request(0, "trigger").await["failed"], 1);
+    assert_eq!(h.pointer_writes(1).len(), before);
+}
+
+#[tokio::test]
+async fn pointers_deliver_to_ready_shells_and_never_submit_partial_user_input() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    h.pointer_config(&source, &target, "first", "shell", "trigger").await;
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    h.pointer_request(0, "trigger").await;
+    assert!(h.pointer_writes(1).contains(&"echo delivered\r".into()));
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    h.pointer_config(&source, &target, "typing", "shell", "trigger").await;
+    h.host.input(target["id"].as_str().unwrap(), "unfinished".into(), 0);
+    h.host.running().await;
+    let before = h.pointer_writes(1).len();
+    h.pointer_request(0, "trigger").await;
+    assert_eq!(h.pointer_writes(1).len(), before);
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| e["id"] == "typing" && e["message"].as_str().unwrap_or_default().contains("user input"))
+    );
+}
+
+#[tokio::test]
+async fn hidden_canvas_pointers_run_in_the_actor_and_remote_typing_blocks_delivery() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let foreground = h.start().await;
+    let mut board = h.read_saved();
+    board["canvases"] = json!([
+        {"id":"foreground", "name":"Foreground", "camera":board["camera"], "cardIds":[foreground["id"]], "itemIds":[]},
+        {"id":"background", "name":"Background", "camera":board["camera"], "cardIds":[source["id"],target["id"]], "itemIds":["hidden"]}
+    ]);
+    board["activeCanvas"] = json!("foreground");
+    board["items"] =
+        json!([{"id":"hidden","type":"line","arrow":true,"start":{"id":source["id"]},"end":{"id":target["id"]}}]);
+    h.host.command("pointer-configure", Some(&json!({"workspace":board,"id":"hidden","hook":{"event":"trigger","action":"shell","text":"echo hidden","armed":true}}))).await.unwrap();
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let target_id = target["id"].as_str().unwrap();
+    h.host.input(target_id, "\x1b[I".into(), 0);
+    h.host.input(target_id, "\x1b[O".into(), 1);
+    h.host.running().await;
+    assert!(h.pointer_writes(1).contains(&"\x1b[I".into()));
+    assert!(h.pointer_writes(1).contains(&"\x1b[O".into()));
+    h.pointer_request(0, "trigger").await;
+    assert!(h.pointer_writes(1).contains(&"echo hidden\r".into()));
+    assert_eq!(h.read_saved()["activeCanvas"], "foreground");
+
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let mut board = h.read_saved();
+    board["items"][0]["id"] = json!("remote-typing");
+    board["canvases"][1]["itemIds"] = json!(["remote-typing"]);
+    h.host.command("pointer-configure", Some(&json!({"workspace":board,"id":"remote-typing","hook":{"event":"trigger","action":"shell","text":"echo forbidden","armed":true}}))).await.unwrap();
+    h.host.remote_attach().await;
+    h.host
+        .remote_input(
+            target["id"].as_str().unwrap().into(),
+            "unfinished".into(),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+    let before = h.pointer_writes(1).len();
+    h.pointer_request(0, "trigger").await;
+    assert_eq!(h.pointer_writes(1).len(), before);
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["id"] == "remote-typing"
+                && event["state"] == "failed"
+                && event["message"].as_str().unwrap_or_default().contains("user input"))
+    );
+    h.host
+        .command("stop", Some(&json!({"id":target["id"],"removePointers":true})))
+        .await
+        .unwrap();
+    let saved = h.read_saved();
+    assert!(saved["items"].as_array().unwrap().is_empty());
+    assert!(saved["canvases"][1]["itemIds"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn pointers_queue_busy_ai_prompts_and_chain_stop_to_a_shell_without_typing_into_busy_agents() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let shell = h.start().await;
+    h.pointer_agent(0).await;
+    h.pointer_agent(1).await;
+    h.pointer_request(1, "busy").await;
+    h.pointer_output(2, "\x1b]777;tc-ready;1\x07".into()).await;
+    h.pointer_config(&source, &target, "planner", "prompt", "stop").await;
+    h.pointer_config(&target, &shell, "tests", "shell", "stop").await;
+    let before = h.pointer_writes(1).len();
+    h.pointer_request(0, "stop").await;
+    assert_eq!(h.pointer_writes(1).len(), before);
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| e["id"] == "planner" && e["state"] == "queued")
+    );
+    assert_eq!(
+        h.pointer_request(1, "stop").await,
+        json!({"decision":"block","reason":"echo delivered"})
+    );
+    assert!(
+        !h.pointer_writes(2).contains(&"echo delivered\r".into()),
+        "outgoing work waits for the continuation to finish"
+    );
+    assert_eq!(h.pointer_request(1, "stop").await, json!({}));
+    assert!(h.pointer_writes(2).contains(&"echo delivered\r".into()));
+    assert_eq!(h.pointer_writes(1).len(), before);
+}
+
+#[tokio::test]
+async fn pointers_disarm_cancels_queued_work_and_stale_layouts_cannot_rearm_it() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    h.pointer_agent(1).await;
+    h.pointer_request(1, "busy").await;
+    h.pointer_config(&source, &target, "p", "prompt", "trigger").await;
+    h.pointer_request(0, "trigger").await;
+    let stale = h.read_saved();
+    let mut hook = stale["items"][0]["hook"].clone();
+    hook["armed"] = json!(false);
+    h.host
+        .command(
+            "pointer-configure",
+            Some(&json!({"workspace":stale,"id":"p","hook":hook})),
+        )
+        .await
+        .unwrap();
+    h.host.command("autosave", Some(&stale)).await.unwrap();
+    assert_eq!(h.read_saved()["items"][0]["hook"]["armed"], false);
+    assert_eq!(h.pointer_request(1, "stop").await, json!({}));
+    h.host
+        .command("pointer-configure", Some(&json!({"workspace":stale,"paused":true})))
+        .await
+        .unwrap();
+    h.host.command("autosave", Some(&stale)).await.unwrap();
+    assert_eq!(h.read_saved()["hooksPaused"], true);
+}
+
+#[tokio::test]
+async fn pointers_fail_closed_unknown_and_stale_hooks_and_support_independent_fanout() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    h.pointer_config(&source, &target, "unknown", "prompt", "trigger").await;
+    let stopped = json!(create_card(&json!({"cwd":h.folder})).unwrap());
+    let mut board = h.read_saved();
+    board["cards"].as_array_mut().unwrap().push(stopped.clone());
+    h.host.command("autosave", Some(&board)).await.unwrap();
+    h.pointer_config(&source, &stopped, "closed", "shell", "trigger").await;
+    h.pointer_request(0, "trigger").await;
+    let events = h.events.lock().unwrap().clone();
+    for id in ["unknown", "closed"] {
+        assert!(events.iter().any(|e| e["id"] == id && e["state"] == "failed"));
+    }
+    h.pointer_agent(1).await;
+    assert!(
+        h.pointer_custom_request(1, "stop", "00000000-0000-4000-8000-000000000000")
+            .await
+            .get("error")
+            .is_some()
+    );
+    h.pointer_request(1, "stop").await;
+    h.pointer_config(&source, &target, "idle", "prompt", "trigger").await;
+    h.pointer_request(0, "trigger").await;
+    assert!(
+        h.pointer_writes(1)
+            .contains(&"\x1b[200~echo delivered\x1b[201~\r".into())
+    );
+}
+
+#[tokio::test]
+async fn new_terminal_pointer_actions_remain_subject_to_disarm_before_start() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let template = h.start().await;
+    h.pointer_config(&source, &template, "new", "new-terminal", "trigger")
+        .await;
+    h.pointer_request(0, "trigger").await;
+    let launch = h
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|e| e["type"] == "launch" && e["pointer"] == "new")
+        .unwrap()
+        .clone();
+    assert_eq!(launch["command"], "echo delivered");
+    assert_eq!(h.launches.lock().unwrap().len(), 2);
+    h.host
+        .command(
+            "pointer-configure",
+            Some(&json!({"workspace":h.read_saved(),"paused":true})),
+        )
+        .await
+        .unwrap();
+    let card = json!(create_card(&json!({"cwd":h.folder})).unwrap());
+    let error = h
+        .host
+        .command(
+            "start",
+            Some(&json!({"card":card,"cols":80,"rows":24,"launch":launch["request"]})),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("disarmed"));
+    assert_eq!(h.launches.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn closing_a_template_removes_host_pointers_before_a_stale_autosave_can_restore_them() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    h.pointer_config(&source, &target, "p", "new-terminal", "trigger").await;
+    let stale = h.read_saved();
+    h.host
+        .command("stop", Some(&json!({"id":target["id"],"removePointers":true})))
+        .await
+        .unwrap();
+    assert!(h.read_saved()["items"].as_array().unwrap().is_empty());
+    h.host.command("autosave", Some(&stale)).await.unwrap();
+    assert!(h.read_saved()["items"][0].get("hook").is_none());
+    h.pointer_request(0, "trigger").await;
+    assert!(!h.events.lock().unwrap().iter().any(|e| e["type"] == "launch"));
+}
+
+#[tokio::test]
+async fn a_failed_configuration_save_pauses_automation_instead_of_arming_it_invisibly() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let mut board = h.read_saved();
+    board["items"] =
+        json!([{"id":"p","type":"line","arrow":true,"start":{"id":source["id"]},"end":{"id":target["id"]}}]);
+    std::fs::remove_file(h.recovery()).unwrap();
+    std::fs::create_dir(h.recovery()).unwrap();
+    let answer = h.host.command("pointer-configure", Some(&json!({"workspace":board,"id":"p","hook":{"event":"trigger","action":"new-terminal","text":"echo no","armed":true}}))).await;
+    assert!(answer.is_err());
+    assert!(h.events.lock().unwrap().iter().any(|e| e["type"] == "pointers-paused"));
+    h.pointer_request(0, "trigger").await;
+    assert!(!h.events.lock().unwrap().iter().any(|e| e["type"] == "launch"));
 }
 
 #[tokio::test]

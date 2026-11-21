@@ -47,6 +47,7 @@ fn board(raw: &Value) -> tc_core::workspace::Workspace {
         if item["type"] == "image" {
             let asset = item["asset"].as_str().expect("fixture assets are strings").to_owned();
             board.items.push(Item {
+                hook: None,
                 id: format!("i{index}"),
                 kind: ItemKind::Image { rect, asset },
                 color: None,
