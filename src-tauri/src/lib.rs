@@ -8,6 +8,7 @@ mod e2e;
 pub mod host;
 pub mod launches;
 pub mod platform;
+pub mod pointers;
 pub mod protocol;
 pub mod remote;
 mod remote_mirror;
@@ -84,6 +85,8 @@ actions! {
     tmux_setup => "tmux-setup",
     keep_running => "keep-running",
     autosave => "autosave",
+    pointer_check => "pointer-check",
+    pointer_configure => "pointer-configure",
     save => "save",
     save_as => "save-as",
     export => "export",
@@ -143,6 +146,21 @@ remote_actions! {
     remote_status => "remote-status",
     remote_rotate => "remote-rotate",
     remote_revoke => "remote-revoke",
+}
+
+/// The visible xterm screens requested by the host when Browser access starts.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenCapture {
+    request_id: String,
+    screens: std::collections::BTreeMap<String, String>,
+}
+
+#[tauri::command]
+async fn remote_snapshot(webview: Webview, host: State<'_, Arc<Host>>, payload: ScreenCapture) -> Result<(), String> {
+    authorized(&webview)?;
+    host.remote_snapshot(payload.request_id, payload.screens).await;
+    Ok(())
 }
 
 /// The image arrives as the raw IPC body, not as a JSON array of numbers.
@@ -331,6 +349,8 @@ pub fn run() {
             tmux_setup,
             keep_running,
             autosave,
+            pointer_check,
+            pointer_configure,
             save,
             save_as,
             export,
@@ -354,6 +374,7 @@ pub fn run() {
             ack,
             update_install,
             remote_start,
+            remote_snapshot,
             remote_stop,
             remote_status,
             remote_rotate,

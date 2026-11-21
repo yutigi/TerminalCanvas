@@ -7,6 +7,9 @@
 //! tc-hook emit end <exit code>               report that it ended
 //! tc-hook new-terminal [options]             ask the app for a new terminal (see `new_terminal`)
 //! tc-hook finish [exit code]                ask the app to end this terminal
+//! tc-hook trigger [name]                     send an explicit hook pointer event
+//! tc-hook lifecycle <provider>               process an AI lifecycle hook for a pointer
+//! tc-hook launch-prompt <request id>         start an AI CLI with a prompt in the current terminal
 //! tc-hook terminal-daemon <state file>       keep terminals running after the app quits; the app
 //!                                            starts it (see `tc_pty::daemon`)
 //! ```
@@ -26,6 +29,8 @@ use tc_core::js::{is_js_whitespace, utf16_len};
 use tc_core::session::{is_session_id, session_metadata};
 
 mod new_terminal;
+mod pointers;
+mod prompt_launch;
 
 /// The most hook input read, in UTF-16 units as the JavaScript hook counted it.
 const INPUT_UNITS: usize = 65536;
@@ -40,6 +45,9 @@ fn main() -> ExitCode {
     let arg = |index: usize| args.get(index).map(String::as_str);
     match arg(0) {
         Some("emit") => emit(arg(1), arg(2), arg(3)),
+        Some("trigger") => pointers::run(&args[1..], false),
+        Some("lifecycle") => pointers::run(&args[1..], true),
+        Some("launch-prompt") if args.len() == 2 => prompt_launch::run(&args[1]),
         Some("new-terminal") => new_terminal::run(&args[1..]),
         Some("finish") => finish(&args[1..]),
         Some(tc_pty::daemon::COMMAND) if args.len() == 2 => match tc_pty::daemon::serve(Path::new(&args[1])) {
@@ -53,15 +61,9 @@ fn main() -> ExitCode {
             let _ = record(arg(1).unwrap_or_default());
             ExitCode::SUCCESS
         }
-        Some("lifecycle") if args.len() == 2 && matches!(arg(1), Some("claude" | "codex")) => {
-            // Kept AI sessions can still call the hook-pointers branch's callbacks after the
-            // helper is rebuilt from main. Drain their input and acknowledge them quietly.
-            let _ = io::copy(&mut io::stdin().lock().take(INPUT_BYTES as u64), &mut io::sink());
-            ExitCode::SUCCESS
-        }
         _ => {
             eprintln!(
-                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | finish [exit code] | terminal-daemon <state file>"
+                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | finish [exit code] | trigger [name] | lifecycle <provider> | launch-prompt <request id> | terminal-daemon <state file>"
             );
             ExitCode::from(2)
         }
@@ -98,6 +100,10 @@ fn token() -> Option<String> {
 /// Writes `\x1b]633;TC;<base64 JSON>\x07`. Absent values are left out, as `JSON.stringify` drops
 /// `undefined`.
 fn emit(kind: Option<&str>, first: Option<&str>, second: Option<&str>) -> ExitCode {
+    emit_with_token(kind, first, second, token().as_deref())
+}
+
+fn emit_with_token(kind: Option<&str>, first: Option<&str>, second: Option<&str>, token: Option<&str>) -> ExitCode {
     let mut event = Map::new();
     if let Some(kind) = kind {
         event.insert("type".into(), kind.into());
@@ -116,7 +122,7 @@ fn emit(kind: Option<&str>, first: Option<&str>, second: Option<&str>) -> ExitCo
     } else {
         event.insert("exitCode".into(), js_number(first.unwrap_or("undefined")));
     }
-    if let Some(token) = token() {
+    if let Some(token) = token {
         event.insert("token".into(), token.into());
     }
     let json = Value::Object(event).to_string();

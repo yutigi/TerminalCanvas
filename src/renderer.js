@@ -283,6 +283,8 @@ function refresh() {
     outline.replaceChildren();
     matchingTerminals($('#search').value).forEach(card => {
         const s = sessions.get(card.id);
+        // A workspace reload mounts cards one at a time; recovery updates can refresh mid-load.
+        if (!s) return;
         const button = document.createElement('button');
         button.className = `outline-item ${selection.has(card.id) ? 'selected' : ''} ${s.status === 'running' ? 'running' : ''}`;
         applyItemStyle(card, button);
@@ -825,7 +827,7 @@ function mount(card) {
         if (action === 'close') {
             if (['running', 'starting'].includes(s.status) && !await confirmAction('Close this terminal?', 'Its running shell and child processes will be stopped. Terminal output is not saved.', 'Close terminal')) return;
             s.closing = true;
-            try { await invoke('stop', { id: card.id }); removeCard(card); }
+            try { await invoke('stop', { id: card.id, removePointers: true }); removeCard(card); }
             finally { s.closing = false; }
         }
     }));
@@ -1241,7 +1243,8 @@ async function openRequestedTerminal(event) {
         }
         await whenBoardIdle();
         // A terminal opened beside another signs in to Claude as that terminal does.
-        if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
+        if (event.pointer) { if (event.claudeAccount) card.claudeAccount = event.claudeAccount; }
+        else if (parent?.claudeAccount) card.claudeAccount = parent.claudeAccount;
         workspace.cards.push(card); mount(card);
         if (parent && workspaceItemCount() < ITEM_LIMIT) {
             recordHistory();
@@ -1579,6 +1582,7 @@ $('#launch-form').onsubmit = event => {
 function loadWorkspace(board, epoch) {
     titleEpoch = epoch;
     $('#title-dialog').close(); titleCard = null;
+    pointerStates.clear();
     clearTimeout(autosaveTimer);
     if (editing) document.activeElement?.blur();
     workspace = board;
@@ -1598,6 +1602,7 @@ function loadWorkspace(board, epoch) {
         cards: canvas.cardIds.map(id => cards.get(id)), items: canvas.itemIds.map(id => items.get(id)) }))
         : [canvasState({ camera: board.camera, cards: board.cards, items: board.items })];
     setWorkspaceTerminalTheme(board.terminalTheme);
+    setHooksPaused(!!board.hooksPaused);
     for (const canvas of canvasStates) {
         activeCanvas = canvas; workspace = canvas.board; workspace.name = board.name;
         workspace.cards.forEach(mount); workspace.items.forEach(mountItem);
@@ -1639,6 +1644,7 @@ function remoteWorkspace(board, epoch) {
         return canvas;
     });
     setWorkspaceTerminalTheme(board.terminalTheme);
+    setHooksPaused(!!board.hooksPaused);
     for (const canvas of canvasStates) {
         activeCanvas = canvas; workspace = canvas.board;
         for (const card of workspace.cards) {
@@ -1859,6 +1865,8 @@ $('#update').onclick = () => run(async () => {
     clearTimeout(autosaveTimer); await invoke('close', workspace);
 });
 window.addEventListener('resize', () => { if (ready) renderCamera(); });
+installPointerControls();
+
 // Output is acknowledged once xterm has parsed it, which paces the program writing it. xterm parses
 // on timers, and a minimized or covered window throttles them to as little as one a minute, which
 // would stall the program at the host's high watermark. While the window is hidden, output is
@@ -1866,6 +1874,36 @@ window.addEventListener('resize', () => { if (ready) renderCamera(); });
 const HIDDEN_PARSE_BACKLOG = 4_000_000;
 // The host ignores a larger acknowledgment.
 const ACK_CHUNK = 1024 * 1024;
+async function captureRemoteScreens(event) {
+    const encoder = new TextEncoder();
+    let remaining = 2 * 1024 * 1024;
+    const screens = Object.create(null);
+    await Promise.all(event.ids.map(id => {
+        const s = sessions.get(id);
+        if (!s?.terminal || s.status !== 'running') return;
+        const generation = s.generation;
+        // This barrier runs after PTY writes before the host's capture event and before later writes.
+        return new Promise((resolve, reject) => s.terminal.write('', () => {
+            if (sessions.get(id) !== s || s.status !== 'running' || s.generation !== generation) return resolve();
+            const addon = new window.SerializeAddon.SerializeAddon();
+            s.terminal.loadAddon(addon);
+            try {
+                let screen = addon.serialize({ scrollback: 0 });
+                if (s.terminal.buffer.active.type === 'alternate') {
+                    // The addon emits the normal screen first, followed by DECSET 1049 and the alternate screen.
+                    const start = screen.indexOf('\x1b[?1049h');
+                    screen = start < 0 ? '' : screen.slice(start);
+                }
+                const bytes = encoder.encode(screen).length;
+                if (bytes <= remaining) { screens[id] = screen; remaining -= bytes; }
+                resolve();
+            } catch (error) { reject(error); }
+            finally { addon.dispose(); }
+        }));
+    }));
+    await invoke('remote-snapshot', { requestId: event.requestId, screens });
+}
+
 function writeOutput(s, id, data) {
     s.ackId = id;
     s.unacknowledged = (s.unacknowledged || 0) + data.length;
@@ -1885,6 +1923,9 @@ function acknowledgeOutput(s) {
 document.addEventListener('visibilitychange', () => { for (const s of sessions.values()) if (s.unacknowledged) acknowledgeOutput(s); });
 if (bridge) {
     bridge.onEvent(event => {
+        if (!bridge.remote && event.type === 'remote-capture') {
+            captureRemoteScreens(event).catch(error => toast(error.message));
+        }
         if (bridge.remote && event.type === 'remote-workspace' && ready) remoteWorkspace(event.workspace, event.titleEpoch);
         if (bridge.remote && event.type === 'remote-terminals' && ready) remoteTerminals(event.terminals);
         if (bridge.remote && event.type === 'remote-disconnected') {
@@ -1928,6 +1969,8 @@ if (bridge) {
         if (event.type === 'error') toast(event.message);
         if (event.type === 'update') showUpdate(event);
         if (event.type === 'launch') requestTerminal(event);
+        if (event.type === 'pointer') pointerEvent(event);
+        if (event.type === 'pointers-paused') { setHooksPaused(true); renderLines(); renderPointerControls(); toast(event.message); }
         if (event.type === 'closing') run(async () => {
             if (event.running && !await confirmAction('Close Terminal Canvas?', keepEnabled ? `Kept terminals keep running and attach again when you reopen; others stop. Your layout will be saved.` : `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
             clearTimeout(autosaveTimer); await invoke('close', workspace);
@@ -1935,6 +1978,7 @@ if (bridge) {
     });
     run(async () => {
         const initial = await invoke('initialize'); profiles = initial.profiles;
+        pointerPlatform = initial.platform;
         $('#platform-chrome').media = initial.platform === 'darwin' ? 'all' : 'not all';
         for (const p of profiles) {
             const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; $('#profile').append(option);

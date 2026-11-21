@@ -18,6 +18,7 @@ function workspaceSnapshot() {
     const snapshot = { version: 3, name: workspace.name, camera: workspace.camera,
         cards: canvasStates.flatMap(canvas => canvas.board.cards), items: canvasStates.flatMap(canvas => canvas.board.items) };
     if (workspace.terminalTheme) snapshot.terminalTheme = workspace.terminalTheme;
+    if (workspace.hooksPaused) snapshot.hooksPaused = true;
     if (canvasExtended) {
         snapshot.canvases = canvasStates.map(canvas => ({ id: canvas.id, name: canvas.name, camera: canvas.board.camera,
             cardIds: canvas.board.cards.map(card => card.id), itemIds: canvas.board.items.map(item => item.id),
@@ -102,7 +103,7 @@ function switchCanvas(id) {
 function createCanvas(name = `Canvas ${canvasStates.length + 1}`) {
     if (bridge?.remote || canvasLocked()) return false;
     const canvas = canvasState({ name });
-    canvasExtended = true; canvasStates.push(canvas); setWorkspaceTerminalTheme(workspace.terminalTheme); switchCanvas(canvas.id);
+    canvasExtended = true; canvasStates.push(canvas); setWorkspaceTerminalTheme(workspace.terminalTheme); setHooksPaused(!!workspace.hooksPaused); switchCanvas(canvas.id);
     return canvas;
 }
 function reorderCanvas(delta) {
@@ -127,7 +128,7 @@ async function deleteCanvas() {
     canvasMutation = true;
     try {
         // Preserve the canvas if a stop fails; never dispose a view with its process still alive.
-        for (const card of canvas.board.cards) await invoke('stop', { id: card.id });
+        for (const card of canvas.board.cards) await invoke('stop', { id: card.id, removePointers: true });
         const index = canvasStates.indexOf(canvas), next = canvasStates[index - 1] || canvasStates[index + 1];
         if (editing) document.activeElement?.blur();
         for (const card of canvas.board.cards) dispose(card.id);

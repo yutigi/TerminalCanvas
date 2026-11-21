@@ -18,6 +18,7 @@ test('closing with Codex still running preserves hook IDs for exact resume and f
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const provider = process.argv[2], args = process.argv.slice(3);
+fs.writeFileSync(require('node:path').join(__dirname, provider + '.argv.json'), JSON.stringify(args));
 console.log('CLI_ARGS:' + provider + ':' + JSON.stringify(args));
 const settings = args.indexOf('--settings');
 if (provider === 'claude' && settings >= 0) {
@@ -105,8 +106,12 @@ console.log('SESSION_TEST_DONE:' + provider);
         assert.equal(await second.page.evaluate(id => sessions.get(id).element.querySelector('[data-action="start"]').textContent.trim(), card.id), 'Resume session');
         await second.page.evaluate(id => start(workspace.cards.find(card => card.id === id)), card.id);
         await until(async () => (await second.output(card.id)).includes(`SESSION_TEST_DONE:${provider}`), 'Exact-ID resume did not finish.');
-        const expected = provider === 'claude' ? `"--resume","${ids[provider]}"` : `"resume","${ids[provider]}"`;
-        assert.ok((await second.output(card.id)).includes(expected));
+        // ConPTY can split long CLI_ARGS diagnostics inside a UUID with cursor redraws.
+        // Assert the controlled process's actual argv rather than its terminal presentation.
+        const argv = JSON.parse(await fs.readFile(path.join(tools, `${provider}.argv.json`), 'utf8'));
+        const resume = argv.indexOf(provider === 'claude' ? '--resume' : 'resume');
+        assert.ok(resume >= 0, `${provider} did not receive its resume option`);
+        assert.equal(argv[resume + 1], ids[provider]);
         await second.page.evaluate(id => window.terminalCanvas.input(id, '& $env:TC_HOOK finish\r'), card.id);
         await until(async () => !(await second.state()).host.terminals.find(terminal => terminal.id === card.id).running, 'Resumed shell did not exit.');
         await second.page.evaluate(id => {

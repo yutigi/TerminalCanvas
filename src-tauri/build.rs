@@ -4,10 +4,11 @@
 use std::path::Path;
 
 /// `node_modules` path → `src/vendor` name.
-const XTERM: [(&str, &str); 3] = [
+const XTERM: [(&str, &str); 4] = [
     ("@xterm/xterm/lib/xterm.js", "xterm.js"),
     ("@xterm/xterm/css/xterm.css", "xterm.css"),
     ("@xterm/addon-fit/lib/addon-fit.js", "addon-fit.js"),
+    ("@xterm/addon-serialize/lib/addon-serialize.js", "addon-serialize.js"),
 ];
 
 const COMMANDS: &[&str] = &[
@@ -19,6 +20,8 @@ const COMMANDS: &[&str] = &[
     "tmux_setup",
     "keep_running",
     "autosave",
+    "pointer_check",
+    "pointer_configure",
     "save",
     "save_as",
     "export",
@@ -42,6 +45,7 @@ const COMMANDS: &[&str] = &[
     "ack",
     "update_install",
     "remote_start",
+    "remote_snapshot",
     "remote_stop",
     "remote_status",
     "remote_rotate",

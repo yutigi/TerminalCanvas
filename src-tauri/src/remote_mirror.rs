@@ -28,6 +28,16 @@ impl Mirror {
         }
     }
 
+    /// Insert complete screens before all PTY data received since capture began.
+    pub fn seed(&mut self, screens: impl IntoIterator<Item = (String, String)>) {
+        for (id, screen) in screens {
+            if !screen.is_empty() && screen.len() <= HISTORY_BYTES - self.bytes {
+                self.bytes += screen.len();
+                self.output.push_front((id, screen));
+            }
+        }
+    }
+
     pub fn observe(&mut self, event: &Value, events: &broadcast::Sender<Value>) {
         if let Some(id) = event["id"].as_str() {
             if event["type"] == "metadata" && event["initial"] == true {
@@ -102,6 +112,26 @@ impl Mirror {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn screen_is_replayed_before_pending_output_and_shares_its_budget() {
+        let mut mirror = Mirror::new();
+        let events = broadcast::channel(4).0;
+        mirror.observe(&json!({"type":"data", "id":"card", "data":"live"}), &events);
+        mirror.seed([
+            ("large".into(), "x".repeat(HISTORY_BYTES)),
+            ("card".into(), "screen".into()),
+        ]);
+        assert_eq!(
+            mirror.output,
+            [("card".into(), "screen".into()), ("card".into(), "live".into())]
+        );
+        assert_eq!(mirror.bytes, 10);
+
+        mirror.observe(&json!({"type":"metadata", "id":"card", "initial":true}), &events);
+        assert!(mirror.output.is_empty());
+        assert_eq!(mirror.bytes, 0);
+    }
+
     #[test]
     fn output_replay_is_bounded_and_restart_discards_old_generation() {
         let mut mirror = Mirror::new();
