@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/tc-core", "crates/tc-pty", "crates/tc-hook", "src-tauri", "xtask"]
+members = ["crates/tc-core", "crates/tc-pty", "crates/tc-hook", "crates/tc-tmux", "src-tauri", "xtask"]
 exclude = ["vendor/portable-pty"]
 
 # A separate output directory lets `cargo xtask check` rebuild every workspace binary.
@@ -43,6 +43,7 @@ uuid = { version = "=1.29.2", features = ["v4"] }
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects"] }
 tc-core = { path = "crates/tc-core" }
 tc-pty = { path = "crates/tc-pty" }
+tc-tmux = { path = "crates/tc-tmux" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

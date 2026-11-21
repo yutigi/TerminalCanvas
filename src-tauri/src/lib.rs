@@ -25,6 +25,7 @@ use std::sync::Arc;
 use e2e::{e2e_dialog, e2e_focus, e2e_request_close, e2e_state};
 use serde_json::Value;
 use tauri::ipc::{Channel, InvokeBody, Request};
+use tauri::utils::config::BackgroundThrottlingPolicy;
 use tauri::webview::{NewWindowResponse, PermissionResponse};
 use tauri::{LogicalSize, Manager, RunEvent, State, Url, Webview, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tc_pty::PtyBackend;
@@ -81,6 +82,8 @@ actions! {
     rename_title => "rename-title",
     claude_accounts => "claude-accounts",
     agent_setup => "agent-setup",
+    tmux_setup => "tmux-setup",
+    keep_running => "keep-running",
     autosave => "autosave",
     pointer_configure => "pointer-configure",
     save => "save",
@@ -197,6 +200,23 @@ fn sidecar(name: &str) -> Option<PathBuf> {
     }
 }
 
+/// WebView2 switches. Supplying any replaces pinned Wry's defaults, so those come first. The rest
+/// keep a minimized or covered window's timers running: xterm parses output on timers and output is
+/// acknowledged once parsed, so throttled timers would pause every terminal at the high watermark.
+#[cfg(any(windows, test))]
+fn browser_arguments(additional: Option<&str>) -> String {
+    let mut arguments = String::from(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling \
+         --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling \
+         --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
+    );
+    if let Some(additional) = additional.map(str::trim).filter(|value| !value.is_empty()) {
+        arguments.push(' ');
+        arguments.push_str(additional);
+    }
+    arguments
+}
+
 fn create_window(app: &tauri::App, host: &Arc<Host>) -> tauri::Result<()> {
     let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("Terminal Canvas")
@@ -209,23 +229,25 @@ fn create_window(app: &tauri::App, host: &Arc<Host>) -> tauri::Result<()> {
         .zoom_hotkeys_enabled(false)
         .on_navigation(is_app_url)
         .on_new_window(|_, _| NewWindowResponse::Deny)
-        .on_permission_request(|_, _| PermissionResponse::Deny);
+        .on_permission_request(|_, _| PermissionResponse::Deny)
+        // Terminals keep running while the window is minimized or covered (macOS 14+; WebView2
+        // gets the same through `browser_arguments`).
+        .background_throttling(BackgroundThrottlingPolicy::Disabled);
     #[cfg(feature = "e2e")]
     let builder = if let Some(run) = app.try_state::<e2e::TestRun>() {
         builder.data_directory(run.profile.join("webview"))
     } else {
         builder
     };
-    #[cfg(all(windows, feature = "e2e"))]
-    let builder = if let Some(arguments) =
-        e2e::browser_arguments(std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok().as_deref())
-    {
-        // WebView2 150+ ignores environment overrides in an elevated host. The
-        // explicit API is honored; this forwarding is absent from normal builds.
-        eprintln!("Supplying test WebView2 arguments through the native API.");
-        builder.additional_browser_args(&arguments)
-    } else {
-        builder
+    #[cfg(windows)]
+    let builder = {
+        // WebView2 150+ ignores environment overrides in an elevated host. The explicit API is
+        // honored, so tests pass theirs here; this forwarding is absent from normal builds.
+        #[cfg(feature = "e2e")]
+        let test = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok();
+        #[cfg(not(feature = "e2e"))]
+        let test: Option<String> = None;
+        builder.additional_browser_args(&browser_arguments(test.as_deref()))
     };
     let window = builder.build()?;
     // Electron's width/height (and minima) include native decorations. Tauri's sizing
@@ -308,6 +330,8 @@ pub fn run() {
             rename_title,
             claude_accounts,
             agent_setup,
+            tmux_setup,
+            keep_running,
             autosave,
             pointer_configure,
             save,
@@ -388,6 +412,8 @@ pub fn run() {
                 data,
                 hook: sidecar("tc-hook"),
                 agents,
+                // Test builds never offer or run the install.
+                tmux: (!cfg!(feature = "e2e")).then_some(host::detect_tmux as host::TmuxProbe),
             };
             let platform = Arc::new(platform::TauriPlatform::new(app.handle().clone()));
             #[cfg(not(feature = "e2e"))]
@@ -439,6 +465,35 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webview2_arguments_keep_wry_defaults_and_stop_background_throttling() {
+        let defaults = browser_arguments(None);
+        assert_eq!(browser_arguments(Some("  ")), defaults);
+        assert!(defaults.starts_with("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,"));
+        assert_eq!(
+            defaults.matches("--disable-features=").count(),
+            1,
+            "a second list would replace the first"
+        );
+        for switch in [
+            "--autoplay-policy=no-user-gesture-required",
+            "--disable-background-timer-throttling",
+            "--disable-renderer-backgrounding",
+            "--disable-backgrounding-occluded-windows",
+        ] {
+            assert!(
+                defaults.split_whitespace().any(|argument| argument == switch),
+                "{switch}"
+            );
+        }
+        assert!(defaults.contains("IntensiveWakeUpThrottling"));
+        let test = browser_arguments(Some("--remote-debugging-port=9234 --force-device-scale-factor=1.25"));
+        assert_eq!(
+            test,
+            format!("{defaults} --remote-debugging-port=9234 --force-device-scale-factor=1.25")
+        );
+    }
 
     #[test]
     fn initial_window_matches_the_reference_work_area_and_minimum() {

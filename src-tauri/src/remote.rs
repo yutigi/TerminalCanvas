@@ -604,6 +604,7 @@ mod tests {
                 data,
                 hook: None,
                 agents: None,
+                tmux: None,
             },
             Arc::new(NoPlatform),
             Box::new(NoBackend),

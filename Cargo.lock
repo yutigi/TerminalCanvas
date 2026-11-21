@@ -4513,10 +4513,16 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
+ "subtle",
  "tc-core",
  "uuid",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "tc-tmux"
+version = "0.2.0"
 
 [[package]]
 name = "tempfile"
@@ -4558,6 +4564,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tc-core",
  "tc-pty",
+ "tc-tmux",
  "tokio",
  "tokio-tungstenite",
  "tower",

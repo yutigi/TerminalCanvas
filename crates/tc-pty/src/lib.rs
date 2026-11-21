@@ -3,6 +3,7 @@
 //! `src/shell-integration.cjs` (see `docs/rust-migration-plan.md`, Phase 2).
 
 pub mod cwd;
+pub mod daemon;
 pub mod integration;
 #[cfg(windows)]
 mod job;
@@ -10,6 +11,7 @@ pub mod manager;
 pub mod pty;
 pub mod shell;
 pub mod titles;
+pub mod tmux;
 
 pub use manager::{
     Backend, Config, DirectoryChoice, DirectoryRequest, EventSink, ExitStatus, Process, SessionEvent, SessionKey,

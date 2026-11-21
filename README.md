@@ -417,6 +417,16 @@ Workspace format version 3 stores nested groups, item colors, and text sizes. Fi
 
 Restored cards are stopped until explicitly started, both on reopening the app and when importing a workspace. Cards with a captured AI session ID offer **Resume session**, which starts a new shell in the session folder and runs `codex resume <UUID>` or `claude --resume <UUID>`. **Start fresh shell** opens a plain shell without running the saved command, retaining the last captured AI ID for a later retry. For a new AI conversation, launch the tool in that shell. Without an ID, **Start terminal** runs the configured launch command. The header also offers a fresh-shell button after a process exits; stop a running shell before using it.
 
+### Keep terminals running
+
+Turn on **Keep running** in the footer, next to the Settings gear (or **Settings → Keep terminals running**), to keep terminals running after you quit. Quitting the app, opening another workspace, or reloading then leaves the terminals you start afterwards running, programs and output included. When their workspace opens again, the cards attach to them automatically; **Start** on such a card attaches too, and **Start fresh shell** replaces the terminal. **Stop** and closing a card end it. Terminals that were already running when you turned the setting on are unchanged until you restart them.
+
+A kept terminal is not told when you switch to another app, so programs that dim while unfocused, such as Claude Code, stay active while you work elsewhere. Moving to another card or control inside Terminal Canvas still reports the focus change.
+
+On Windows, Terminal Canvas's own helper keeps the terminals: `tc-hook` runs in the background from a copy in the app's data folder (`terminal-helper`), outside the app, and exits on its own once no kept terminals remain. Kept terminals type, redraw, and report folders and AI sessions exactly like other terminals. Reattaching replays up to 1 MB of recent output as scrollback and redraws the screen. Ending the helper process ends its terminals.
+
+On macOS and Linux, each kept terminal runs in its own tmux session, named `tc-<card ID>`, on a separate tmux server (`tmux -L terminal-canvas ls` lists them). tmux is found on `PATH` or in the usual install folders (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`); to use another copy, add `"tmuxProgram": "<path>"` to `settings.json` in the app's data folder. Your own tmux configuration applies, including the prefix key and status bar. tmux does not pass escape sequences through, so in a tmux terminal the folder and AI launches are read from tmux once a second instead: folder changes appear up to a second late, and a Codex session is recorded from Codex's own hook rather than its printed header.
+
 ### What can be recovered
 
 - **Shell folders:** the integrated Windows PowerShell prompt reports the latest filesystem directory after each command. Bash also has a prompt integration, installed after its normal login profiles finish so their environment and prompt setup remain available. Command Prompt uses its process-local PROMPT reports. Linux and macOS also poll the managed shell directory, including shells without prompt integration; OSC 7 reports are supported on Windows. Starting a fresh shell falls back to Home if the saved folder has disappeared. An AI resume with a missing session folder reports the problem and retains its ID.
@@ -428,6 +438,55 @@ Restored cards are stopped until explicitly started, both on reopening the app a
 Shell variables, activated environments, terminal scrollback, running commands, and process memory are not recovered. Closing the app stops its managed terminals. Gemini and arbitrary custom tools retain their shell folder and configured command but have no provider-specific resume integration. Terminal cards have no fixed count limit; capacity depends on available system resources. Workspaces remain limited to 1,000 board items, 64 MB per workspace file, and 5,000 scrollback lines per terminal.
 
 The supported resume commands and Claude hook input are described in the [Codex CLI reference](https://developers.openai.com/codex/cli/reference), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Claude hooks reference](https://code.claude.com/docs/en/hooks). Only per-launch settings and files under the app's user-data directory are created; global CLI configuration is not edited.
+
+## tmux protocol spike (issue #35, phase 1)
+
+`crates/tc-tmux` is a protocol spike; terminals do not run in tmux yet. Closing Terminal Canvas
+still stops its terminals; no background-running toggle or session attachment UI is shipped in this
+phase. The app uses the crate only to detect and install tmux, and it never contacts the default server.
+
+| Platform | Phase 1 |
+| --- | --- |
+| macOS / Linux | Native tmux protocol probes on an explicit private socket |
+| Windows (MSYS2 tmux) | Experimental; probes pass locally against MSYS2 tmux 3.8, not in CI |
+| Windows via WSL / SSH hosts | Deferred; no transport or path translation implemented |
+
+The minimum is **tmux 3.3+**, because 3.2 lacks per-window control-client sizing. Discovery checks
+`PATH`, then `/opt/homebrew/bin`, `/usr/local/bin`, and `/usr/bin`, or `C:\msys64\usr\bin` on
+Windows; library callers may supply `Options.binary`. The native test override is `TC_TMUX_BINARY`.
+CI probes both the runner's current tmux and a checksum-pinned 3.3a build.
+
+**Installing tmux from the app.** On launch, if tmux 3.3+ is missing and a supported package
+manager is found, Terminal Canvas offers to install it (after the agent setup, if that is offered).
+Declining is remembered in `tmux-setup.json`; **Settings → Install tmux…** checks again and offers the
+install at any time. The install runs in a new terminal on the canvas, so you follow its progress and
+answer any UAC, `sudo`, or package-manager prompt there:
+
+| Platform | Command |
+| --- | --- |
+| Windows | `winget install MSYS2.MSYS2` (skipped when MSYS2's `pacman` is found), then `pacman -Sy --needed tmux util-linux` in MSYS2 |
+| macOS | `brew install tmux` (Homebrew is required) |
+| Linux | `sudo` with the first of `apt-get`, `dnf`, `pacman`, `zypper`, `apk` |
+
+Test (`e2e`) builds never detect, offer, or run the install.
+
+Windows tmux comes from MSYS2, a POSIX layer. Its control clients cannot hand their stdin/stdout to
+the server over MSYS2's emulated Unix socket, so the client runs `tmux -C` on an MSYS2 pty created by
+`script`, in raw mode, and sets `MSYS=noglob` so `#{...}` arguments are not brace-expanded.
+
+```sh
+cargo test -p tc-tmux
+# Creates and cleans up disposable private servers, never the default:
+cargo test -p tc-tmux --test native -- --ignored --nocapture --test-threads=1
+# Windows, against MSYS2 tmux (PowerShell):
+$env:TC_TMUX_BINARY = 'C:\msys64\usr\bin\tmux.exe'; cargo test -p tc-tmux --test native -- --ignored --nocapture --test-threads=1
+```
+
+The probes check raw OSC 7/777 and UTF-8 output, literal hex input, subscriptions, independent
+window sizes, reply correlation, pause/continue, and shell PID/history survival after detaching
+and reattaching the library client. They do not establish desktop recovery or lossless flood
+handling. tmux's pause discards protocol output; continuing starts at the current offset, so a
+future backend must resynchronize from pane history. See [the process-layer findings](docs/architecture.md#tmux-control-mode-spike).
 
 ## Development and validation
 
@@ -465,7 +524,10 @@ factory fixtures. Golden updates must be intentional and reviewed.
 Windows cleanup uses the documented local `portable-pty` patch in `vendor/portable-pty/PATCH.md`.
 A mandatory kill-on-close Job Object is attached in process creation before startup children can
 escape. Unix Stop signals process groups. The PTY backend has a reader, writer, and exit waiter;
-output pauses at 256,000 unacknowledged UTF-16 units and resumes below 32,000. Input is applied in
+output pauses at 256,000 unacknowledged UTF-16 units and resumes below 32,000. The UI acknowledges
+output once xterm parses it. While the window is minimized or covered, it acknowledges output on
+arrival (up to 4,000,000 unparsed units), and the webview's background timer throttling is turned
+off, so terminals keep running when the app is not in front. Input is applied in
 per-terminal sequence order, and the host actor owns all mutable terminal/recovery state.
 
 ## Windows distribution

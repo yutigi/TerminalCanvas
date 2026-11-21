@@ -12,6 +12,8 @@
     "allow-rename-title",
     "allow-claude-accounts",
     "allow-agent-setup",
+    "allow-tmux-setup",
+    "allow-keep-running",
     "allow-autosave",
     "allow-pointer-configure",
     "allow-save",

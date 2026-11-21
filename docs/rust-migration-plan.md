@@ -2,6 +2,30 @@
 
 Status: approved plan, 2026-11-09. Scope: replace the Electron/Node host with a Rust host on Tauri 2 and keep the web UI. Development happens on macOS. Windows stays the primary target and is validated in CI.
 
+## tmux phase 1 validation (2026-11-18)
+
+The opt-in protocol spike for issue #35 adds a UI-independent crate; it does not change desktop
+terminal behavior or finish background-session recovery. Pure Rust tests run on Windows. Real
+tmux is unavailable on this development machine; the new macOS/Linux private-socket CI probes
+(current tmux and checksum-pinned 3.3a) have not yet been observed passing. Source inspection raises
+the candidate minimum to 3.3 for per-window sizing and finds that pause/continue discards protocol
+output, requiring a resync design before backend integration. Details are in the
+[architecture findings](architecture.md#tmux-control-mode-spike).
+
+Local Windows validation passed: `npm test` (136 tests) and the complete `cargo xtask check`,
+including 15 pure tmux tests, both clippy configurations, E2E-feature Rust tests, icons and 18 golden
+fixtures. The two real-tmux probes are explicitly ignored on Windows. The first full gate failed
+at E2E linking with `fatal error LNK1180: insufficient disk space to complete link` and
+`rustc-LLVM ERROR: IO failure on output stream: no space on device`. After approved cleanup of this
+worktree's generated `target/debug`, the full gate passed with process-local
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_PROFILE_XTASK_DEBUG=0` and
+`CARGO_INCREMENTAL=0`; repository build profiles were not changed.
+
+All three CI runners, ten native Windows E2E passes, manual desktop checks, clean-machine installer
+and portable checks remain required for this candidate. No local/source-only result replaces them.
+The spike does not validate desktop crash recovery, lossless flood handling, metadata persistence,
+external-session adoption, WSL, or SSH. Those remain later phases of #35.
+
 ## Decision
 
 Everything in Terminal Canvas that runs in Node moves to Rust, hosted by Tauri 2. That covers the Electron main process, PTY management, shell integration, persistence, image assets, and the Claude hook script. The renderer stays as it is: HTML, CSS, `renderer.js`, `items.js`, `history.js`, `clipboard.js`, `canvas-geometry.js`, `terminal-pointer.js`, `minimap.js`, and xterm.js. It changes only where the host boundary changes.

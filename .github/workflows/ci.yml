@@ -52,7 +52,46 @@ jobs:
 
       - name: Install Linux webview libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf tmux libevent-dev libncurses-dev pkg-config
+
+      - name: Install native tmux on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew list tmux >/dev/null 2>&1 || brew install tmux
+          brew list utf8proc >/dev/null 2>&1 || brew install utf8proc
+
+      - name: Probe current tmux on a private socket
+        if: runner.os != 'Windows'
+        timeout-minutes: 5
+        run: cargo test -p tc-tmux --test native -- --ignored --nocapture --test-threads=1
+
+      - name: Build minimum tmux 3.3a
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/tmux/tmux/releases/download/3.3a/tmux-3.3a.tar.gz -o "$RUNNER_TEMP/tmux-3.3a.tar.gz"
+          echo "e4fd347843bd0772c4f48d6dde625b0b109b7a380ff15db21e97c11a4dcdf93f  $RUNNER_TEMP/tmux-3.3a.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/tmux-3.3a.tar.gz" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/tmux-3.3a"
+          configure_args=()
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            export PKG_CONFIG_PATH="$(brew --prefix libevent)/lib/pkgconfig:$(brew --prefix ncurses)/lib/pkgconfig:$(brew --prefix utf8proc)/lib/pkgconfig"
+            # tmux 3.3a probes utf8proc directly, without pkg-config.
+            export CPPFLAGS="-I$(brew --prefix utf8proc)/include ${CPPFLAGS:-}"
+            export LDFLAGS="-L$(brew --prefix utf8proc)/lib ${LDFLAGS:-}"
+            configure_args+=(--enable-utf8proc)
+          fi
+          ./configure --prefix="$RUNNER_TEMP/tc-tmux-minimum" "${configure_args[@]}"
+          make -j2
+          make install
+
+      - name: Probe minimum tmux on a private socket
+        if: runner.os != 'Windows'
+        timeout-minutes: 5
+        env:
+          TC_TMUX_BINARY: ${{ runner.temp }}/tc-tmux-minimum/bin/tmux
+        run: cargo test -p tc-tmux --test native -- --ignored --nocapture --test-threads=1
 
       - name: Install npm dependencies
         run: npm ci
