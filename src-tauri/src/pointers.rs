@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use tc_core::pointers::{Action, Report, ends};
+use tc_core::pointers::{Action, Event, Report, ends};
 use tc_core::workspace::{Item, Workspace};
 use tc_pty::TerminalManager;
 use tc_pty::manager::PointerReadiness;
@@ -32,6 +32,67 @@ pub struct Pointers {
 
 pub fn status(id: &str, state: &str, message: &str) -> Value {
     json!({"type":"pointer", "id":id, "state":state, "message":message})
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetupCheck {
+    source: String,
+    target: String,
+    event: Event,
+    action: Action,
+}
+
+impl SetupCheck {
+    /// Report current readiness without saving, sending terminal input, or opening anything.
+    pub fn status(&self, board: &Workspace, manager: &TerminalManager) -> Result<Value, String> {
+        let invalid = "Choose an arrow between two terminals on the same canvas.";
+        let target = board.cards.iter().find(|card| card.id == self.target).ok_or(invalid)?;
+        if !board.cards.iter().any(|card| card.id == self.source)
+            || (!board.canvases.is_empty()
+                && !board
+                    .canvases
+                    .iter()
+                    .any(|canvas| canvas.card_ids.contains(&self.source) && canvas.card_ids.contains(&self.target)))
+        {
+            return Err(invalid.into());
+        }
+        let source = match (self.event, manager.pointer_source_ready(&self.source, self.event)) {
+            (_, None) => "Start this terminal to receive its events.",
+            (Event::Stop, Some(true)) => "AI lifecycle hooks have reported from this terminal.",
+            (Event::Stop, Some(false)) => {
+                "Waiting for an AI lifecycle hook. Run a turn in Claude Code or Codex here. For Codex, approve the commands in /hooks and restart the CLI."
+            }
+            (Event::Exit, Some(_)) => "The terminal is running and can report an exit.",
+            (Event::Trigger, Some(true)) => "The terminal can accept manual triggers.",
+            (Event::Trigger, Some(false)) => {
+                "The hook helper is unavailable here. Check that tc-hook is installed and restart this terminal."
+            }
+        };
+        let target = if self.action == Action::NewTerminal {
+            if tc_core::dirs::is_directory(&target.cwd) {
+                "The template's project folder is available."
+            } else {
+                "The template's project folder is unavailable. Choose a template with an existing folder."
+            }
+        } else {
+            let prompt = self.action == Action::Prompt;
+            match manager.pointer_readiness(&self.target, prompt) {
+                PointerReadiness::Closed => "Start this terminal to receive the action.",
+                PointerReadiness::Idle if prompt => "The agent is idle and can receive a prompt.",
+                PointerReadiness::Idle => "The shell is idle and can run a command.",
+                PointerReadiness::Busy if prompt => {
+                    "The agent is busy. A prompt would wait for its next finished turn."
+                }
+                PointerReadiness::Typing => "Finish or clear your current input before sending automation here.",
+                _ if prompt => {
+                    "Waiting for AI lifecycle hooks. Run a turn in Claude Code or Codex here. For Codex, approve the commands in /hooks and restart the CLI."
+                }
+                _ => "Wait for an idle prompt in an integrated PowerShell or Bash shell.",
+            }
+        };
+        Ok(json!({ "source": source, "target": target }))
+    }
 }
 
 fn enabled(board: &Workspace, item: &Item) -> bool {

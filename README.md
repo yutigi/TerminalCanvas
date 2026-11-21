@@ -164,13 +164,15 @@ Line styles and fonts other than the size choices are not configurable.
 
 ### Hook pointers
 
-An arrow between two terminals can submit work when its source finishes. Select the arrow,
-choose **Hook pointer…**, select a source event and target action, enter the command or prompt,
-then check **Arm this pointer** and save. New pointers start disarmed. Other arrows and plain
-lines retain their usual behavior. Remove the hook before reconnecting its endpoints.
+An arrow between two terminals can submit work when its source finishes. Select the arrow and
+choose **Add automation**. Pick **When** it should run and what to **Do**, then enter the prompt or
+command. **Save disabled** saves the rule for later. **Save & enable** lets it run when its trigger
+fires. **Check setup** reports what the host knows about both terminals without sending input.
+For a manual trigger, choose the source shell and use **Copy command**. Remove the automation
+before reconnecting its endpoints.
 
 Both terminals and the arrow must belong to the same canvas; cross-canvas connectors
-are rejected. Pointers keep running when their canvas is hidden. Pause hooks applies to
+are rejected. Pointers keep running when their canvas is hidden. **Pause automations** applies to
 every canvas and stays available when only hidden canvases contain pointers. A new-terminal
 action reveals its source canvas before opening the new card. Configure and arm pointers
 in the desktop app; remote browsers can view their saved configuration.
@@ -219,11 +221,11 @@ after 60 seconds, and an agent receives at most eight consecutive hook continuat
 user prompt must reset the count. Closed, restarted or changed sessions cannot receive old work.
 Failures, interruptions and session end cancel that target's queue.
 
-Use **Disarm pointer** on the selected arrow or **Pause hooks** above the canvas to cancel pending
+Use **Disable** on the selected arrow or **Pause automations** above the canvas to cancel pending
 work immediately. Resuming does not replay canceled events. Editing/removing a pointer also cancels
-its queued work. Closing either terminal removes its pointers. The arrow shows idle/disarmed,
-armed, queued, firing or failed; successful delivery sends a pulse toward the target. Reduced
-motion uses a static highlight. Selection exposes a text status and failure explanation.
+its queued work. Closing either terminal removes its pointers. The arrow shows whether the rule is
+disabled, paused, waiting, queued, delivered or failed. Delivery sends a pulse toward the target.
+Reduced motion uses a static highlight. Select the arrow to see more detail.
 
 Automation will not submit input after the host observes user typing at an idle target. Hooks
 cannot detect text already entered outside the app's input path; avoid editing a target while

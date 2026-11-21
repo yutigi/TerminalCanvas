@@ -1441,6 +1441,23 @@ impl TerminalManager {
         Some(format!("{}:{token}:{conversation}", session.generation))
     }
 
+    pub fn pointer_source_ready(&self, id: &str, event: tc_core::pointers::Event) -> Option<bool> {
+        use tc_core::pointers::Event;
+
+        let session = self.sessions.get(id)?;
+        Some(match event {
+            Event::Stop => {
+                session.launch.is_some()
+                    && matches!(session.pointer_state, PointerReadiness::Idle | PointerReadiness::Busy)
+            }
+            Event::Exit => true,
+            Event::Trigger => session
+                .integration
+                .as_ref()
+                .is_some_and(|integration| integration.launch_dir.is_some()),
+        })
+    }
+
     pub fn pointer_readiness(&self, id: &str, prompt: bool) -> PointerReadiness {
         let Some(session) = self.sessions.get(id) else {
             return PointerReadiness::Closed;

@@ -15,6 +15,7 @@
     "allow-tmux-setup",
     "allow-keep-running",
     "allow-autosave",
+    "allow-pointer-check",
     "allow-pointer-configure",
     "allow-save",
     "allow-save-as",

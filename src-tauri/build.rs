@@ -19,6 +19,7 @@ const COMMANDS: &[&str] = &[
     "tmux_setup",
     "keep_running",
     "autosave",
+    "pointer_check",
     "pointer_configure",
     "save",
     "save_as",

@@ -1287,6 +1287,13 @@ impl Host {
                 let path = self.platform.pick_folder(default).await;
                 Ok(json!({ "path": path.map(|path| path.to_string_lossy().into_owned()) }))
             }
+            "pointer-check" => {
+                let check: crate::pointers::SetupCheck =
+                    serde_json::from_value(payload.cloned().unwrap_or(Value::Null))
+                        .map_err(|_| "Invalid automation setup check.")?;
+                self.with_state(move |_, state| check.status(state.recovery.board(), &state.manager))
+                    .await
+            }
             "pointer-configure" => {
                 let payload = payload.cloned().ok_or("Invalid hook pointer configuration.")?;
                 let saved = self

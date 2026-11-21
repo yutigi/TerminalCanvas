@@ -1134,6 +1134,32 @@ impl Harness {
 }
 
 #[tokio::test]
+async fn pointer_setup_checks_readiness_without_saving_or_sending_input() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let mut check = json!({"source":source["id"], "target":target["id"], "event":"trigger", "action":"shell"});
+    let saved = h.read_saved();
+    let before = (h.pointer_writes(0), h.pointer_writes(1));
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert_eq!(status["source"], "The terminal can accept manual triggers.");
+    assert_eq!(
+        status["target"],
+        "Wait for an idle prompt in an integrated PowerShell or Bash shell."
+    );
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert_eq!(status["target"], "The shell is idle and can run a command.");
+    check["event"] = json!("stop");
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert!(status["source"].as_str().unwrap().contains("/hooks"));
+    assert_eq!((h.pointer_writes(0), h.pointer_writes(1)), before);
+    assert_eq!(h.read_saved(), saved);
+    check["target"] = json!("missing");
+    assert!(h.host.command("pointer-check", Some(&check)).await.is_err());
+}
+
+#[tokio::test]
 async fn pointers_deliver_to_ready_shells_and_never_submit_partial_user_input() {
     let h = Harness::with_hook(true);
     let source = h.start().await;

@@ -24,7 +24,29 @@ test('native explicit triggers form a three-shell chain, show VFX, and open a ne
     const b = await startTerminal(h.page, { title: 'Build', cwd: root, x: 720, y: 0 });
     const c = await startTerminal(h.page, { title: 'Tests', cwd: root, x: 1440, y: 0 });
     for (const card of [a, b, c]) await idle(h, card);
-    await configure(h.page, a, b, 'build-hook', { event: 'trigger', name: 'build', action: 'shell', text: '& $env:TC_HOOK trigger tests' });
+    await h.page.evaluate(({ source, target }) => {
+        const line = { id: 'build-hook', type: 'line', arrow: true, start: { id: source }, end: { id: target } };
+        workspace.items.push(line); mountLine(line); select(line.id, { type: false });
+    }, { source: a.id, target: b.id });
+    const edit = h.page.locator('#pointer-configure');
+    assert.equal(await edit.innerText(), 'Add automation');
+    await edit.click();
+    assert.equal(await h.page.locator('#pointer-description').innerText(), 'Source → Build');
+    await h.page.locator('#pointer-event').selectOption('trigger');
+    await h.page.locator('#pointer-name').fill('build');
+    await h.page.locator('#pointer-action').selectOption('shell');
+    await h.page.locator('#pointer-text').fill('& $env:TC_HOOK trigger tests');
+    assert.equal(await h.page.locator('#pointer-command').innerText(), '& $env:TC_HOOK trigger build');
+    await h.page.locator('#pointer-check-setup').click();
+    await until(async () => (await h.page.locator('#pointer-setup-status').innerText()).includes('The shell is idle'), 'Setup did not report the ready target.');
+    assert.equal(await h.page.evaluate(() => workspace.items.find(item => item.id === 'build-hook').hook), undefined);
+    await h.page.locator('#pointer-save-disabled').click();
+    await until(() => h.page.locator('#pointer-dialog').isHidden(), 'Automation editor did not close.');
+    assert.equal(await h.page.locator('#pointer-status').innerText(), 'Disabled');
+    await edit.click();
+    assert.equal(await h.page.locator('#pointer-text').inputValue(), '& $env:TC_HOOK trigger tests');
+    await h.page.locator('#pointer-submit').click();
+    await until(() => h.page.locator('#pointer-dialog').isHidden(), 'Automation editor did not close after enabling.');
     await configure(h.page, b, c, 'test-hook', { event: 'trigger', name: 'tests', action: 'shell', text: 'Write-Output POINTER_CHAIN_OK' });
     await h.page.evaluate(() => fitCanvas());
     await input(h.page, a.id, '& $env:TC_HOOK trigger build\r');
@@ -73,7 +95,12 @@ test('native Claude and Codex lifecycle hooks queue a prompt and continue throug
     await until(async () => (await h.output(b.id)).includes('CONTINUED:Implement the plan'), 'Codex Stop did not return the queued continuation.');
     assert.equal(hasOutputLine(await h.output(c.id), 'POINTER_AI_CHAIN_OK'), false, 'The final step must wait for the continued turn.');
     await input(h.page, b.id, 'finish\r');
-    await until(async () => hasOutputLine(await h.output(c.id), 'POINTER_AI_CHAIN_OK'), 'AI chain did not reach the shell.');
+    try {
+        await until(async () => hasOutputLine(await h.output(c.id), 'POINTER_AI_CHAIN_OK'), 'AI chain did not reach the shell.');
+    } catch (error) {
+        const events = await h.page.evaluate(() => window.__e2eEvents.filter(event => event.type === 'pointer'));
+        throw new Error(`${error.message}\nPointer events: ${JSON.stringify(events)}\nCodex output:\n${await h.output(b.id)}\nShell output:\n${await h.output(c.id)}`, { cause: error });
+    }
     await screenshot(h.page, 'hook-pointer-ai-chain');
 });
 

@@ -1941,6 +1941,7 @@ if (bridge) {
     });
     run(async () => {
         const initial = await invoke('initialize'); profiles = initial.profiles;
+        pointerPlatform = initial.platform;
         $('#platform-chrome').media = initial.platform === 'darwin' ? 'all' : 'not all';
         for (const p of profiles) {
             const option = document.createElement('option'); option.value = p.id; option.textContent = p.name; $('#profile').append(option);
