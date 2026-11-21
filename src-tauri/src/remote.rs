@@ -378,6 +378,7 @@ fn static_path(path: &str) -> Option<&str> {
         | "/vendor/xterm.js"
         | "/vendor/xterm.css"
         | "/vendor/addon-fit.js"
+        | "/vendor/addon-serialize.js"
         | "/assets/logo.svg" => path.strip_prefix('/'),
         _ => None,
     }
@@ -828,6 +829,7 @@ mod tests {
             .await
             .unwrap();
         let server = server(host(), listener.local_addr().unwrap().port());
+        server.host.remote_begin("test".into()).await;
         let app = router(server.clone());
         let mut stop = server.stop.subscribe();
         let task = tokio::spawn(async move {
