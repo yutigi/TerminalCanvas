@@ -269,6 +269,7 @@ async fn title_edits_survive_stale_saves_export_import_and_restart_without_start
 async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_manual_precedence() {
     let h = Harness::new();
     let initial = h.host.command("initialize", None).await.unwrap();
+    h.host.remote_begin("test".into()).await;
     let mut card = create_card(&json!({"cwd":h.folder,"titleMode":"automatic"})).unwrap();
     card.claude_account = Some("Naming test".into());
     h.host
@@ -296,7 +297,7 @@ async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_man
         ),
     )
     .unwrap();
-    let (snapshot, mut events) = h.host.remote_attach().await;
+    let (snapshot, mut events) = h.host.remote_attach().await.unwrap();
     assert_eq!(snapshot["titleEpoch"], initial["titleEpoch"]);
     h.report_session().await;
     let title = tokio::time::timeout(std::time::Duration::from_secs(15), async {
@@ -336,7 +337,7 @@ async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_man
     .unwrap();
     assert_eq!(board["workspace"]["cards"][0], json!(manual["card"]));
     assert_eq!(board["titleEpoch"], initial["titleEpoch"]);
-    let (snapshot, _) = h.host.remote_attach().await;
+    let (snapshot, _) = h.host.remote_attach().await.unwrap();
     assert_eq!(snapshot["workspace"]["cards"][0]["title"], "My task");
     h.host.command("close", None).await.unwrap();
 }
@@ -345,7 +346,8 @@ async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_man
 async fn remote_workspace_replacement_broadcasts_a_new_epoch_even_when_the_board_is_identical() {
     let h = Harness::new();
     h.host.command("initialize", None).await.unwrap();
-    let (snapshot, mut events) = h.host.remote_attach().await;
+    h.host.remote_begin("test".into()).await;
+    let (snapshot, mut events) = h.host.remote_attach().await.unwrap();
     let replacement = h.host.command("new", None).await.unwrap();
     assert_eq!(snapshot["workspace"], replacement["workspace"]);
     assert_ne!(snapshot["titleEpoch"], replacement["titleEpoch"]);
@@ -369,16 +371,45 @@ async fn remote_attachment_preserves_desktop_state_sequences_and_event_delivery(
     let card = h.start().await;
     let id = card["id"].as_str().unwrap().to_owned();
     h.host.input(&id, "desktop-first".into(), 0);
-    let (snapshot, mut remote_events) = h.host.remote_attach().await;
+    assert!(h.host.remote_attach().await.is_none());
+    let (key, events, process) = h.launches.lock().unwrap()[0].clone();
+    events(key.clone(), SessionEvent::Output("before-browser-access".into()));
+
+    let (requested, request) = tokio::sync::oneshot::channel();
+    let requested = Mutex::new(Some(requested));
+    let desktop = h.events.clone();
+    h.host.connect(Arc::new(move |event| {
+        if event["type"] == "remote-capture"
+            && let Some(requested) = requested.lock().unwrap().take()
+        {
+            let _ = requested.send(event.clone());
+        }
+        desktop.lock().unwrap().push(event);
+    }));
+    tokio::join!(h.host.remote_begin("test".into()), async {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(event["ids"], json!([id]));
+        events(key.clone(), SessionEvent::Output("during-capture".into()));
+        h.host
+            .remote_snapshot("stale".into(), [(id.clone(), "stale-screen".into())].into())
+            .await;
+        h.host
+            .remote_snapshot("test".into(), [(id.clone(), "captured-screen".into())].into())
+            .await;
+    });
+    let (snapshot, mut remote_events) = h.host.remote_attach().await.unwrap();
     assert_eq!(snapshot["workspace"]["cards"][0]["id"], card["id"]);
     assert_eq!(snapshot["terminals"][0]["running"], true);
     assert_eq!(snapshot["terminals"][0]["cols"], 80);
+    assert_eq!(snapshot["output"][&id], "captured-screenduring-capture");
     let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
     h.host.remote_input(id.clone(), "remote".into(), active).await.unwrap();
-    h.host.remote_attach().await;
+    h.host.remote_attach().await.unwrap();
     h.host.input(&id, "desktop-second".into(), 1);
     h.host.running().await;
-    let (key, events, process) = h.launches.lock().unwrap()[0].clone();
     assert_eq!(
         process.lock().unwrap().writes,
         ["desktop-first", "remote", "desktop-second"]
@@ -403,13 +434,14 @@ async fn remote_attachment_preserves_desktop_state_sequences_and_event_delivery(
     .await
     .unwrap();
     assert_eq!(received["data"], "shared-output");
-    let (snapshot, _) = h.host.remote_attach().await;
-    assert_eq!(snapshot["output"][&id], "shared-output");
+    let (snapshot, _) = h.host.remote_attach().await.unwrap();
+    assert_eq!(snapshot["output"][&id], "captured-screenduring-captureshared-output");
     h.host.resize(&id, &json!(92), &json!(31));
-    let (snapshot, _) = h.host.remote_attach().await;
+    let (snapshot, _) = h.host.remote_attach().await.unwrap();
     assert_eq!(snapshot["terminals"][0]["cols"], 92);
     assert_eq!(snapshot["terminals"][0]["rows"], 31);
     h.host.remote_detach().await;
+    assert!(h.host.remote_attach().await.is_none());
     h.host.input(&id, "desktop-after-stop".into(), 2);
     h.host.running().await;
     assert_eq!(process.lock().unwrap().writes.last().unwrap(), "desktop-after-stop");

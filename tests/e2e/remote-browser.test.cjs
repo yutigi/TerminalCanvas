@@ -6,6 +6,22 @@ const path = require('node:path');
 const { chromium } = require('playwright-core');
 const { launch, until, hasOutputLine, root } = require('./harness.cjs');
 
+async function visibleTerminalLine(page, id, text) {
+    return page.evaluate(({ id, text }) => {
+        const screen = sessions.get(id)?.element.querySelector('.xterm-screen');
+        const rows = screen?.querySelectorAll('.xterm-rows > div');
+        return [...(rows || [])].some(row => {
+            if (row.textContent.trim() !== text) return false;
+            const range = document.createRange();
+            range.selectNodeContents(row);
+            const { left, top, width, height } = range.getBoundingClientRect();
+            if (!width || !height || !row.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+            // xterm's rendered rows ignore pointer events. Hit-test their screen for clipping or overlays.
+            return screen.contains(document.elementFromPoint(left + width / 2, top + height / 2));
+        });
+    }, { id, text });
+}
+
 test('loopback controller and viewer share the desktop PTY without sharing ownership', {
     skip: process.platform !== 'win32', timeout: 120000
 }, async t => {
@@ -23,6 +39,12 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
     }, folder);
     await until(async () => !(await h.page.evaluate(card => invoke('duplicate-directory', card), card)).warning,
         'The isolated PowerShell did not reach its prompt.');
+    await h.page.evaluate(id => window.terminalCanvas.input(id,
+        "Write-Output 'REMOTE_OLD_SCROLLBACK'; 1..40 | ForEach-Object { Write-Output $_ }; Write-Output 'REMOTE_BEFORE_START'\r"), card.id);
+    await until(async () => hasOutputLine(await h.output(card.id), 'REMOTE_BEFORE_START'),
+        'The desktop PTY did not produce the line before Browser access started.');
+    await until(() => visibleTerminalLine(h.page, card.id, 'REMOTE_BEFORE_START'),
+        'The desktop did not render the line written before Browser access started.');
     if (!await h.page.locator('#remote-settings').isVisible()) await h.page.locator('#sidebar-toggle').click();
     await h.page.locator('#remote-settings').click();
     await h.page.locator('#remote-start-stop').click();
@@ -57,6 +79,14 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
     }
     await controller.waitForFunction(id => sessions.get(id)?.status === 'running', card.id);
     assert.equal(await controller.evaluate(() => window.terminalCanvas.role), 'control');
+    await until(() => visibleTerminalLine(controller, card.id, 'REMOTE_BEFORE_START'),
+        'The controller did not render the desktop screen present before Browser access started.');
+    assert.equal(await controller.evaluate(id => {
+        const buffer = sessions.get(id).terminal.buffer.active;
+        return Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true))
+            .includes('REMOTE_OLD_SCROLLBACK');
+    }, card.id), false, 'Browser access shared pre-start scrollback outside the terminal screen.');
+    await controller.screenshot({ path: path.join(root, '.cache', 'tauri-remote-browser-initial.png') });
     const conflicting = await controllerContext.newPage();
     conflicting.on('pageerror', error => browserErrors.push(error.message));
     await conflicting.goto(access.url);
@@ -74,7 +104,10 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
         s.terminal.onData(() => window.__remoteInputProbe.push({ phase: 'data', userInput: s.userInput }));
         s.element.addEventListener('keydown', () => window.__remoteInputProbe.push({ phase: 'keydown', userInput: s.userInput }), true);
     }, card.id);
-    await controller.locator('.xterm-helper-textarea').focus();
+    const controllerScreen = controller.locator(`.terminal-card[data-id="${card.id}"] .xterm-screen`);
+    await controllerScreen.click();
+    assert.equal(await controller.locator('.xterm-helper-textarea').evaluate(el => el === document.activeElement), true,
+        'Clicking a browser terminal should focus its input.');
     await controller.keyboard.type("Write-Output 'REMOTE_BROWSER_INPUT'");
     await controller.keyboard.press('Enter');
     try {
@@ -85,6 +118,9 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
         throw error;
     }
 
+    await until(() => visibleTerminalLine(controller, card.id, 'REMOTE_BROWSER_INPUT'),
+        'The controller did not render the result of browser typing.');
+
     const viewerContext = await browser.newContext({ viewport: { width: 1200, height: 800 } });
     const viewer = await viewerContext.newPage();
     viewer.on('pageerror', error => browserErrors.push(error.message));
@@ -94,12 +130,12 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
     assert.equal(await viewer.evaluate(() => window.terminalCanvas.role), 'view');
     assert.equal(await viewer.evaluate(id => sessions.get(id).terminal.options.disableStdin, card.id), true);
     await h.page.evaluate(id => window.terminalCanvas.input(id, "Write-Output 'REMOTE_SHARED_OUTPUT'\r"), card.id);
-    const seesOutput = page => page.evaluate(id => {
-        const buffer = sessions.get(id)?.terminal?.buffer.active;
-        return buffer && Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true)).includes('REMOTE_SHARED_OUTPUT');
-    }, card.id);
-    await until(() => seesOutput(controller), 'Controller did not receive desktop output.');
-    await until(() => seesOutput(viewer), 'Viewer did not receive desktop output.');
+    await until(() => visibleTerminalLine(controller, card.id, 'REMOTE_SHARED_OUTPUT'),
+        'The controller did not render live desktop output.');
+    await until(() => visibleTerminalLine(viewer, card.id, 'REMOTE_SHARED_OUTPUT'),
+        'The viewer did not render live desktop output.');
+    await until(() => visibleTerminalLine(viewer, card.id, 'REMOTE_BEFORE_START'),
+        'The viewer did not render the desktop screen present before Browser access started.');
     // A new desktop canvas must arrive without replacing existing browser emulators or navigation.
     await controller.evaluate(id => {
         window.__originalTerminal = sessions.get(id).terminal;
@@ -127,7 +163,7 @@ test('loopback controller and viewer share the desktop PTY without sharing owner
     await until(() => seesHiddenOutput(controller), 'Hidden controller terminal lost output.');
     await until(() => seesHiddenOutput(viewer), 'Hidden viewer terminal lost output.');
     await controller.locator('#canvas-list').selectOption(firstCanvas);
-    await controller.locator(`.terminal-card[data-id="${card.id}"] .xterm-helper-textarea`).focus();
+    await controllerScreen.click();
     await controller.keyboard.type("Write-Output 'REMOTE_OTHER_CANVAS_INPUT'");
     await controller.keyboard.press('Enter');
     await until(async () => hasOutputLine(await h.output(card.id), 'REMOTE_OTHER_CANVAS_INPUT'),

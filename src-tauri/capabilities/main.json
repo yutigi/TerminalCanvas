@@ -40,6 +40,7 @@
     "allow-ack",
     "allow-update-install",
     "allow-remote-start",
+    "allow-remote-snapshot",
     "allow-remote-stop",
     "allow-remote-status",
     "allow-remote-rotate",

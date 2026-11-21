@@ -229,7 +229,7 @@ impl Remote {
                     stop,
                     task: Mutex::new(None),
                 });
-                self.host.remote_attach().await;
+                self.host.remote_begin(secret()).await;
                 let router = router(server.clone());
                 let mut stopping = server.stop.subscribe();
                 let serving = server.clone();
@@ -379,6 +379,7 @@ fn static_path(path: &str) -> Option<&str> {
         | "/vendor/xterm.js"
         | "/vendor/xterm.css"
         | "/vendor/addon-fit.js"
+        | "/vendor/addon-serialize.js"
         | "/assets/logo.svg" => path.strip_prefix('/'),
         _ => None,
     }
@@ -478,7 +479,10 @@ async fn connected(server: Arc<Server>, id: String, role: Role, mut socket: WebS
         return;
     };
     server.notify();
-    let (mut snapshot, mut events) = server.host.remote_attach().await;
+    let Some((mut snapshot, mut events)) = server.host.remote_attach().await else {
+        disconnect(&server, &id);
+        return;
+    };
     snapshot["type"] = json!("remote-initialize");
     snapshot["role"] = json!(if matches!(role, Role::Control) {
         "control"
@@ -826,6 +830,7 @@ mod tests {
             .await
             .unwrap();
         let server = server(host(), listener.local_addr().unwrap().port());
+        server.host.remote_begin("test".into()).await;
         let app = router(server.clone());
         let mut stop = server.stop.subscribe();
         let task = tokio::spawn(async move {
