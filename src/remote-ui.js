@@ -7,7 +7,7 @@
     const dialog = document.createElement('dialog');
     dialog.id = 'remote-dialog';
     dialog.innerHTML = `<h2>Browser access</h2>
-        <p class="dialog-description">Connect a browser on this computer to running terminals. The desktop controls the workspace and terminal sizes. LAN/VPN access is planned.</p>
+        <p class="dialog-description">Connect a browser on this computer to running terminals. Starting access shares the current screens of running terminals and new output. The desktop controls the workspace and terminal sizes.</p>
         <label class="field-label" for="remote-port">Port (0 chooses an available port)</label>
         <input id="remote-port" type="number" min="0" max="65535" value="0">
         <p id="remote-state" class="info-copy" role="status">Off</p>

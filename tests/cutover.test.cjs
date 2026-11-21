@@ -10,10 +10,11 @@ test('cutover has only pinned development packages and no legacy runtime entry o
     assert.equal(manifest.dependencies, undefined);
     for (const script of ['postinstall', 'dev', 'rebuild']) assert.equal(manifest.scripts[script], undefined);
     assert.match(manifest.scripts.start, /^cargo /);
-    assert.deepEqual(Object.keys(manifest.devDependencies).sort(), ['@xterm/addon-fit', '@xterm/xterm', 'playwright-core']);
+    const allowed = ['@xterm/addon-fit', '@xterm/addon-serialize', '@xterm/xterm', 'playwright-core'];
+    assert.deepEqual(Object.keys(manifest.devDependencies).sort(), allowed);
     for (const version of Object.values(manifest.devDependencies)) assert.match(version, /^\d+\.\d+\.\d+$/);
     const lock = require('../package-lock.json');
-    assert.equal(Object.keys(lock.packages).length, 4);
+    assert.deepEqual(Object.keys(lock.packages).sort(), ['', ...allowed.map(name => `node_modules/${name}`)]);
     assert.ok(Object.values(lock.packages).every(entry => !entry.hasInstallScript));
 });
 

@@ -276,6 +276,7 @@ struct State {
     inputs: HashMap<String, InputOrder>,
     launches: crate::launches::Launches,
     mirror: Option<crate::remote_mirror::Mirror>,
+    remote_capture: Option<RemoteCapture>,
 }
 
 #[derive(Default)]
@@ -291,6 +292,12 @@ struct NameEntry {
     next_read: std::time::Instant,
     settled: SettledTitle,
     origin: std::time::Instant,
+}
+
+struct RemoteCapture {
+    request_id: String,
+    generations: HashMap<String, u64>,
+    done: tokio::sync::oneshot::Sender<()>,
 }
 
 /// Where events for the UI go.
@@ -392,6 +399,7 @@ impl Host {
             inputs: HashMap::new(),
             launches: crate::launches::Launches::new(),
             mirror: None,
+            remote_capture: None,
         };
         let host = Arc::new(Host {
             state: sender,
@@ -1359,23 +1367,79 @@ impl Host {
         self.paths.assets()
     }
 
+    /// Start buffering PTY output at the same point in the desktop event stream as the capture.
+    pub async fn remote_begin(&self, request_id: String) {
+        let (done, captured) = tokio::sync::oneshot::channel();
+        self.with_state(move |host, state| {
+            let generations: HashMap<_, _> = state
+                .recovery
+                .board()
+                .cards
+                .iter()
+                .filter_map(|card| state.manager.view(&card.id).map(|v| (card.id.clone(), v.0)))
+                .collect();
+            state.mirror = Some(crate::remote_mirror::Mirror::new());
+            if !generations.is_empty() {
+                let event = json!({
+                    "type": "remote-capture",
+                    "requestId": request_id,
+                    "ids": generations.keys().collect::<Vec<_>>(),
+                });
+                state.remote_capture = Some(RemoteCapture {
+                    request_id,
+                    generations,
+                    done,
+                });
+                host.emit(event);
+            }
+        })
+        .await;
+        if tokio::time::timeout(Duration::from_secs(3), captured).await.is_err() {
+            // An unresponsive desktop can still start the server with live output.
+            self.with_state(|_, state| state.remote_capture = None).await;
+        }
+    }
+
+    pub async fn remote_snapshot(&self, request_id: String, mut screens: BTreeMap<String, String>) {
+        self.with_state(move |_, state| {
+            let Some(capture) = state.remote_capture.take_if(|capture| capture.request_id == request_id) else {
+                return;
+            };
+            screens.retain(|id, _| {
+                state
+                    .manager
+                    .view(id)
+                    .is_some_and(|v| capture.generations.get(id) == Some(&v.0))
+            });
+            if let Some(mirror) = &mut state.mirror {
+                mirror.seed(screens);
+            }
+            let _ = capture.done.send(());
+        })
+        .await;
+    }
+
     /// Attaches to live state without desktop initialization, recovery reset, or input reset.
-    pub async fn remote_attach(&self) -> (Value, tokio::sync::broadcast::Receiver<Value>) {
+    pub async fn remote_attach(&self) -> Option<(Value, tokio::sync::broadcast::Receiver<Value>)> {
         self.with_state(|host, state| {
-            let mirror = state.mirror.get_or_insert_with(crate::remote_mirror::Mirror::new);
+            let mirror = state.mirror.as_ref()?;
             let events = host.remote_events.subscribe();
             let mut snapshot = mirror.snapshot(state.recovery.board(), &state.manager);
             snapshot["profiles"] = json!(PROFILES);
             snapshot["home"] = json!(host.home);
             snapshot["platform"] = json!(node_platform(host.os));
             snapshot["titleEpoch"] = json!(state.recovery.epoch());
-            (snapshot, events)
+            Some((snapshot, events))
         })
         .await
     }
 
     pub async fn remote_detach(&self) {
-        self.with_state(|_, state| state.mirror = None).await;
+        self.with_state(|_, state| {
+            state.remote_capture = None;
+            state.mirror = None;
+        })
+        .await;
     }
 
     /// WebSocket order is already serial. It must not share the desktop bridge's sequence map.
