@@ -229,7 +229,7 @@ impl Remote {
                     stop,
                     task: Mutex::new(None),
                 });
-                self.host.remote_attach().await;
+                self.host.remote_begin(secret()).await;
                 let router = router(server.clone());
                 let mut stopping = server.stop.subscribe();
                 let serving = server.clone();
@@ -477,7 +477,10 @@ async fn connected(server: Arc<Server>, id: String, role: Role, mut socket: WebS
         return;
     };
     server.notify();
-    let (mut snapshot, mut events) = server.host.remote_attach().await;
+    let Some((mut snapshot, mut events)) = server.host.remote_attach().await else {
+        disconnect(&server, &id);
+        return;
+    };
     snapshot["type"] = json!("remote-initialize");
     snapshot["role"] = json!(if matches!(role, Role::Control) {
         "control"

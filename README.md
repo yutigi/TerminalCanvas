@@ -89,12 +89,13 @@ Stopping or revoking sessions invalidates queued shell input as well as active c
 
 This phase binds only IPv4 loopback and checks the exact Host and Origin. It rejects direct
 LAN/VPN access and arbitrary file paths, and keeps browser CSP separate from the unchanged desktop
-CSP. Terminal output is replayed from a bounded, memory-only buffer collected while browser access
-is running (2 MiB across terminals); older output and output before enabling access are unavailable.
-Slow clients disconnect and can reload for a fresh snapshot; they never acknowledge or stall the
-desktop's PTY output. Replay is a recent output stream, not an exact screen snapshot; full-screen
-programs may need a redraw after attachment. Treat controller tokens like access to your shells, and viewer tokens like
-access to terminal output and the workspace.
+CSP. When you start Browser access, it shares the current screen of each running terminal, including
+any text already on that screen. Earlier scrollback stays on the desktop. The screens and subsequent
+output share a 2 MiB, memory-only replay buffer. Slow clients disconnect and can reload to replay
+recent output. They never acknowledge or stall the desktop's PTY output. Full-screen programs may
+need a redraw after attachment, especially once older output has dropped out of the buffer. Treat
+controller tokens like access to your shells, and viewer tokens like access to terminal output and
+the workspace.
 
 **iPhone/iPad and Tailscale:** direct access at a Tailscale `100.x` address or a LAN address is not
 implemented in this phase. Installing Tailscale does not change that: `127.0.0.1` on an iPhone
@@ -440,8 +441,9 @@ Clipboard tests preserve native formats, and test-only PowerShell shells skip us
 
 The browser-access E2E test also requires Microsoft Edge. After building the isolated app and hook,
 run `node --test tests/e2e/remote-browser.test.cjs` for its focused controller/viewer check. It saves
-`.cache/tauri-remote-browser-controller.png` and `.cache/tauri-remote-browser-desktop.png`; the Windows
-CI screenshot artifact includes these. A local pass does not replace the ten complete native E2E runs.
+screenshots of the initial browser view, the controller, and the desktop under
+`.cache/tauri-remote-browser-*.png`. The Windows CI screenshot artifact includes these. A local pass
+does not replace the ten complete native E2E runs.
 
 `tests/reference/node-host/` contains frozen, standalone compatibility oracles, not an application
 host. They use Node built-ins only, are invoked only by the golden capture, and are excluded from

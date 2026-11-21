@@ -1866,6 +1866,36 @@ window.addEventListener('resize', () => { if (ready) renderCamera(); });
 const HIDDEN_PARSE_BACKLOG = 4_000_000;
 // The host ignores a larger acknowledgment.
 const ACK_CHUNK = 1024 * 1024;
+async function captureRemoteScreens(event) {
+    const encoder = new TextEncoder();
+    let remaining = 2 * 1024 * 1024;
+    const screens = Object.create(null);
+    await Promise.all(event.ids.map(id => {
+        const s = sessions.get(id);
+        if (!s?.terminal || s.status !== 'running') return;
+        const generation = s.generation;
+        // This barrier runs after PTY writes before the host's capture event and before later writes.
+        return new Promise((resolve, reject) => s.terminal.write('', () => {
+            if (sessions.get(id) !== s || s.status !== 'running' || s.generation !== generation) return resolve();
+            const addon = new window.SerializeAddon.SerializeAddon();
+            s.terminal.loadAddon(addon);
+            try {
+                let screen = addon.serialize({ scrollback: 0 });
+                if (s.terminal.buffer.active.type === 'alternate') {
+                    // The addon emits the normal screen first, followed by DECSET 1049 and the alternate screen.
+                    const start = screen.indexOf('\x1b[?1049h');
+                    screen = start < 0 ? '' : screen.slice(start);
+                }
+                const bytes = encoder.encode(screen).length;
+                if (bytes <= remaining) { screens[id] = screen; remaining -= bytes; }
+                resolve();
+            } catch (error) { reject(error); }
+            finally { addon.dispose(); }
+        }));
+    }));
+    await invoke('remote-snapshot', { requestId: event.requestId, screens });
+}
+
 function writeOutput(s, id, data) {
     s.ackId = id;
     s.unacknowledged = (s.unacknowledged || 0) + data.length;
@@ -1885,6 +1915,9 @@ function acknowledgeOutput(s) {
 document.addEventListener('visibilitychange', () => { for (const s of sessions.values()) if (s.unacknowledged) acknowledgeOutput(s); });
 if (bridge) {
     bridge.onEvent(event => {
+        if (!bridge.remote && event.type === 'remote-capture') {
+            captureRemoteScreens(event).catch(error => toast(error.message));
+        }
         if (bridge.remote && event.type === 'remote-workspace' && ready) remoteWorkspace(event.workspace, event.titleEpoch);
         if (bridge.remote && event.type === 'remote-terminals' && ready) remoteTerminals(event.terminals);
         if (bridge.remote && event.type === 'remote-disconnected') {

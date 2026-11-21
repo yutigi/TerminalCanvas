@@ -145,6 +145,21 @@ remote_actions! {
     remote_revoke => "remote-revoke",
 }
 
+/// The visible xterm screens requested by the host when Browser access starts.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenCapture {
+    request_id: String,
+    screens: std::collections::BTreeMap<String, String>,
+}
+
+#[tauri::command]
+async fn remote_snapshot(webview: Webview, host: State<'_, Arc<Host>>, payload: ScreenCapture) -> Result<(), String> {
+    authorized(&webview)?;
+    host.remote_snapshot(payload.request_id, payload.screens).await;
+    Ok(())
+}
+
 /// The image arrives as the raw IPC body, not as a JSON array of numbers.
 #[tauri::command]
 async fn import_image(webview: Webview, host: State<'_, Arc<Host>>, request: Request<'_>) -> Result<Value, String> {
@@ -354,6 +369,7 @@ pub fn run() {
             ack,
             update_install,
             remote_start,
+            remote_snapshot,
             remote_stop,
             remote_status,
             remote_rotate,
