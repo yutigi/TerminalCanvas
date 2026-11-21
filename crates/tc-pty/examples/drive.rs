@@ -129,6 +129,7 @@ impl Driver {
             TerminalEvent::Error { message, .. } => self.log("error", message),
             TerminalEvent::Exit { status, .. } => self.log("exit", format!("{status:?}")),
             TerminalEvent::Launch { request, .. } => self.log("launch", format!("{request:?}")),
+            TerminalEvent::Hook { .. } | TerminalEvent::CommandExit { .. } => {}
         }
     }
 

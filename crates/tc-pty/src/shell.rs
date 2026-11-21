@@ -56,7 +56,11 @@ pub fn powershell_source(settings: &str) -> String {
         "{POWERSHELL_BOOTSTRAP}{}",
         POWERSHELL_AGENT.replacen(SETTINGS, &ps_quote(settings), 1).replacen(
             CODEX_HOOK,
-            &ps_quote(&codex_hook_config(true)),
+            &codex_hook_arguments(true)
+                .iter()
+                .map(|arg| ps_quote(arg))
+                .collect::<Vec<_>>()
+                .join(", '-c', "),
             1
         )
     )
@@ -66,7 +70,11 @@ pub fn powershell_source(settings: &str) -> String {
 pub fn bash_source(settings: &str) -> String {
     BASH_INTEGRATION.replacen(SETTINGS, &sh_quote(settings), 1).replacen(
         CODEX_HOOK,
-        &sh_quote(&codex_hook_config(false)),
+        &codex_hook_arguments(false)
+            .iter()
+            .map(|arg| sh_quote(arg))
+            .collect::<Vec<_>>()
+            .join(" -c "),
         1,
     )
 }
@@ -89,6 +97,32 @@ pub fn codex_hook_config(windows: bool) -> String {
     format!("hooks.SessionStart=[{{hooks=[{{type='command',command='{command}',timeout=5}}]}}]")
 }
 
+/// Each override is stable across launches so Codex can retain the user's hook trust decision.
+pub fn codex_hook_arguments(windows: bool) -> Vec<String> {
+    let mut configs = vec![codex_hook_config(windows)];
+    let command = lifecycle_command("codex", windows);
+    for event in ["UserPromptSubmit", "Stop", "Interrupt", "SessionEnd"] {
+        configs.push(format!(
+            "hooks.{event}=[{{hooks=[{{type='command',command='{command}',timeout=5}}]}}]"
+        ));
+    }
+    configs
+}
+
+pub fn lifecycle_command(provider: &str, windows: bool) -> String {
+    if windows {
+        let script = format!(
+            "$reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.Encoding]::UTF8); $payload = $reader.ReadToEnd(); $reader.Dispose(); $OutputEncoding = New-Object Text.UTF8Encoding $false; $payload | & $env:TC_HOOK lifecycle {provider}"
+        );
+        format!(
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+            encode_command(&script)
+        )
+    } else {
+        format!("\"$TC_HOOK\" lifecycle {provider}")
+    }
+}
+
 /// The Claude `SessionStart` hook command. On Windows it reads the hook input as UTF-8 before
 /// passing it on, so directories with non-ASCII names survive the console code page.
 pub fn claude_hook_command(hook: &str, windows: bool) -> String {
@@ -108,9 +142,12 @@ pub fn claude_hook_command(hook: &str, windows: bool) -> String {
 
 /// The Claude settings file: one `SessionStart` hook with a 5 second timeout.
 pub fn claude_settings(hook: &str, windows: bool) -> String {
-    let settings = serde_json::json!({
+    let mut settings = serde_json::json!({
         "hooks": { "SessionStart": [{ "hooks": [{ "type": "command", "command": claude_hook_command(hook, windows), "timeout": 5 }] }] }
     });
+    for event in ["UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"] {
+        settings["hooks"][event] = serde_json::json!([{ "hooks": [{ "type":"command", "command":lifecycle_command("claude", windows), "timeout":5 }] }]);
+    }
     settings.to_string()
 }
 

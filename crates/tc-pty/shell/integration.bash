@@ -26,7 +26,7 @@ __tc_agent() {
 }
 claude() { __tc_agent claude "$@"; }
 codex() { __tc_agent codex "$@"; }
-__tc_cwd() { printf '\033]7;file://localhost%s\007' "$(pwd -P | sed 's/%/%25/g; s/ /%20/g; s/#/%23/g; s/?/%3F/g')"; }
+__tc_cwd() { local tc_status=$?; printf '\033]7;file://localhost%s\007' "$(pwd -P | sed 's/%/%25/g; s/ /%20/g; s/#/%23/g; s/?/%3F/g')"; printf '\033]777;tc-ready;1\007'; return "$tc_status"; }
 if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a'* ]]; then
     PROMPT_COMMAND=(__tc_cwd "${PROMPT_COMMAND[@]}")
 else

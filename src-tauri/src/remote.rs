@@ -371,6 +371,7 @@ fn static_path(path: &str) -> Option<&str> {
         | "/terminal-pointer.js"
         | "/item-styles.js"
         | "/terminal-themes.js"
+        | "/hook-pointers.js"
         | "/items.js"
         | "/history.js"
         | "/clipboard.js"

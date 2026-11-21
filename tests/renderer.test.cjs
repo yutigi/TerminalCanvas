@@ -3364,9 +3364,208 @@ test('a terminal revealed from the keyboard clears the minimap and toolbars', as
     assert.ok(shown.x >= 24 && shown.y >= 24 && shown.x + shown.w <= 1100 - 24 && shown.y + shown.h <= 720 - 24, JSON.stringify(shown));
 });
 
+test('hook pointers configure and disarm through host validation, display status and strip automation from copied arrows', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ title: 'Planner' }), createCard({ title: 'Reviewer' }));
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });
+    const { context, elements, calls, onEvent } = await boot(board);
+    vm.runInContext('select("hook")', context);
+    assert.equal(elements.get('#pointer-configure').hidden, false);
+    assert.equal(elements.get('#pointer-configure-label').textContent, 'Add automation');
+    elements.get('#pointer-configure').onclick();
+    assert.equal(elements.get('#pointer-dialog').open, true);
+    assert.equal(elements.get('#pointer-description').textContent, 'Planner → Reviewer');
+    elements.get('#pointer-text').value = 'Review the implementation';
+    elements.get('#pointer-form').dispatch('submit', { submitter: elements.get('#pointer-save-disabled') });
+    await flush();
+    assert.equal(json(context, 'workspace.items[0].hook.armed'), false);
+    assert.equal(elements.get('#pointer-status').textContent, 'Disabled');
+    assert.equal(elements.get('#pointer-configure-label').textContent, 'Edit automation');
+    elements.get('#pointer-configure').onclick();
+    assert.equal(elements.get('#pointer-text').value, 'Review the implementation');
+    elements.get('#pointer-form').dispatch('submit', { submitter: elements.get('#pointer-submit') });
+    await new Promise(resolve => setImmediate(resolve));
+    const configured = calls.findLast(call => call.action === 'pointer-configure');
+    assert.equal(configured.payload.id, 'hook'); assert.equal(configured.payload.hook.armed, true);
+    assert.equal(json(context, 'workspace.items[0].hook.text'), 'Review the implementation');
+    assert.equal(elements.get('#pointers-pause').hidden, false);
+    assert.equal(elements.get('#pointer-status').textContent, 'Waiting for Planner');
+    onEvent({ type: 'pointer', id: 'hook', state: 'queued', message: 'Waiting for Stop.' });
+    assert.equal(elements.get('#pointer-status').textContent, 'Queued until Reviewer finishes (up to 60 seconds)');
+    onEvent({ type: 'pointer', id: 'hook', state: 'firing', message: 'Delivered.' });
+    assert.equal(json(context, 'itemViews.get("hook").element.dataset.pointerState'), 'firing');
+    assert.match(elements.get('#pointer-status').textContent, /Delivered/);
+    assert.equal(vm.runInContext('itemViews.get("hook").element.classList.contains("pointer-flash")', context), true);
+    assert.equal(vm.runInContext('clipboardItems()[0].hook', context), undefined);
+    elements.get('#pointer-toggle').onclick(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(json(context, 'workspace.items[0].hook.armed'), false);
+    elements.get('#pointers-pause').onclick(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(json(context, 'workspace.hooksPaused'), true);
+    assert.equal(elements.get('#pointers-pause').textContent, 'Resume automations');
+    assert.equal(elements.get('#pointer-status').textContent, 'Disabled');
+});
+
+test('automation editor reveals relevant options, copies a named trigger, and checks setup without saving', async () => {
+    const board = createWorkspace(); board.cards.push(createCard({ title: 'Planner' }), createCard({ title: 'Build' }));
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });
+    const { context, elements, calls } = await boot(board, { respond: action => action === 'pointer-check' ? {
+        source: 'The terminal can accept manual triggers.', target: 'The shell is idle and can run a command.'
+    } : null });
+    vm.runInContext('select("hook")', context);
+    elements.get('#pointer-configure').onclick();
+    const event = elements.get('#pointer-event'), action = elements.get('#pointer-action');
+    assert.equal(elements.get('#pointer-filter-field').hidden, true);
+    assert.equal(elements.get('#pointer-name-field').hidden, true);
+    assert.equal(elements.get('#pointer-context-field').hidden, false);
+    event.value = 'exit'; event.onchange();
+    assert.equal(elements.get('#pointer-filter-field').hidden, false);
+    elements.get('#pointer-filter').value = 'failure';
+    event.value = 'trigger'; event.onchange();
+    assert.equal(elements.get('#pointer-filter-field').hidden, true);
+    assert.equal(elements.get('#pointer-name-field').hidden, false);
+    const name = elements.get('#pointer-name');
+    name.value = 'reviewed;'; name.oninput(); name.onblur();
+    assert.equal(elements.get('#pointer-copy').disabled, true);
+    assert.equal(name.attributes.get('aria-invalid'), 'true');
+    name.value = 'reviewed'; name.oninput();
+    assert.equal(name.attributes.has('aria-invalid'), false);
+    assert.equal(elements.get('#pointer-command').textContent, '& $env:TC_HOOK trigger reviewed');
+    const shell = elements.get('#pointer-shell');
+    shell.value = 'bash'; shell.onchange();
+    await elements.get('#pointer-copy').onclick();
+    assert.equal(calls.find(call => call.action === 'clipboard-write').payload, '"$TC_HOOK" trigger reviewed');
+    action.value = 'shell'; action.onchange();
+    assert.equal(elements.get('#pointer-text-label').textContent, 'Command');
+    assert.equal(elements.get('#pointer-context-field').hidden, true);
+    await elements.get('#pointer-check-setup').onclick();
+    const check = calls.find(call => call.action === 'pointer-check');
+    assert.deepEqual(JSON.parse(JSON.stringify(check.payload)), {
+        source: board.cards[0].id, target: board.cards[1].id, event: 'trigger', action: 'shell'
+    });
+    assert.match(elements.get('#pointer-setup-status').children[1].textContent, /Build · The shell is idle/);
+    const text = elements.get('#pointer-text');
+    text.value = 'echo first\necho second';
+    elements.get('#pointer-form').dispatch('submit', { submitter: elements.get('#pointer-save-disabled') });
+    assert.equal(text.attributes.get('aria-invalid'), 'true');
+    assert.match(elements.get('#pointer-text-error').textContent, /single-line command/);
+    assert.equal(calls.some(call => call.action === 'pointer-configure'), false);
+    action.value = 'new-terminal'; action.onchange();
+    assert.equal(elements.get('#pointer-setup-status').hidden, true);
+    text.value = 'echo okay'; text.oninput();
+    elements.get('#pointer-form').dispatch('submit', { submitter: elements.get('#pointer-save-disabled') });
+    await flush();
+    assert.deepEqual(json(context, 'workspace.items[0].hook'), {
+        event: 'trigger', action: 'new-terminal', text: 'echo okay', armed: false, filter: 'any', name: 'reviewed', context: false
+    });
+});
+
+test('prompt automation saves a provider and model or uses the running session', async () => {
+    const board = createWorkspace();
+    board.cards.push(createCard({ title: 'Planner' }), createCard({ title: 'Reviewer' }));
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });
+    const { context, elements, calls } = await boot(board);
+    vm.runInContext('select("hook")', context);
+    const provider = elements.get('#pointer-provider'), model = elements.get('#pointer-model');
+    elements.get('#pointer-configure').onclick();
+    assert.equal(provider.value, '');
+    assert.equal(elements.get('#pointer-model-field').hidden, true);
+    provider.value = 'claude'; provider.onchange();
+    assert.equal(elements.get('#pointer-model-field').hidden, false);
+    assert.equal(model.attributes.get('list'), 'pointer-claude-models');
+    const form = elements.get('#pointer-form'), submitter = elements.get('#pointer-submit');
+    elements.get('#pointer-text').value = 'Review the change';
+    model.value = '--version';
+    form.dispatch('submit', { submitter });
+    assert.equal(model.attributes.get('aria-invalid'), 'true');
+    assert.equal(calls.some(call => call.action === 'pointer-configure'), false);
+    model.value = 'sonnet[1m]'; model.oninput();
+    form.dispatch('submit', { submitter });
+    await flush();
+    assert.equal(json(context, 'workspace.items[0].hook.model'), 'sonnet[1m]');
+    assert.equal(json(context, 'workspace.items[0].hook.provider'), 'claude');
+    elements.get('#pointer-configure').onclick();
+    assert.equal(model.value, 'sonnet[1m]');
+    provider.value = 'codex'; provider.onchange();
+    assert.equal(model.value, '');
+    assert.equal(model.attributes.get('list'), 'pointer-codex-models');
+    provider.value = ''; provider.onchange();
+    form.dispatch('submit', { submitter });
+    await flush();
+    const hook = json(context, 'workspace.items[0].hook');
+    assert.equal(hook.provider, undefined);
+    assert.equal(hook.model, undefined);
+});
+
+test('rejected hook configuration leaves the arrow plain and explains the host error', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });
+    const { context, elements } = await boot(board, { respond: action => action === 'pointer-configure' ? { error: 'Hook pointers cannot form a cycle.' } : null });
+    vm.runInContext('select("hook")', context); elements.get('#pointer-configure').onclick();
+    elements.get('#pointer-text').value = 'Review'; elements.get('#pointer-form').dispatch('submit');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(vm.runInContext('workspace.items[0].hook', context), undefined);
+    assert.equal(elements.get('#pointer-dialog').open, true);
+    assert.equal(elements.get('#pointer-error').textContent, 'Hook pointers cannot form a cycle.');
+});
+
+test('pointer configuration stays current through layout undo, and deleted automation does not return', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id }, hook: { event: 'stop', action: 'prompt', text: 'Review', armed: true } });
+    const { context } = await boot(board);
+    vm.runInContext('select("hook"); recordChange(() => workspace.items[0].color = "blue"); workspace.items[0].hook.armed = false; undo();', context);
+    assert.equal(json(context, 'workspace.items[0].hook.armed'), false);
+    vm.runInContext('recordChange(() => removeItems(["hook"])); undo()', context);
+    assert.equal(vm.runInContext('workspace.items[0].hook', context), undefined);
+});
+
 function switcherState(context) {
     return json(context, '({ active: switcherActive, matches: switcherMatches, query: switcherQuery.value, open: terminalSwitcher.open })');
 }
+
+test('hook configuration preserves hidden canvases and global pause survives navigation and reload', async () => {
+    const board = twoCanvases(), extra = createCard();
+    board.cards.push(extra); board.canvases[1].cardIds.push(extra.id);
+    board.items.push({ id: 'background-hook', type: 'line', arrow: true,
+        start: { id: board.cards[1].id }, end: { id: extra.id },
+        hook: { event: 'trigger', action: 'shell', text: 'echo done', armed: true } });
+    board.canvases[1].itemIds.push('background-hook');
+    const { context, elements, calls, onEvent } = await boot(board);
+    assert.equal(elements.get('#pointers-pause').hidden, false, 'hidden hooks remain pausable');
+    onEvent({ type: 'pointer', id: 'background-hook', state: 'failed', message: 'Target is stopped.' });
+    assert.equal(json(context, 'pointerStates.get("background-hook").state'), 'failed');
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-0');
+    elements.get('#pointers-pause').onclick(); await flush();
+    const configured = calls.find(call => call.action === 'pointer-configure');
+    assert.equal(configured.payload.workspace.cards.length, 3);
+    assert.equal(configured.payload.workspace.canvases.length, 2);
+    vm.runInContext('switchCanvas("canvas-1"); select("background-hook")', context);
+    assert.equal(json(context, 'workspace.hooksPaused'), true);
+    assert.equal(elements.get('#pointers-pause').textContent, 'Resume automations');
+    assert.equal(elements.get('#pointer-status').textContent, 'Paused across all canvases');
+    assert.equal(json(context, 'workspace.items[0].hook.armed'), true);
+    assert.equal(json(context, 'itemViews.get("background-hook").element.dataset.pointerState'), 'paused');
+    const saved = json(context, 'workspaceSnapshot()');
+    assert.equal(saved.hooksPaused, true);
+    context.savedHooks = saved;
+    vm.runInContext('loadWorkspace(savedHooks); createCanvas("Paused too")', context);
+    assert.equal(json(context, 'workspace.hooksPaused'), true);
+    elements.get('#pointers-pause').onclick(); await flush();
+    assert.equal(vm.runInContext('canvasStates.some(canvas => canvas.board.hooksPaused)', context), false);
+});
+
+test('browser pointer controls stay unavailable and follow the desktop global pause', async () => {
+    const board = createWorkspace(); board.cards.push(createCard(), createCard());
+    board.items.push({ id: 'hook', type: 'line', arrow: true,
+        start: { id: board.cards[0].id }, end: { id: board.cards[1].id },
+        hook: { event: 'trigger', action: 'shell', text: 'echo done', armed: true } });
+    const { context, elements, calls, onEvent } = await boot(board, { remote: true });
+    vm.runInContext('select("hook")', context);
+    for (const id of ['#pointer-configure', '#pointer-toggle', '#pointers-pause']) assert.equal(elements.get(id).hidden, true);
+    await assert.rejects(vm.runInContext('savePointerChange(null, null, true)', context), /desktop app/);
+    const paused = structuredClone(board); paused.hooksPaused = true;
+    onEvent({ type: 'remote-workspace', workspace: paused });
+    assert.equal(json(context, 'workspace.hooksPaused'), true);
+    assert.equal(calls.some(call => call.action === 'pointer-configure'), false);
+});
 function switcherSearch(elements, value) {
     const query = elements.get('#switcher-query'); query.value = value; query.oninput();
 }

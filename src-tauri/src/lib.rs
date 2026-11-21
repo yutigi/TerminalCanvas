@@ -8,6 +8,7 @@ mod e2e;
 pub mod host;
 pub mod launches;
 pub mod platform;
+pub mod pointers;
 pub mod protocol;
 pub mod remote;
 mod remote_mirror;
@@ -84,6 +85,8 @@ actions! {
     tmux_setup => "tmux-setup",
     keep_running => "keep-running",
     autosave => "autosave",
+    pointer_check => "pointer-check",
+    pointer_configure => "pointer-configure",
     save => "save",
     save_as => "save-as",
     export => "export",
@@ -331,6 +334,8 @@ pub fn run() {
             tmux_setup,
             keep_running,
             autosave,
+            pointer_check,
+            pointer_configure,
             save,
             save_as,
             export,

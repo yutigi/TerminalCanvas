@@ -292,6 +292,43 @@ fn metadata_event(event: Value) -> String {
     )
 }
 
+#[test]
+fn pointer_lifecycle_reports_are_bound_to_the_current_conversation_and_process_generation() {
+    let mut h = harness();
+    let c = card(json!({ "cwd": cwd() }));
+    h.start(&c).unwrap();
+    let launch = |session: &str| {
+        metadata_event(
+            json!({ "type":"launch", "provider":"claude", "token":SAVED_ID, "sessionId":session, "cwd":cwd() }),
+        )
+    };
+    h.data(0, &launch(SAVED_ID));
+    let mut report = tc_core::pointers::Report {
+        kind: "stop".into(),
+        provider: "claude".into(),
+        token: SAVED_ID.into(),
+        session_id: SAVED_ID.into(),
+        message: String::new(),
+        name: String::new(),
+        exit_code: None,
+        stop_hook_active: false,
+        expires: tc_core::pointers::now_ms() + 2000,
+    };
+    let key = h.key(0);
+    assert!(h.manager.pointer_report_current(id(&c), key.generation, &report));
+    let next = "87654321-4321-4321-9876-123456789abc";
+    h.data(0, &launch(next));
+    assert!(
+        !h.manager.pointer_report_current(id(&c), key.generation, &report),
+        "old conversation within the same CLI process"
+    );
+    report.session_id = next.into();
+    assert!(h.manager.pointer_report_current(id(&c), key.generation, &report));
+    assert!(!h.manager.pointer_report_current(id(&c), key.generation + 1, &report));
+    h.manager.stop(id(&c));
+    assert!(!h.manager.pointer_report_current(id(&c), key.generation, &report));
+}
+
 fn osc(event: &Value) -> String {
     metadata_event(event.clone())
 }
