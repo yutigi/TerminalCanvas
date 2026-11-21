@@ -47,10 +47,14 @@ test('native explicit triggers form a three-shell chain, show VFX, and open a ne
 
 test('native Claude and Codex lifecycle hooks queue a prompt and continue through Stop into a shell target', windows, async t => {
     const tools = await fs.mkdtemp(path.join(root, '.cache', 'pointer-cli-'));
+    await fs.copyFile(path.join(__dirname, 'hook-cli.cjs'), path.join(tools, 'hook-cli.cjs'));
+    // cmd.exe decodes batch files with the console code page, so keep non-ASCII paths out of the file.
     for (const provider of ['claude', 'codex']) {
-        await fs.writeFile(path.join(tools, `${provider}.cmd`), `@echo off\r\n"${process.execPath}" "${path.join(__dirname, 'hook-cli.cjs')}" ${provider} %*\r\n`);
+        await fs.writeFile(path.join(tools, `${provider}.cmd`), `@echo off\r\n"%TC_E2E_NODE%" "%~dp0hook-cli.cjs" ${provider} %*\r\n`);
     }
-    const h = await launch({ clean: true, env: { PATH: tools + path.delimiter + process.env.PATH } }); t.after(() => h.dispose());
+    const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') || 'Path';
+    const env = { [pathKey]: tools + path.delimiter + process.env[pathKey], TC_E2E_NODE: process.execPath };
+    const h = await launch({ clean: true, env }); t.after(() => h.dispose());
     await h.page.evaluate(async () => loadWorkspace((await invoke('new')).workspace));
     const a = await startTerminal(h.page, { title: 'Planner · Claude', cwd: root, command: 'claude', x: 0, y: 0 });
     const b = await startTerminal(h.page, { title: 'Implementer · Codex', cwd: root, command: 'codex', x: 720, y: 0 });
