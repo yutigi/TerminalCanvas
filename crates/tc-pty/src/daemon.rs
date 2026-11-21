@@ -51,6 +51,8 @@ pub const IDLE_EXIT: Duration = Duration::from_secs(30);
 /// renderer keeps 5000 lines of scrollback.
 const HISTORY_LIMIT: usize = 1024 * 1024;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Older helpers kept the handshake's read timeout on an attached connection.
+const LEGACY_KEEPALIVE: Duration = Duration::from_secs(2);
 /// The longest handshake line, before the other side has proved itself.
 const HANDSHAKE_LIMIT: u64 = 4096;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -479,7 +481,7 @@ impl Server {
         let writer = stream.try_clone()?;
         thread::Builder::new()
             .name("tc-daemon-write".into())
-            .spawn(move || write_lines(writer, &lines))?;
+            .spawn(move || write_lines(writer, &lines, None))?;
         Ok(Attached {
             id: self.attachments.fetch_add(1, Ordering::SeqCst),
             out,
@@ -526,7 +528,7 @@ impl Server {
         let attached = self.attachment(&stream)?;
         let id = attached.id;
         let pid = process.pid();
-        attached.send(&json!({ "ok": true, "pid": pid, "shell": shell }));
+        attached.send(&json!({ "ok": true, "pid": pid, "shell": shell, "supportsIdle": true }));
         terminals.kept.insert(
             card.to_owned(),
             Kept {
@@ -563,12 +565,17 @@ impl Server {
         let mut attached = self.attachment(&stream)?;
         let id = attached.id;
         // Another view takes over; the earlier one ends.
-        kept.detach();
+        if let Some(previous) = kept.attached.take() {
+            kept.process.acknowledge(previous.owed);
+            // Let the writer drain this notice before it shuts down the connection.
+            previous.send(&json!({ "t": "superseded" }));
+        }
         attached.send(&json!({
             "ok": true,
             "pid": kept.pid,
             "shell": kept.shell,
             "integration": kept.integration,
+            "supportsIdle": true,
         }));
         let replay = kept.history.replay();
         attached.replay = utf16_len(&replay);
@@ -657,7 +664,7 @@ impl Server {
                     }
                 }
             }
-            SessionEvent::Directory(_) | SessionEvent::Report(_) => {}
+            SessionEvent::Directory(_) | SessionEvent::Report(_) | SessionEvent::Superseded => {}
         }
     }
 }
@@ -671,8 +678,16 @@ fn sink(server: Weak<Server>) -> EventSink {
 }
 
 /// Writes queued lines, several at a time, until the queue or the connection closes.
-fn write_lines(mut stream: TcpStream, lines: &Receiver<String>) {
-    while let Ok(mut batch) = lines.recv() {
+fn write_lines(mut stream: TcpStream, lines: &Receiver<String>, keepalive: Option<Duration>) {
+    let next = || match keepalive {
+        Some(interval) => match lines.recv_timeout(interval) {
+            Ok(message) => Some(message),
+            Err(mpsc::RecvTimeoutError::Timeout) => Some(line(&json!({ "t": "keep-alive" }))),
+            Err(mpsc::RecvTimeoutError::Disconnected) => None,
+        },
+        None => lines.recv().ok(),
+    };
+    while let Some(mut batch) = next() {
         while batch.len() < WRITE_BATCH
             && let Ok(more) = lines.try_recv()
         {
@@ -955,13 +970,16 @@ fn attachment((connection, reply): (Connection, Value), key: SessionKey, events:
     let shell = text(&reply, "shell").to_owned();
     let (input, lines) = mpsc::channel();
     let output = writer.try_clone()?;
+    // Older helpers ignore this frame, but reading it keeps their handshake timeout from firing.
+    let keepalive = (reply.get("supportsIdle") != Some(&Value::Bool(true))).then_some(LEGACY_KEEPALIVE);
     thread::Builder::new()
         .name("tc-daemon-input".into())
-        .spawn(move || write_lines(output, &lines))?;
+        .spawn(move || write_lines(output, &lines, keepalive))?;
     let detached = Arc::new(AtomicBool::new(false));
     let ended = Arc::clone(&detached);
     thread::Builder::new().name("tc-daemon-output".into()).spawn(move || {
         let mut status = None;
+        let mut superseded = false;
         while let Ok(message) = receive(&mut reader) {
             match text(&message, "t") {
                 "out" => events(key.clone(), SessionEvent::Output(text(&message, "d").to_owned())),
@@ -970,12 +988,20 @@ fn attachment((connection, reply): (Connection, Value), key: SessionKey, events:
                     status = Some(ExitStatus { code, signal: None });
                     break;
                 }
+                "superseded" => {
+                    superseded = true;
+                    break;
+                }
                 _ => {}
             }
         }
         // Close this side too: on Windows the helper's shutdown does not wake its own blocked read
         // on a cloned socket, so its connection would otherwise stay open until the app's ends.
         let _ = reader.get_ref().shutdown(Shutdown::Both);
+        if superseded {
+            events(key, SessionEvent::Superseded);
+            return;
+        }
         // Detaching ends the view without an error; a lost helper ends it with one.
         let code = if ended.load(Ordering::SeqCst) { 0 } else { 1 };
         let status = status.unwrap_or(ExitStatus { code, signal: None });
@@ -1081,6 +1107,38 @@ mod tests {
         assert_ne!(base, proof("secret", "client", "nonce"));
         assert_ne!(base, proof("secret", "server", "other"));
         assert!(same(&base, &proof("secret", "server", "nonce")));
+    }
+
+    #[test]
+    fn a_legacy_attachment_keeps_sending_while_idle() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).unwrap();
+        let mut peer = BufReader::new(peer);
+        let connection = Connection {
+            writer: stream.try_clone().unwrap(),
+            reader: BufReader::new(stream),
+        };
+        let mut attached = attachment(
+            (connection, json!({ "ok": true, "shell": "test" })),
+            SessionKey {
+                id: "legacy".into(),
+                generation: 1,
+            },
+            Arc::new(|_, _| {}),
+        )
+        .unwrap();
+
+        // This outlasts the old helper's timeout while the terminal has no input or output.
+        for _ in 0..3 {
+            assert_eq!(receive(&mut peer).unwrap(), json!({ "t": "keep-alive" }));
+        }
+        attached.process.write("echo still here\r").unwrap();
+        assert_eq!(
+            receive(&mut peer).unwrap(),
+            json!({ "t": "in", "d": "echo still here\r" })
+        );
     }
 
     #[test]

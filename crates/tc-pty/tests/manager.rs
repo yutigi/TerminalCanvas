@@ -637,24 +637,35 @@ fn backpressure_pauses_at_the_high_watermark_and_resumes_after_acknowledgment() 
 }
 
 #[test]
-fn exited_sessions_are_removed_and_stale_events_ignored_after_a_restart() {
+fn an_unexpected_exit_recovers_without_replaying_the_command_or_looping_on_failure() {
     let mut h = harness();
-    let card = card(json!({}));
+    let card = with_session(card(json!({ "command": "echo RUN_ONCE" })), saved_session("codex"));
     h.start(&card).unwrap();
+    h.manager.resize(id(&card), &json!(100), &json!(30)).unwrap();
     h.exit(0, 0);
-    assert_eq!(h.manager.running(), 0);
+    assert_eq!(h.manager.running(), 1);
     assert!(h.process(0).lock().unwrap().dropped);
-    h.start(&card).unwrap();
+    assert_eq!((h.launch(1).cols, h.launch(1).rows), (100, 30));
+    assert!(h.process(1).lock().unwrap().writes.is_empty());
+    assert_eq!(h.snapshot(id(&card))["session"], saved_session("codex"));
     h.data(0, "stale");
     h.exit(0, 1);
     assert_eq!(h.manager.running(), 1);
+    h.exit(1, 7);
+    assert_eq!(h.manager.running(), 0);
     let others: Vec<Value> = h
         .events()
         .iter()
         .filter(|event| event["type"] != "metadata")
         .cloned()
         .collect();
-    assert_eq!(others, [json!({ "type": "exit", "id": card["id"], "exitCode": 0 })]);
+    assert_eq!(
+        others,
+        [
+            json!({ "type": "recovered", "id": card["id"], "exitCode": 0 }),
+            json!({ "type": "exit", "id": card["id"], "exitCode": 7 }),
+        ]
+    );
 }
 
 #[test]
@@ -906,7 +917,8 @@ fn process_lookups_are_scoped_to_sessions_and_disposed_on_exit() {
     assert_eq!(h.snapshot(id(&b))["cwd"], "/folder with spaces");
     assert_eq!(pid, h.process(1).lock().unwrap().pid);
     h.exit(0, 0);
-    h.start(&a).unwrap();
+    assert!(h.manager.is_running(id(&a)));
+    assert_ne!(watcher(&h, 2).1, watcher(&h, 0).1);
     let (_, old_key, old_disposed) = watcher(&h, 0);
     h.manager
         .handle(old_key, SessionEvent::Directory(Some("/stale".into())));
@@ -921,6 +933,39 @@ fn process_lookups_are_scoped_to_sessions_and_disposed_on_exit() {
             .iter()
             .all(|watcher| *watcher.disposed.lock().unwrap())
     );
+}
+
+#[test]
+fn an_explicit_finish_request_ends_only_the_requesting_terminal() {
+    use tc_core::launch::write_finish;
+
+    let folder = tempdir("finish");
+    let inbox = folder.join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    let session_file = folder.join("session.json");
+    let requests = inbox.clone();
+    let mut next = Some(Integration::new(None, None, session_file, Vec::new()).with_launch_dir(requests));
+    let integrations: Integrations = Box::new(move |_, _| Ok(next.take()));
+    let mut h = harness_with(config(Platform::Windows, WINDOWS_ENV), Some(integrations));
+    let (a, b) = (card(json!({})), card(json!({})));
+    h.start(&a).unwrap();
+    h.start(&b).unwrap();
+    h.data(0, &metadata_event(json!({ "type": "end", "exitCode": 0 })));
+    assert_eq!(h.manager.running(), 2);
+
+    write_finish(&inbox, 7).unwrap();
+    h.manager.poll_hooks();
+    h.exit(0, 1);
+    assert!(h.process(0).lock().unwrap().killed);
+    assert!(h.manager.is_running(id(&b)));
+    assert!(!h.manager.is_running(id(&a)));
+    assert_eq!(h.launches(), 2);
+    assert_eq!(
+        h.of_type("exit"),
+        [json!({ "type": "exit", "id": a["id"], "exitCode": 7 })]
+    );
+    assert!(!inbox.exists());
+    std::fs::remove_dir_all(folder).unwrap();
 }
 
 /// A Windows prompt report: OSC 9;9 with the folder, then the readiness marker.

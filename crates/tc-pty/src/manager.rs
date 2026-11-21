@@ -16,11 +16,11 @@ use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 use serde_json::Value;
 use tc_core::js::{trim, truthy, utf16_len};
-use tc_core::launch::{LaunchRequest, take_requests, write_result};
+use tc_core::launch::{LaunchRequest, take_finish, take_requests, write_result};
 use tc_core::osc::{DirectoryReports, Report};
 use tc_core::recovery::CardMetadata;
 use tc_core::session::{Launch, LaunchToken, MetadataEvent, MetadataParser, MetadataPatch, Provider, session_metadata};
-use tc_core::workspace::{VERSION, validate_card};
+use tc_core::workspace::{Card, VERSION, validate_card};
 use tc_core::{Error, Platform, Result};
 
 use crate::daemon::Daemon;
@@ -60,6 +60,8 @@ pub struct ExitStatus {
 pub enum SessionEvent {
     Output(String),
     Exit(ExitStatus),
+    /// Another desktop view deliberately took over this helper attachment.
+    Superseded,
     /// A polled process directory (macOS and Linux), or `None` when unknown.
     Directory(Option<String>),
     /// Integration escape sequences read from tmux (see [`crate::tmux`]). The manager handles them
@@ -164,6 +166,11 @@ pub enum TerminalEvent {
         id: String,
         status: ExitStatus,
     },
+    /// A lost terminal was reattached, or its dead shell was replaced.
+    Recovered {
+        id: String,
+        previous_exit: Option<ExitStatus>,
+    },
     /// The live directory, or `None` when the shell reported an unusable one.
     Cwd {
         id: String,
@@ -204,6 +211,16 @@ impl Serialize for TerminalEvent {
                 map.serialize_entry("exitCode", &status.code)?;
                 if let Some(signal) = status.signal {
                     map.serialize_entry("signal", &signal)?;
+                }
+            }
+            TerminalEvent::Recovered { id, previous_exit } => {
+                map.serialize_entry("type", "recovered")?;
+                map.serialize_entry("id", id)?;
+                if let Some(status) = previous_exit {
+                    map.serialize_entry("exitCode", &status.code)?;
+                    if let Some(signal) = status.signal {
+                        map.serialize_entry("signal", &signal)?;
+                    }
                 }
             }
             TerminalEvent::Cwd { id, cwd } => {
@@ -337,6 +354,9 @@ impl Config {
 }
 
 struct Session {
+    card: Card,
+    /// Prevents a failing shell or connection from continually restarting.
+    retry_after: Option<Instant>,
     name_homes: [std::path::PathBuf; 2],
     name_session: Option<tc_core::session::SessionMetadata>,
     size: (u16, u16),
@@ -643,18 +663,29 @@ impl TerminalManager {
         if self.sessions.contains_key(&card.id) {
             return invalid("This terminal is already running.");
         }
-        let platform = self.config.platform;
-        let windows = platform.is_windows();
+        let keeper = self.keeper.clone();
         // A card whose terminal is still kept running attaches to it; a fresh shell replaces it.
-        if let Some(keeper) = self.keeper.clone()
+        if let Some(keeper) = &keeper
             && let Some(integration) = keeper.find(&card.id)
         {
             if mode != "fresh" {
                 let homes = self.name_homes(&self.config.env);
-                return self.attach(&keeper, &card, cols, rows, integration, homes, None);
+                return self.attach(keeper, &card, cols, rows, integration, homes, None);
             }
             keeper.kill_session(&card.id);
         }
+        self.spawn_card(&card, (cols, rows), mode, keeper)
+    }
+
+    fn spawn_card(
+        &mut self,
+        card: &Card,
+        (cols, rows): (u16, u16),
+        mode: &str,
+        keeper: Option<Keeper>,
+    ) -> Result<Started> {
+        let platform = self.config.platform;
+        let windows = platform.is_windows();
         let saved = match (mode, &card.session) {
             ("resume", Some(session)) => &session.cwd,
             _ => &card.cwd,
@@ -665,7 +696,7 @@ impl TerminalManager {
             saved.clone()
         };
         if !is_directory(&cwd) {
-            if mode != "fresh" {
+            if !matches!(mode, "fresh" | "recover") {
                 return invalid("Working directory is unavailable. Start a fresh shell to use your home folder.");
             }
             cwd.clone_from(&self.config.home);
@@ -684,6 +715,7 @@ impl TerminalManager {
         };
         let mut command = match (mode, &card.session) {
             ("fresh", _) => String::new(),
+            ("recover", _) if !windows || !is_shell_launcher(trim(&card.command)) => String::new(),
             ("resume", Some(session)) => match session.provider {
                 Provider::Codex => format!("codex resume {}", session.session_id),
                 Provider::Claude => format!("claude --resume {}", session.session_id),
@@ -691,6 +723,7 @@ impl TerminalManager {
             _ => card.command.clone(),
         };
         // Integrate explicit shell launchers directly, preserving their selected shell.
+        let mut recovery_card = card.clone();
         if windows && is_shell_launcher(trim(&command)) {
             let launcher = trim(&command);
             shell = if launcher.to_ascii_lowercase().ends_with(".exe") {
@@ -698,7 +731,10 @@ impl TerminalManager {
             } else {
                 format!("{launcher}.exe")
             };
+            recovery_card.command.clone_from(&shell);
             command.clear();
+        } else {
+            recovery_card.command.clear();
         }
         // The account folder is created on first use, so a card keeps its account even when the
         // folder was removed; Claude Code then asks to sign in again.
@@ -760,10 +796,10 @@ impl TerminalManager {
             let prompt = format!("$E]9;9;$P$E\\{prompt}");
             env.insert("PROMPT".into(), prompt);
         }
-        if let Some(keeper) = self.keeper.clone() {
+        if let Some(keeper) = keeper {
             return self.start_kept(
                 &keeper,
-                &card,
+                &recovery_card,
                 KeptStart {
                     shell,
                     args,
@@ -803,6 +839,8 @@ impl TerminalManager {
         let initial_command = integration.as_ref().and_then(|integration| integration.command.clone());
         let name_homes = self.name_homes(&request.env);
         let session = Session {
+            card: recovery_card,
+            retry_after: None,
             name_session: None,
             name_homes,
             size: (cols, rows),
@@ -876,7 +914,7 @@ impl TerminalManager {
     }
 
     /// Starts the card's shell kept running, and attaches to it.
-    fn start_kept(&mut self, keeper: &Keeper, card: &tc_core::workspace::Card, start: KeptStart) -> Result<Started> {
+    fn start_kept(&mut self, keeper: &Keeper, card: &Card, start: KeptStart) -> Result<Started> {
         let KeptStart {
             shell,
             args,
@@ -964,7 +1002,7 @@ impl TerminalManager {
     fn attach(
         &mut self,
         keeper: &Keeper,
-        card: &tc_core::workspace::Card,
+        card: &Card,
         cols: u16,
         rows: u16,
         integration: Option<Integration>,
@@ -1019,7 +1057,16 @@ impl TerminalManager {
             }
         };
         let pid = process.pid();
+        let mut recovery_card = card.clone();
+        if let Keeper::Daemon(_) = keeper {
+            recovery_card.command.clear();
+            if platform.is_windows() && is_shell_launcher(&shell) {
+                recovery_card.command.clone_from(&shell);
+            }
+        }
         let session = Session {
+            card: recovery_card,
+            retry_after: None,
             name_session: None,
             name_homes,
             size: (cols, rows),
@@ -1063,7 +1110,8 @@ impl TerminalManager {
     pub fn handle(&mut self, key: SessionKey, event: SessionEvent) {
         match event {
             SessionEvent::Output(data) => self.output(&key, data),
-            SessionEvent::Exit(status) => self.exit(&key, status),
+            SessionEvent::Exit(status) => self.exit(&key, status, true),
+            SessionEvent::Superseded => self.exit(&key, ExitStatus { code: 1, signal: None }, false),
             SessionEvent::Directory(cwd) => self.report_directory(&key, cwd),
             SessionEvent::Report(text) => self.report(&key, &text),
         }
@@ -1178,7 +1226,7 @@ impl TerminalManager {
         });
     }
 
-    fn exit(&mut self, key: &SessionKey, status: ExitStatus) {
+    fn exit(&mut self, key: &SessionKey, status: ExitStatus, recover: bool) {
         if let Some(index) = self.stopping.iter().position(|stopping| stopping.key == *key) {
             self.stopping.remove(index);
         }
@@ -1188,12 +1236,85 @@ impl TerminalManager {
         self.poll_metadata(&key.id);
         // A request made just before the shell ended still opens its terminal.
         self.poll_launches(&key.id);
-        if let Some(session) = self.sessions.remove(&key.id) {
+        let finish = self.finish_code(&key.id);
+        let Some(mut session) = self.sessions.remove(&key.id) else {
+            return;
+        };
+        if let Some(code) = finish {
+            self.release(&key.id, session, true);
+            self.emit(TerminalEvent::Exit {
+                id: key.id.clone(),
+                status: ExitStatus {
+                    code: i64::from(code),
+                    signal: None,
+                },
+            });
+            return;
+        }
+        let keeper = session.keeper.clone();
+        let retry = recover && session.retry_after.is_none_or(|after| Instant::now() >= after);
+        let existing = keeper
+            .as_ref()
+            .filter(|_| retry)
+            .and_then(|keeper| keeper.find(&key.id));
+        let (cols, rows) = session.size;
+        let mut card = session.card.clone();
+        if let Some(metadata) = self.metadata.get(&key.id) {
+            card.cwd.clone_from(&metadata.cwd);
+            card.session.clone_from(&metadata.session);
+        }
+        if let (true, Some(keeper), Some(integration)) = (retry, &keeper, existing) {
+            self.unwatch(&key.id, Some(keeper));
+            let (launch, parser, name_session, name_homes) = (
+                session.launch.take(),
+                session.parser.clone(),
+                session.name_session.take(),
+                session.name_homes.clone(),
+            );
+            drop(session); // The kept shell still owns its integration files.
+            match self.attach(keeper, &card, cols, rows, integration, name_homes, None) {
+                Ok(_) => {
+                    let restored = self.sessions.get_mut(&key.id).expect("reattached session");
+                    restored.launch = launch;
+                    restored.parser = parser;
+                    restored.name_session = name_session;
+                    self.recovered(&key.id, None);
+                    return;
+                }
+                Err(error) => self.recovery_error(&key.id, error),
+            }
+        } else if !retry {
             self.release(&key.id, session, false);
+        } else {
+            self.unwatch(&key.id, keeper.as_ref());
+            dispose(session);
+            match self.spawn_card(&card, (cols, rows), "recover", keeper) {
+                Ok(_) => {
+                    self.recovered(&key.id, Some(status));
+                    return;
+                }
+                Err(error) => self.recovery_error(&key.id, error),
+            }
         }
         self.emit(TerminalEvent::Exit {
             id: key.id.clone(),
             status,
+        });
+    }
+
+    fn recovered(&mut self, id: &str, previous_exit: Option<ExitStatus>) {
+        self.sessions.get_mut(id).expect("recovered session").retry_after =
+            Some(Instant::now() + Duration::from_secs(10));
+        self.emit(TerminalEvent::Recovered {
+            id: id.to_owned(),
+            previous_exit,
+        });
+    }
+
+    fn recovery_error(&mut self, id: &str, error: Error) {
+        self.emit(TerminalEvent::Error {
+            id: id.to_owned(),
+            message: format!("Could not recover the terminal: {error}"),
         });
     }
 
@@ -1257,7 +1378,21 @@ impl TerminalManager {
         for id in ids {
             self.poll_metadata(&id);
             self.poll_launches(&id);
+            if let Some(code) = self.finish_code(&id) {
+                self.stop(&id);
+                self.emit(TerminalEvent::Exit {
+                    id,
+                    status: ExitStatus {
+                        code: i64::from(code),
+                        signal: None,
+                    },
+                });
+            }
         }
+    }
+
+    fn finish_code(&self, id: &str) -> Option<i32> {
+        take_finish(self.sessions.get(id)?.integration.as_ref()?.launch_dir.as_deref()?)
     }
 
     /// A name belongs to this particular CLI launch, not merely a saved session on the card.
@@ -1494,10 +1629,8 @@ impl TerminalManager {
     /// Stops watching a terminal and returns its process. Integration files stay while the
     /// terminal is kept running, unless `end_kept` ends it.
     fn release(&self, id: &str, session: Session, end_kept: bool) -> Box<dyn Process> {
+        self.unwatch(id, session.keeper.as_ref());
         if let Some(keeper) = &session.keeper {
-            if let (Keeper::Tmux(_), Some(watch)) = (keeper, &self.tmux_watch) {
-                watch.remove(id);
-            }
             if end_kept {
                 keeper.kill_session(id);
             } else if keeper.has_session(id) {
@@ -1506,6 +1639,12 @@ impl TerminalManager {
             }
         }
         dispose(session)
+    }
+
+    fn unwatch(&self, id: &str, keeper: Option<&Keeper>) {
+        if let (Some(Keeper::Tmux(_)), Some(watch)) = (keeper, &self.tmux_watch) {
+            watch.remove(id);
+        }
     }
 
     /// Stops every terminal. The host then keeps handling events until [`Self::stopping`] is zero,

@@ -60,7 +60,7 @@ are in the second row of the table, and nothing otherwise.
 ```
 
 ```powershell
-& $HOOK new-terminal --title "API tests" --cwd ..\api --command 'npm test; exit $LASTEXITCODE' --log --json   # plus PARENT
+& $HOOK new-terminal --title "API tests" --cwd ..\api --command 'npm test; & $env:TC_HOOK finish $LASTEXITCODE' --log --json   # plus PARENT
 ```
 
 | Option | Meaning |
@@ -75,9 +75,11 @@ are in the second row of the table, and nothing otherwise.
 
 The command is typed into the **new card's shell**, not yours: PowerShell on Windows by default (even
 when you call from Git Bash), the login shell elsewhere. Write it for that shell, and quote it for
-yours: single quotes around a command holding `$` in Bash or PowerShell. To let a caller see it
-finish, end with `; exit $LASTEXITCODE` (PowerShell card) or `; exit $?` (POSIX card); otherwise the
-card stays open for the user.
+yours: single quotes around a command holding `$` in Bash or PowerShell. For a worker that
+should end after its command, follow the command with `& $env:TC_HOOK finish $LASTEXITCODE`
+in PowerShell or `"$TC_HOOK" finish "$?"` in a POSIX shell. The hook ends only the terminal
+that calls it and preserves the card and its output. Use it when the user asks you to end your
+terminal, or when a worker was explicitly set up to end.
 
 Read the result:
 
@@ -203,8 +205,8 @@ files it may change, what not to touch, and how to report. Its pointer ends with
 `then write your result to .handover/<stamp>-<slug>.result.md and stop`.
 
 Interactive workers (as in 3a) let the user watch and step in. For a worker whose output you will
-read, the non-interactive forms finish on their own and log cleanly: `claude -p 'P'`,
-`codex exec 'P'`, `gemini -p 'P'`, each followed by `; exit` and launched with `--log`. They cannot
+read, use a non-interactive form such as `claude -p 'P'`, `codex exec 'P'`, or `gemini -p 'P'`.
+Launch it with `--log` and have it call the finish hook from section 2 when done. They cannot
 ask the user anything and may be refused actions that need approval, so give them self-contained,
 low-risk work.
 

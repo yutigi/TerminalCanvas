@@ -179,6 +179,7 @@ test('hidden canvases keep complete writes, acknowledgments, cwd and session met
         const background = sessions.get(hiddenId);
         background.status = 'running';
         background.terminal.write = (data, done) => { output.push(data); done(); };
+        background.terminal.writeln = data => output.push(data);
         background.fit.proposeDimensions = () => { throw new Error('Hidden terminal was fitted'); };
         Object.defineProperty(background.element, 'offsetWidth', { get() { throw new Error('Hidden terminal layout was read'); }, configurable: true });
         bridge.acknowledge = (id, length) => acks.push({ id, length });
@@ -198,6 +199,11 @@ test('hidden canvases keep complete writes, acknowledgments, cwd and session met
     assert.equal(json(context, 'anyCard(hiddenId).cwd'), '/latest');
     assert.deepEqual(json(context, 'anyCard(hiddenId).session'), session);
     assert.equal(calls.some(call => call.action === 'stop'), false);
+    onEvent({ type: 'recovered', id: hiddenId, exitCode: 1 });
+    assert.equal(json(context, 'sessions.get(hiddenId).status'), 'running');
+    assert.match(json(context, 'output.at(-1)'), /Started a fresh shell/);
+    assert.deepEqual(json(context, 'output.slice(0, -1)'), chunks);
+
     onEvent({ type: 'exit', id: hiddenId, exitCode: 7 });
     assert.equal(json(context, 'sessions.get(hiddenId).status'), 'exited');
     assert.match(elements.get('#canvas-list').children[1].textContent, /Exited/);

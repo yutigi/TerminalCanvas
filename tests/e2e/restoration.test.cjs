@@ -107,7 +107,7 @@ console.log('SESSION_TEST_DONE:' + provider);
         await until(async () => (await second.output(card.id)).includes(`SESSION_TEST_DONE:${provider}`), 'Exact-ID resume did not finish.');
         const expected = provider === 'claude' ? `"--resume","${ids[provider]}"` : `"resume","${ids[provider]}"`;
         assert.ok((await second.output(card.id)).includes(expected));
-        await second.page.evaluate(id => window.terminalCanvas.input(id, 'exit\r'), card.id);
+        await second.page.evaluate(id => window.terminalCanvas.input(id, '& $env:TC_HOOK finish\r'), card.id);
         await until(async () => !(await second.state()).host.terminals.find(terminal => terminal.id === card.id).running, 'Resumed shell did not exit.');
         await second.page.evaluate(id => {
             window.__e2eEvents = [];
