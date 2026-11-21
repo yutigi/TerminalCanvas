@@ -3458,6 +3458,43 @@ test('automation editor reveals relevant options, copies a named trigger, and ch
     });
 });
 
+test('prompt automation saves a provider and model or uses the running session', async () => {
+    const board = createWorkspace();
+    board.cards.push(createCard({ title: 'Planner' }), createCard({ title: 'Reviewer' }));
+    board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });
+    const { context, elements, calls } = await boot(board);
+    vm.runInContext('select("hook")', context);
+    const provider = elements.get('#pointer-provider'), model = elements.get('#pointer-model');
+    elements.get('#pointer-configure').onclick();
+    assert.equal(provider.value, '');
+    assert.equal(elements.get('#pointer-model-field').hidden, true);
+    provider.value = 'claude'; provider.onchange();
+    assert.equal(elements.get('#pointer-model-field').hidden, false);
+    assert.equal(model.attributes.get('list'), 'pointer-claude-models');
+    const form = elements.get('#pointer-form'), submitter = elements.get('#pointer-submit');
+    elements.get('#pointer-text').value = 'Review the change';
+    model.value = '--version';
+    form.dispatch('submit', { submitter });
+    assert.equal(model.attributes.get('aria-invalid'), 'true');
+    assert.equal(calls.some(call => call.action === 'pointer-configure'), false);
+    model.value = 'sonnet[1m]'; model.oninput();
+    form.dispatch('submit', { submitter });
+    await flush();
+    assert.equal(json(context, 'workspace.items[0].hook.model'), 'sonnet[1m]');
+    assert.equal(json(context, 'workspace.items[0].hook.provider'), 'claude');
+    elements.get('#pointer-configure').onclick();
+    assert.equal(model.value, 'sonnet[1m]');
+    provider.value = 'codex'; provider.onchange();
+    assert.equal(model.value, '');
+    assert.equal(model.attributes.get('list'), 'pointer-codex-models');
+    provider.value = ''; provider.onchange();
+    form.dispatch('submit', { submitter });
+    await flush();
+    const hook = json(context, 'workspace.items[0].hook');
+    assert.equal(hook.provider, undefined);
+    assert.equal(hook.model, undefined);
+});
+
 test('rejected hook configuration leaves the arrow plain and explains the host error', async () => {
     const board = createWorkspace(); board.cards.push(createCard(), createCard());
     board.items.push({ id: 'hook', type: 'line', arrow: true, start: { id: board.cards[0].id }, end: { id: board.cards[1].id } });

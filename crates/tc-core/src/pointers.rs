@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::atomic::{self, Access};
 use crate::js::utf16_len;
+use crate::session::Provider;
 use crate::workspace::{Endpoint, ItemKind, Workspace};
 use crate::{Result, invalid};
 
@@ -54,6 +55,10 @@ pub struct Pointer {
     pub name: String,
     #[serde(default)]
     pub context: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<Provider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 pub fn validate(raw: &Value) -> Result<Pointer> {
@@ -70,6 +75,11 @@ pub fn validate(raw: &Value) -> Result<Pointer> {
         || (pointer.event != Event::Trigger && !pointer.name.is_empty())
         || (pointer.event != Event::Exit && pointer.filter != Filter::Any)
         || (pointer.context && pointer.action != Action::Prompt)
+        || (pointer.provider.is_some() && pointer.action != Action::Prompt)
+        || pointer
+            .model
+            .as_deref()
+            .is_some_and(|model| pointer.provider.is_none() || !valid_model(model))
     {
         return invalid("Invalid hook pointer configuration.");
     }
@@ -81,6 +91,58 @@ pub fn valid_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+fn valid_model(model: &str) -> bool {
+    model.len() <= 128
+        && model.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && model
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:/[]+".contains(&byte))
+}
+
+/// A single-use prompt passed to a CLI outside the shell's input and history.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptLaunch {
+    pub provider: Provider,
+    pub model: Option<String>,
+    pub text: String,
+    pub expires: u64,
+}
+
+impl PromptLaunch {
+    pub fn write(&self, inbox: &Path) -> io::Result<(String, PathBuf)> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let path = inbox.join(format!("{id}.prompt-launch"));
+        atomic::write(&path, &serde_json::to_vec(self)?, Access::Private)?;
+        Ok((id, path))
+    }
+
+    pub fn take(inbox: &Path, id: &str) -> io::Result<Self> {
+        if !crate::launch::is_request_id(id) {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let path = inbox.join(format!("{id}.prompt-launch"));
+        if !fs::symlink_metadata(&path)?.is_file() {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        let mut bytes = Vec::new();
+        fs::File::open(&path)?.take(REQUEST_BYTES + 1).read_to_end(&mut bytes)?;
+        fs::remove_file(path)?;
+        if bytes.len() as u64 > REQUEST_BYTES {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        let launch: Self = serde_json::from_slice(&bytes)?;
+        if launch.expires <= now_ms()
+            || launch.text.trim().is_empty()
+            || launch.text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+            || launch.model.as_deref().is_some_and(|model| !valid_model(model))
+        {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        Ok(launch)
+    }
 }
 
 pub fn ends(item: &crate::workspace::Item) -> Option<(&str, &str)> {

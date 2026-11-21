@@ -132,8 +132,12 @@ function pointerTriggerCommand() {
 }
 function pointerFields() {
     const action = $('#pointer-action').value, event = $('#pointer-event').value;
+    const provider = action === 'prompt' ? $('#pointer-provider').value : '';
     $('#pointer-filter-field').hidden = event !== 'exit';
     $('#pointer-name-field').hidden = event !== 'trigger';
+    $('#pointer-provider-field').hidden = action !== 'prompt';
+    $('#pointer-model-field').hidden = !provider;
+    $('#pointer-model').setAttribute('list', provider ? `pointer-${provider}-models` : '');
     $('#pointer-context-field').hidden = action !== 'prompt';
     $('#pointer-text-label').textContent = action === 'prompt' ? 'Prompt' : 'Command';
     const source = findCard(editingPointer.start.id)?.title || 'the source terminal';
@@ -144,12 +148,15 @@ function pointerFields() {
         trigger: `Run the command below in ${source} to fire this automation.`
     }[event];
     $('#pointer-action-hint').textContent = {
-        prompt: `Submits a prompt to Claude Code or Codex in ${target}. If the agent is busy, it queues for up to 60 seconds.`,
+        prompt: provider
+            ? `Starts ${provider === 'claude' ? 'Claude Code' : 'Codex'} with the prompt when ${target} is at an idle PowerShell or Bash prompt.`
+            : `Sends the prompt to the running Claude Code or Codex session in ${target}. If the agent is busy, it queues for up to 60 seconds.`,
         shell: `Runs one line in ${target} when its integrated PowerShell or Bash shell is idle.`,
         'new-terminal': `Uses ${target} as a template and runs the command in a fresh terminal. The template can be stopped.`
     }[action];
     pointerFieldError('text', '');
     pointerFieldError('name', '');
+    pointerFieldError('model', '');
     pointerTriggerCommand();
     resetPointerCheck();
 }
@@ -157,6 +164,8 @@ async function checkPointerSetup() {
     const item = editingPointer;
     if (!item || pointerCheck) return;
     const payload = { source: item.start.id, target: item.end.id, event: $('#pointer-event').value, action: $('#pointer-action').value };
+    const provider = $('#pointer-provider').value;
+    if (payload.action === 'prompt' && provider) payload.provider = provider;
     pointerCheck = payload;
     const status = $('#pointer-setup-status');
     status.textContent = 'Checking terminal setup…';
@@ -188,6 +197,8 @@ function openPointerDialog() {
     $('#pointer-heading').textContent = item.hook ? 'Edit automation' : 'Add automation';
     $('#pointer-description').textContent = `${findCard(item.start.id).title} → ${findCard(item.end.id).title}`;
     for (const key of ['event', 'action', 'text', 'filter', 'name']) $(`#pointer-${key}`).value = hook[key] || (key === 'filter' ? 'any' : '');
+    $('#pointer-provider').value = hook.provider || '';
+    $('#pointer-model').value = hook.model || '';
     $('#pointer-context').checked = !!hook.context;
     $('#pointer-shell').value = pointerPlatform === 'win32' ? 'powershell' : 'bash';
     $('#pointer-submit').textContent = hook.armed ? 'Save changes' : 'Save & enable';
@@ -220,6 +231,11 @@ function installPointerControls() {
     $('#pointer-toggle').onclick = () => run(async () => { const item = findItem(selected); if (item?.hook) await savePointerChange(item, { ...item.hook, armed: !item.hook.armed }); });
     $('#pointers-pause').onclick = () => run(() => savePointerChange(null, null, !workspace.hooksPaused));
     $('#pointer-event').onchange = $('#pointer-action').onchange = pointerFields;
+    $('#pointer-provider').onchange = () => {
+        $('#pointer-model').value = '';
+        pointerFields();
+    };
+    $('#pointer-model').oninput = () => pointerFieldError('model', '');
     $('#pointer-text').oninput = () => pointerFieldError('text', '');
     $('#pointer-name').oninput = () => {
         pointerFieldError('name', '');
@@ -255,6 +271,13 @@ function installPointerControls() {
         }
         const text = $('#pointer-text').value;
         const isPrompt = action === 'prompt';
+        const provider = isPrompt ? $('#pointer-provider').value : '';
+        const model = provider ? $('#pointer-model').value.trim() : '';
+        if (model && !/^[A-Za-z0-9][A-Za-z0-9_.:/\[\]+-]{0,127}$/.test(model)) {
+            pointerFieldError('model', 'Enter a model ID or alias up to 128 characters.');
+            $('#pointer-model').focus();
+            return;
+        }
         // Prompts may contain tabs and newlines. Commands must fit on one line.
         const content = isPrompt ? text.replace(/[\n\t]/g, '') : text;
         if (!text.trim() || text.length > 2000 || /\p{Cc}/u.test(content)) {
@@ -267,6 +290,8 @@ function installPointerControls() {
             filter: source === 'exit' ? $('#pointer-filter').value : 'any',
             name: source === 'trigger' ? $('#pointer-name').value : '',
             context: isPrompt && !!$('#pointer-context').checked };
+        if (provider) hook.provider = provider;
+        if (model) hook.model = model;
         void commitPointerEdit(editingPointer, hook, armed ? $('#pointer-submit') : $('#pointer-save-disabled'));
     });
     $('#pointer-remove').onclick = () => commitPointerEdit(editingPointer, null, $('#pointer-remove'));

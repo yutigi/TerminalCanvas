@@ -1478,6 +1478,26 @@ impl TerminalManager {
         }
     }
 
+    pub fn pointer_prompt_inbox(&self, id: &str) -> Option<&std::path::Path> {
+        let integration = self.sessions.get(id)?.integration.as_ref()?;
+        if integration.files().is_empty() {
+            return None;
+        }
+        integration.launch_dir.as_deref()
+    }
+
+    pub fn pointer_start_prompt(&mut self, target: &str, request: &str) -> Result<()> {
+        debug_assert!(tc_core::launch::is_request_id(request));
+        let command = if self.config.platform.is_windows() {
+            format!("& $env:TC_HOOK launch-prompt {request}\r")
+        } else {
+            format!("\"$TC_HOOK\" launch-prompt {request}\r")
+        };
+        self.write(target, &command)?;
+        self.pointer_delivered(target, false);
+        Ok(())
+    }
+
     pub fn pointer_lifecycle(&mut self, id: &str, report: &tc_core::pointers::Report, continuing: bool) {
         let Some(session) = self.sessions.get_mut(id) else {
             return;

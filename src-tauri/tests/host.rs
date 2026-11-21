@@ -1160,6 +1160,58 @@ async fn pointer_setup_checks_readiness_without_saving_or_sending_input() {
 }
 
 #[tokio::test]
+async fn pointer_launches_the_selected_ai_in_only_the_idle_target() {
+    use tc_core::pointers::PromptLaunch;
+
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    let id = target["id"].as_str().unwrap();
+    let mut board = h.read_saved();
+    board["items"] = json!([{"id":"review","type":"line","start":{"id":source["id"]},"end":{"id":id},"arrow":true}]);
+    let prompt = "--review\nUse \"quotes\", $variables and & as text.";
+    let rule = json!({"workspace":board,"id":"review","hook":{
+        "event":"trigger", "action":"prompt", "armed":true, "provider":"claude", "model":"sonnet[1m]", "text":prompt
+    }});
+    h.host.command("pointer-configure", Some(&rule)).await.unwrap();
+    let check = json!({"source":source["id"], "target":id, "event":"trigger", "action":"prompt", "provider":"claude"});
+    let before = h.pointer_writes(1).len();
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert!(status["target"].as_str().unwrap().contains("Leave an integrated"));
+    assert_eq!(h.pointer_writes(1).len(), before);
+
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    let status = h.host.command("pointer-check", Some(&check)).await.unwrap();
+    assert!(status["target"].as_str().unwrap().contains("can start the selected"));
+    assert_eq!(h.pointer_request(0, "trigger").await["failed"], 0);
+    let writes = h.pointer_writes(1);
+    assert_eq!(writes.len(), before + 1);
+    let request = writes
+        .last()
+        .unwrap()
+        .trim_end()
+        .split_once(" launch-prompt ")
+        .unwrap()
+        .1;
+    assert!(tc_core::launch::is_request_id(request));
+    let (_, _, process) = h.launches.lock().unwrap()[1].clone();
+    let inbox = PathBuf::from(&process.lock().unwrap().env["TC_LAUNCH_DIR"]);
+    let launch = PromptLaunch::take(&inbox, request).unwrap();
+    assert_eq!(launch.provider, tc_core::session::Provider::Claude);
+    assert_eq!(launch.model.as_deref(), Some("sonnet[1m]"));
+    assert_eq!(launch.text, prompt);
+    assert!(PromptLaunch::take(&inbox, request).is_err());
+
+    tokio::time::sleep(std::time::Duration::from_millis(1010)).await;
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+    h.host.input(id, "my draft".into(), 0);
+    h.host.running().await;
+    let before = h.pointer_writes(1).len();
+    assert_eq!(h.pointer_request(0, "trigger").await["failed"], 1);
+    assert_eq!(h.pointer_writes(1).len(), before);
+}
+
+#[tokio::test]
 async fn pointers_deliver_to_ready_shells_and_never_submit_partial_user_input() {
     let h = Harness::with_hook(true);
     let source = h.start().await;

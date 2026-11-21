@@ -86,6 +86,35 @@ fn configuration_rejects_control_sequences_bad_types_and_utf16_overflow() {
 }
 
 #[test]
+fn ai_launch_settings_require_a_supported_provider_and_prompt_action() {
+    let mut raw = hook();
+    assert!(
+        serde_json::to_value(pointers::validate(&raw).unwrap())
+            .unwrap()
+            .get("provider")
+            .is_none()
+    );
+    raw["model"] = json!("sonnet[1m]");
+    assert!(pointers::validate(&raw).is_err());
+    raw["provider"] = json!("claude");
+    let validated = serde_json::to_value(pointers::validate(&raw).unwrap()).unwrap();
+    assert_eq!(validated["provider"], "claude");
+    assert_eq!(validated["model"], "sonnet[1m]");
+    for invalid in ["--help", "a b", "x; echo extra", "x\ny"] {
+        raw["model"] = json!(invalid);
+        assert!(pointers::validate(&raw).is_err());
+    }
+    raw.as_object_mut().unwrap().remove("model");
+    raw["provider"] = json!("codex");
+    assert!(pointers::validate(&raw).is_ok());
+    raw["action"] = json!("shell");
+    assert!(pointers::validate(&raw).is_err());
+    raw["action"] = json!("prompt");
+    raw["provider"] = json!("another-cli");
+    assert!(pointers::validate(&raw).is_err());
+}
+
+#[test]
 fn only_terminal_arrows_are_pointers_and_all_cycles_are_rejected() {
     let mut raw = board();
     raw["items"][0]["arrow"] = json!(false);

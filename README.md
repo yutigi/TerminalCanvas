@@ -194,8 +194,12 @@ Target actions:
 - **Run a shell command** submits one line and Enter to an idle integrated PowerShell or Bash
   shell. Unknown readiness, Command Prompt, unsupported shells, busy shells, and stopped targets
   fail without sending input.
-- **Send an AI prompt** requires a running Claude or Codex session with lifecycle hooks.
-  An idle target receives bracketed paste and Enter. A busy target queues the prompt until its
+- **Send a prompt** offers **Use the running session**, **Start Claude Code**, and **Start Codex**.
+  Select a provider to start it with the prompt in the arrow's target terminal. Leave that terminal
+  at an idle integrated PowerShell or Bash prompt. Choose or enter a model ID, or leave **Model**
+  empty to use the CLI's configured default.
+  **Use the running session** requires a running Claude or Codex session with lifecycle hooks.
+  An idle session receives bracketed paste and Enter. A busy session queues the prompt until its
   next Stop hook, which returns `decision: "block"` with the prompt as its continuation reason;
   no keystrokes are sent into the busy agent. Outgoing Stop pointers wait until that continuation
   finishes before firing the next step. Optional context appends the source session ID,

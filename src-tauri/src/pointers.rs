@@ -1,9 +1,14 @@
 //! Hook-pointer runtime. Only the host actor calls this; all writes use its terminal manager.
-use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs,
+    path::PathBuf,
+};
 
 use serde_json::{Value, json};
-use tc_core::pointers::{Action, Event, Report, ends};
+use tc_core::pointers::{Action, Event, PromptLaunch, Report, ends, now_ms};
+use tc_core::session::Provider;
 use tc_core::workspace::{Item, Workspace};
 use tc_pty::TerminalManager;
 use tc_pty::manager::PointerReadiness;
@@ -28,6 +33,7 @@ pub struct Pointers {
     global: VecDeque<Instant>,
     continuations: HashMap<String, (String, u8)>,
     pub launches: HashMap<String, (Item, Instant)>,
+    prompt_launches: Vec<(PathBuf, Item, u64, Instant)>,
 }
 
 pub fn status(id: &str, state: &str, message: &str) -> Value {
@@ -41,6 +47,8 @@ pub struct SetupCheck {
     target: String,
     event: Event,
     action: Action,
+    #[serde(default)]
+    provider: Option<Provider>,
 }
 
 impl SetupCheck {
@@ -76,9 +84,14 @@ impl SetupCheck {
                 "The template's project folder is unavailable. Choose a template with an existing folder."
             }
         } else {
-            let prompt = self.action == Action::Prompt;
+            let start_ai = self.action == Action::Prompt && self.provider.is_some();
+            let prompt = self.action == Action::Prompt && !start_ai;
             match manager.pointer_readiness(&self.target, prompt) {
                 PointerReadiness::Closed => "Start this terminal to receive the action.",
+                PointerReadiness::Idle if start_ai && manager.pointer_prompt_inbox(&self.target).is_some() => {
+                    "The shell is idle and can start the selected AI CLI."
+                }
+                PointerReadiness::Idle if start_ai => "Restart this terminal with the Terminal Canvas hook helper.",
                 PointerReadiness::Idle if prompt => "The agent is idle and can receive a prompt.",
                 PointerReadiness::Idle => "The shell is idle and can run a command.",
                 PointerReadiness::Busy if prompt => {
@@ -88,6 +101,7 @@ impl SetupCheck {
                 _ if prompt => {
                     "Waiting for AI lifecycle hooks. Run a turn in Claude Code or Codex here. For Codex, approve the commands in /hooks and restart the CLI."
                 }
+                _ if start_ai => "Leave an integrated PowerShell or Bash shell idle to start the selected AI CLI.",
                 _ => "Wait for an idle prompt in an integrated PowerShell or Bash shell.",
             }
         };
@@ -126,6 +140,18 @@ impl Pointers {
                 events.push(status(&item.id, "failed", "New-terminal action canceled or expired."));
             }
             keep
+        });
+        self.prompt_launches.retain(|(path, item, generation, deadline)| {
+            let keep = enabled(board, item)
+                && *deadline > now
+                && ends(item).is_some_and(|(_, target)| manager.pointer_generation(target) == Some(*generation));
+            if !keep {
+                if fs::remove_file(path).is_ok() {
+                    events.push(status(&item.id, "failed", "AI launch canceled or expired."));
+                }
+                return false;
+            }
+            path.is_file()
         });
         self.rates.retain(|id, _| board.items.iter().any(|item| &item.id == id));
         self.continuations.retain(|id, _| manager.is_running(id));
@@ -203,9 +229,27 @@ impl Pointers {
                 ));
                 continue;
             }
-            let prompt = hook.action == Action::Prompt;
+            let prompt = hook.action == Action::Prompt && hook.provider.is_none();
             match manager.pointer_readiness(target, prompt) {
                 PointerReadiness::Idle => {
+                    if let Some(provider) = hook.provider {
+                        let result = self.start_prompt(
+                            manager,
+                            target,
+                            item,
+                            PromptLaunch {
+                                provider,
+                                model: hook.model.clone(),
+                                text,
+                                expires: now_ms().saturating_add(TTL.as_millis() as u64),
+                            },
+                        );
+                        events.push(match result {
+                            Ok(()) => status(&item.id, "firing", "Submitted AI launch to the target shell."),
+                            Err(message) => status(&item.id, "failed", &message),
+                        });
+                        continue;
+                    }
                     let data = if prompt {
                         format!("\x1b[200~{text}\x1b[201~\r")
                     } else {
@@ -250,6 +294,9 @@ impl Pointers {
                     match state {
                         PointerReadiness::Closed => "Target is closed or stopped.",
                         PointerReadiness::Typing => "Target has user input; automation will not submit it.",
+                        _ if hook.provider.is_some() => {
+                            "The selected AI CLI needs an idle integrated PowerShell or Bash shell."
+                        }
                         _ => {
                             "Target readiness is unknown. Start an integrated shell or enable and trust the CLI hooks."
                         }
@@ -258,6 +305,31 @@ impl Pointers {
             }
         }
         events
+    }
+
+    fn start_prompt(
+        &mut self,
+        manager: &mut TerminalManager,
+        target: &str,
+        item: &Item,
+        launch: PromptLaunch,
+    ) -> Result<(), String> {
+        let inbox = manager
+            .pointer_prompt_inbox(target)
+            .ok_or("Restart the target terminal with the Terminal Canvas hook helper.")?;
+        let generation = manager
+            .pointer_generation(target)
+            .ok_or("Target is closed or stopped.")?;
+        let (request, path) = launch
+            .write(inbox)
+            .map_err(|error| format!("Could not prepare AI launch: {error}"))?;
+        if let Err(error) = manager.pointer_start_prompt(target, &request) {
+            let _ = fs::remove_file(&path);
+            return Err(error.to_string());
+        }
+        self.prompt_launches
+            .push((path, item.clone(), generation, Instant::now() + TTL));
+        Ok(())
     }
 
     /// One queued prompt per Stop. Never type into a running agent; return its continuation JSON.

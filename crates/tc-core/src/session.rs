@@ -12,6 +12,8 @@ use crate::node;
 
 string_enum! {
     /// An AI CLI whose sessions can be resumed.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "lowercase")]
     pub enum Provider {
         Codex = "codex",
         Claude = "claude",

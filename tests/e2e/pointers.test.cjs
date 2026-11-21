@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { launch, until, hasOutputLine, screenshot, root } = require('./harness.cjs');
@@ -125,4 +126,31 @@ test('native hidden-canvas pointers ignore focus reports and global pause preser
     assert.equal(state.host.workspace.cards.length, 2);
     assert.equal(state.host.workspace.canvases.length, 2);
     await screenshot(h.page, 'hook-pointer-hidden-canvas');
+});
+
+test('native prompt automation starts the selected model in the existing idle terminal', windows, async t => {
+    const tools = await fs.mkdtemp(path.join(root, '.cache', 'prompt-cli-'));
+    const bin = path.join(tools, 'node_modules', '@openai', 'codex', 'bin');
+    await fs.mkdir(bin, { recursive: true });
+    await fs.copyFile(path.join(__dirname, 'hook-cli.cjs'), path.join(tools, 'hook-cli.cjs'));
+    await fs.writeFile(path.join(tools, 'codex.cmd'), '@exit /b 1\r\n');
+    await fs.writeFile(path.join(bin, 'codex.js'), "process.argv.splice(2, 0, 'codex'); require('../../../../hook-cli.cjs');\n");
+    const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') || 'Path';
+    const h = await launch({ clean: true, env: { [pathKey]: tools + path.delimiter + process.env[pathKey] } });
+    t.after(() => h.dispose());
+    await h.page.evaluate(async () => loadWorkspace((await invoke('new')).workspace));
+    const source = await startTerminal(h.page, { title: 'Source', cwd: root });
+    const target = await startTerminal(h.page, { title: 'Reviewer', cwd: root, x: 720 });
+    for (const card of [source, target]) await idle(h, card);
+    const prompt = '--review this\nKeep "quotes", %PATH%, $env:PATH, & and 雪 as text.';
+    const model = 'codex-test-model';
+    await configure(h.page, source, target, 'ai-launch', { event: 'trigger', name: 'review', action: 'prompt', provider: 'codex', model, text: prompt });
+    await input(h.page, source.id, '& $env:TC_HOOK trigger review\r');
+    await until(async () => (await h.output(target.id)).includes('CODEX_BUSY'), 'The selected CLI did not start in the target.');
+    const output = await h.output(target.id);
+    assert.ok(output.includes(`MODEL:${model}`), output);
+    assert.ok(output.includes(`PROMPT:${createHash('sha256').update(prompt).digest('hex')}`), output);
+    assert.equal(await h.page.evaluate(() => workspace.cards.length), 2);
+    await input(h.page, target.id, 'quit\r');
+    await idle(h, target);
 });

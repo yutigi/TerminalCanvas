@@ -158,6 +158,17 @@
                     <label class="field-label" for="pointer-action">Do</label>
                     <select id="pointer-action" aria-describedby="pointer-action-hint"><option value="prompt">Send a prompt</option><option value="shell">Run a shell command</option><option value="new-terminal">Open a new terminal</option></select>
                     <p id="pointer-action-hint" class="field-hint"></p>
+                    <div id="pointer-provider-field" hidden>
+                        <label class="field-label" for="pointer-provider">AI provider</label>
+                        <select id="pointer-provider"><option value="">Use the running session</option><option value="claude">Start Claude Code</option><option value="codex">Start Codex</option></select>
+                        <div id="pointer-model-field" hidden>
+                            <label class="field-label" for="pointer-model">Model <span>optional</span></label>
+                            <input id="pointer-model" maxlength="128" placeholder="Provider default" spellcheck="false" autocomplete="off" aria-describedby="pointer-model-error">
+                            <datalist id="pointer-claude-models"><option value="sonnet"></option><option value="opus"></option><option value="haiku"></option></datalist>
+                            <datalist id="pointer-codex-models"><option value="gpt-6.1-sol"></option><option value="gpt-6-astra"></option></datalist>
+                            <p id="pointer-model-error" class="form-error" hidden></p>
+                        </div>
+                    </div>
                     <label id="pointer-text-label" class="field-label" for="pointer-text">Prompt</label>
                     <textarea id="pointer-text" rows="3" maxlength="2000" required spellcheck="false" aria-describedby="pointer-text-error"></textarea>
                     <p id="pointer-text-error" class="form-error" hidden></p>

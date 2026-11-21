@@ -19,6 +19,12 @@ function hook(event) {
     return stdout.trim() ? JSON.parse(stdout) : {};
 }
 hook('SessionStart'); hook('UserPromptSubmit');
+const promptIndex = args.indexOf('--');
+if (promptIndex >= 0) {
+    const promptHash = require('node:crypto').createHash('sha256').update(args[promptIndex + 1]).digest('hex');
+    console.log(`\nMODEL:${args[args.indexOf('--model') + 1]}`);
+    console.log(`PROMPT:${promptHash}`);
+}
 console.log(`\n${provider.toUpperCase()}_BUSY`);
 const lines = readline.createInterface({ input: process.stdin, terminal: false });
 lines.on('line', line => {
