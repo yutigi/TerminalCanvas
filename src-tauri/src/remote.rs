@@ -1,6 +1,7 @@
-//! Opt-in loopback HTTP/WebSocket transport. No Tauri IPC or OS commands are exposed to browsers.
+//! Opt-in browser transport over loopback HTTP or HTTPS on a selected network interface.
 
 use std::collections::{HashMap, VecDeque};
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -18,13 +19,15 @@ use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 use tokio::sync::watch;
 
-use crate::host::Host;
+use crate::host::{BoxFuture, Host};
+use crate::remote_tls::{self, CertificateAuthority};
 
 const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 const LOGIN_WINDOW: Duration = Duration::from_secs(60);
 const MAX_CLIENTS: usize = 8;
 // One 64 Ki UTF-16 input piece can use six JSON bytes per code unit when escaped.
 const MAX_MESSAGE: usize = 512 * 1024;
+const MAX_CONTROLLER_MESSAGE: usize = tc_core::workspace::limits::BYTES as usize + 4096;
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub type Assets = Arc<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>;
@@ -126,6 +129,7 @@ struct Server {
     host: Arc<Host>,
     authority: String,
     origin: String,
+    https: bool,
     cookie: String,
     assets: Assets,
     security: Mutex<Security>,
@@ -137,7 +141,7 @@ impl Server {
     fn status(&self, tokens: bool) -> Value {
         let mut security = self.security.lock().unwrap_or_else(|e| e.into_inner());
         security.expire();
-        let mut status = json!({ "running": !*self.stop.borrow(), "url": self.origin,
+        let mut status = json!({ "running": !*self.stop.borrow(), "url": self.origin, "https": self.https,
             "clients": security.sessions.values().filter(|s| s.connected).count() });
         if tokens {
             status["controlToken"] = json!(security.control);
@@ -166,18 +170,28 @@ impl Server {
         security.sessions.contains_key(id).then(|| id.to_owned())
     }
 
+    fn controller(&self, headers: &HeaderMap) -> Option<Arc<AtomicBool>> {
+        let id = self.cookie_id(headers)?;
+        let mut security = self.security.lock().unwrap_or_else(|error| error.into_inner());
+        security.expire();
+        let session = security.sessions.get(id)?;
+        (session.connected && matches!(session.role, Role::Control)).then(|| session.active.clone())
+    }
+
     fn valid_headers(&self, headers: &HeaderMap, require_origin: bool) -> bool {
         let single = |name| {
             let mut values = headers.get_all(name).iter();
             let value = values.next()?.to_str().ok()?;
             values.next().is_none().then_some(value)
         };
-        single(header::HOST) == Some(self.authority.as_str())
-            && match single(header::ORIGIN) {
-                Some(origin) => origin == self.origin,
-                None => !require_origin && !headers.contains_key(header::ORIGIN),
-            }
-            && headers.get("sec-fetch-site").is_none_or(|v| v != "cross-site")
+        single(header::HOST).is_some_and(|host| {
+            host == self.authority
+                || (self.https && self.authority.strip_suffix(":443") == Some(host))
+                || (!self.https && self.authority.strip_suffix(":80") == Some(host))
+        }) && match single(header::ORIGIN) {
+            Some(origin) => origin == self.origin,
+            None => !require_origin && !headers.contains_key(header::ORIGIN),
+        } && headers.get("sec-fetch-site").is_none_or(|v| v != "cross-site")
     }
 }
 
@@ -186,6 +200,7 @@ pub struct Remote {
     host: Arc<Host>,
     assets: Assets,
     server: tokio::sync::Mutex<Option<Arc<Server>>>,
+    certificate: Mutex<Option<CertificateAuthority>>,
 }
 
 impl Remote {
@@ -194,6 +209,7 @@ impl Remote {
             host,
             assets,
             server: tokio::sync::Mutex::new(None),
+            certificate: Mutex::new(None),
         }
     }
 
@@ -213,15 +229,45 @@ impl Remote {
                     .and_then(Value::as_u64)
                     .filter(|p| *p <= u16::MAX as u64)
                     .ok_or("Choose a port from 0 to 65535.")?;
-                let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port as u16))
+                let address = network_address(payload.and_then(|p| p.get("address")))?;
+                let listener = tokio::net::TcpListener::bind((address.unwrap_or(Ipv4Addr::LOCALHOST), port as u16))
                     .await
                     .map_err(|e| format!("Could not start the browser server: {e}"))?;
                 let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-                let authority = format!("127.0.0.1:{port}");
+                let ip = address.unwrap_or(Ipv4Addr::LOCALHOST);
+                let authority = format!("{ip}:{port}");
+                let (scheme, default_port) = if address.is_some() {
+                    ("https", 443)
+                } else {
+                    ("http", 80)
+                };
+                let origin = if port == default_port {
+                    format!("{scheme}://{ip}")
+                } else {
+                    format!("{scheme}://{authority}")
+                };
+                let tls = if let Some(address) = address {
+                    let mut certificate = self.certificate.lock().unwrap_or_else(|error| error.into_inner());
+                    if certificate.is_none() {
+                        *certificate = Some(
+                            CertificateAuthority::new()
+                                .map_err(|error| format!("Could not create the browser certificate: {error}"))?,
+                        );
+                    }
+                    Some(
+                        certificate
+                            .as_ref()
+                            .expect("certificate initialized")
+                            .acceptor(address)?,
+                    )
+                } else {
+                    None
+                };
                 let (stop, _) = watch::channel(false);
                 let server = Arc::new(Server {
                     host: self.host.clone(),
-                    origin: format!("http://{authority}"),
+                    origin,
+                    https: tls.is_some(),
                     authority,
                     cookie: format!("tc_remote_{port}"),
                     assets: self.assets.clone(),
@@ -234,11 +280,17 @@ impl Remote {
                 let mut stopping = server.stop.subscribe();
                 let serving = server.clone();
                 let task = tauri::async_runtime::spawn(async move {
-                    let result = axum::serve(listener, router)
-                        .with_graceful_shutdown(async move {
-                            let _ = stopping.changed().await;
-                        })
-                        .await;
+                    let stop = async move {
+                        let _ = stopping.changed().await;
+                    };
+                    let result = match tls {
+                        Some(tls) => {
+                            axum::serve(remote_tls::Listener::new(listener, tls), router)
+                                .with_graceful_shutdown(stop)
+                                .await
+                        }
+                        None => axum::serve(listener, router).with_graceful_shutdown(stop).await,
+                    };
                     if let Err(error) = result {
                         serving.security.lock().unwrap_or_else(|e| e.into_inner()).revoke();
                         serving.stop.send_replace(true);
@@ -253,6 +305,18 @@ impl Remote {
                 server.notify();
                 *current = Some(server);
                 Ok(status)
+            }
+            "remote-certificate" => {
+                let certificate = self
+                    .certificate
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .as_ref()
+                    .ok_or("Start network browser access first.")?
+                    .certificate()
+                    .to_vec();
+                drop(current);
+                self.host.save_browser_certificate(certificate).await
             }
             "remote-stop" => {
                 if let Some(server) = current.take() {
@@ -291,6 +355,22 @@ impl Remote {
     }
 }
 
+fn network_address(value: Option<&Value>) -> Result<Option<Ipv4Addr>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => {
+            let address = value
+                .as_str()
+                .and_then(|address| address.trim().parse::<Ipv4Addr>().ok())
+                .filter(|address| {
+                    address.is_private() || address.is_link_local() || matches!(address.octets(), [100, 64..=127, _, _])
+                })
+                .ok_or("Enter this computer's private IPv4 address on the network.")?;
+            Ok(Some(address))
+        }
+    }
+}
+
 impl Drop for Remote {
     fn drop(&mut self) {
         if let Some(server) = self.server.get_mut().take() {
@@ -305,12 +385,47 @@ impl Drop for Remote {
 
 fn router(server: Arc<Server>) -> Router {
     Router::new()
-        .route("/login", post(login))
+        .route("/login", post(login).layer(DefaultBodyLimit::max(1024)))
         .route("/ws", get(upgrade))
+        .route("/upload-image", post(upload_image))
+        .route(
+            "/workspace-copy",
+            post(workspace_copy).layer(DefaultBodyLimit::max(1024)),
+        )
         .fallback(get(files))
-        .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn_with_state(server.clone(), boundary))
         .with_state(server)
+}
+
+async fn upload_image(State(server): State<Arc<Server>>, request: Request) -> Response {
+    let Some(active) = server.controller(request.headers()) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let Ok(bytes) = axum::body::to_bytes(request.into_body(), tc_core::assets::IMAGE_BYTES).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    Json(
+        server
+            .host
+            .store_remote_image(bytes.to_vec(), active)
+            .await
+            .unwrap_or_else(|error| json!({"error":error})),
+    )
+    .into_response()
+}
+
+async fn workspace_copy(State(server): State<Arc<Server>>, headers: HeaderMap, Json(portable): Json<bool>) -> Response {
+    let Some(active) = server.controller(&headers) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    Json(
+        server
+            .host
+            .remote_workspace_copy(portable, active)
+            .await
+            .unwrap_or_else(|error| json!({"error": error})),
+    )
+    .into_response()
 }
 
 async fn boundary(State(server): State<Arc<Server>>, request: Request, next: Next) -> Response {
@@ -344,8 +459,9 @@ async fn login(State(server): State<Arc<Server>>, Json(login): Json<Login>) -> R
     match result {
         Ok(id) => {
             let cookie = format!(
-                "{}={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200",
-                server.cookie
+                "{}={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200{}",
+                server.cookie,
+                if server.https { "; Secure" } else { "" }
             );
             ([(header::SET_COOKIE, cookie)], StatusCode::NO_CONTENT).into_response()
         }
@@ -449,8 +565,13 @@ async fn upgrade(State(server): State<Arc<Server>>, headers: HeaderMap, ws: WebS
     };
     let failure_server = server.clone();
     let failure_id = id.clone();
-    ws.max_message_size(MAX_MESSAGE)
-        .max_frame_size(MAX_MESSAGE)
+    let message_limit = if matches!(role, Role::Control) {
+        MAX_CONTROLLER_MESSAGE
+    } else {
+        MAX_MESSAGE
+    };
+    ws.max_message_size(message_limit)
+        .max_frame_size(message_limit)
         .on_failed_upgrade(move |_| disconnect(&failure_server, &failure_id))
         .on_upgrade(move |socket| connected(server, id, role, socket))
         .into_response()
@@ -494,8 +615,9 @@ async fn connected(server: Arc<Server>, id: String, role: Role, mut socket: WebS
     let mut messages = 0;
     let mut started = Instant::now();
     let mut next_sequence = 0u64;
+    let mut pending: Option<BoxFuture<Value>> = None;
     if active.load(Ordering::Acquire) && !*stop.borrow() && send(&mut socket, snapshot).await.is_ok() {
-        loop {
+        'connection: loop {
             if !active.load(Ordering::Acquire) || *stop.borrow() {
                 break;
             }
@@ -509,18 +631,49 @@ async fn connected(server: Arc<Server>, id: String, role: Role, mut socket: WebS
                     let Ok(event) = event else { break; };
                     if !active.load(Ordering::Acquire) || send(&mut socket, event).await.is_err() { break; }
                 }
+                result = async { pending.as_mut().expect("pending command").await }, if pending.is_some() => {
+                    pending = None;
+                    // Deliver the lifecycle changes queued by the desktop before its reply.
+                    for _ in 0..events.len() {
+                        let Ok(event) = events.try_recv() else { break 'connection; };
+                        if !active.load(Ordering::Acquire) || send(&mut socket, event).await.is_err() { break 'connection; }
+                    }
+                    if !active.load(Ordering::Acquire) || send(&mut socket, result).await.is_err() { break; }
+                }
                 message = socket.recv() => {
                     let Some(Ok(Message::Text(message))) = message else { break; };
                     if started.elapsed() >= Duration::from_secs(1) { started = Instant::now(); messages = 0; }
                     messages += 1;
                     if messages > 200 { break; }
-                    let result = input(&server.host, role, &active, &message, &mut next_sequence).await;
-                    if let Err(error) = result
-                        && send(&mut socket, json!({ "type": "error", "message": error })).await.is_err() { break; }
+                    let response = match serde_json::from_str::<RequestMessage>(&message) {
+                        Ok(RequestMessage::Terminal { request, epoch, command }) => {
+                            if !matches!(role, Role::Control) {
+                                Some(terminal_result(request, Err("This session is read-only.".into())))
+                            } else if pending.is_some() {
+                                Some(terminal_result(request, Err("A terminal request is already in progress.".into())))
+                            } else if let Ok(command) = serde_json::from_value::<TerminalCommand>(command) {
+                                let (host, active) = (server.host.clone(), active.clone());
+                                pending = Some(Box::pin(async move {
+                                    terminal_result(request, host.remote_terminal(epoch, command, active).await)
+                                }));
+                                None
+                            } else {
+                                Some(terminal_result(request, Err("Unsupported browser terminal request.".into())))
+                            }
+                        }
+                        Ok(RequestMessage::Input { id, data, seq }) => {
+                            input(&server.host, role, &active, id, data, seq, &mut next_sequence).await.err()
+                                .map(|message| json!({ "type": "error", "message": message }))
+                        }
+                        Err(_) => Some(json!({ "type": "error", "message": "Unsupported browser request." })),
+                    };
+                    if let Some(response) = response
+                        && send(&mut socket, response).await.is_err() { break; }
                 }
             }
         }
     }
+    drop(pending);
     let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(None))).await;
     disconnect(&server, &id);
 }
@@ -536,24 +689,93 @@ async fn send(socket: &mut WebSocket, event: Value) -> Result<(), ()> {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Input {
-    action: String,
+#[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
+enum RequestMessage {
+    Input { id: String, data: String, seq: u64 },
+    Terminal { request: u64, epoch: u64, command: Value },
+}
+
+#[derive(Deserialize, serde::Serialize)]
+#[serde(
+    tag = "action",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum TerminalCommand {
+    Launch {
+        canvas_id: Option<String>,
+        options: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        claude_account: Option<String>,
+    },
+    Start {
+        id: String,
+        fresh: bool,
+    },
+    Stop {
+        id: String,
+    },
+    Close {
+        id: String,
+    },
+    Rename {
+        id: String,
+        mode: String,
+        title: Option<String>,
+    },
+    Duplicate {
+        id: String,
+    },
+    Layout {
+        base: String,
+        workspace: Value,
+    },
+    NewWorkspace,
+    OpenWorkspace {
+        workspace: Value,
+    },
+    WorkspaceAction {
+        name: WorkspaceAction,
+        payload: Option<Value>,
+    },
+}
+
+#[derive(Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum WorkspaceAction {
+    AgentSetup,
+    ClaudeAccounts,
+    DeleteUnusedImages,
+    KeepRunning,
+    PointerCheck,
+    PointerConfigure,
+    TmuxSetup,
+    UnusedImages,
+}
+
+fn terminal_result(request: u64, result: Result<Value, String>) -> Value {
+    let result = result.unwrap_or_else(|error| json!({ "error": error }));
+    json!({ "type": "remote-terminal-result", "request": request, "result": result })
+}
+
+async fn input(
+    host: &Host,
+    role: Role,
+    active: &Arc<AtomicBool>,
     id: String,
     data: String,
     seq: u64,
-}
-
-async fn input(host: &Host, role: Role, active: &Arc<AtomicBool>, text: &str, next: &mut u64) -> Result<(), String> {
+    next: &mut u64,
+) -> Result<(), String> {
     if !matches!(role, Role::Control) {
         return Err("This session is read-only.".into());
     }
-    let message: Input = serde_json::from_str(text).map_err(|_| "Unsupported browser request.")?;
-    if message.action != "input" || message.id.len() > 128 || message.seq != *next {
+    if id.len() > 128 || seq != *next {
         return Err("Invalid browser input sequence.".into());
     }
     *next = next.checked_add(1).ok_or("Input sequence exhausted.")?;
-    host.remote_input(message.id, message.data, active.clone()).await?;
+    host.remote_input(id, data, active.clone()).await?;
     Ok(())
 }
 
@@ -621,6 +843,7 @@ mod tests {
         Arc::new(Server {
             host,
             origin: format!("http://{authority}"),
+            https: false,
             authority,
             cookie: format!("tc_remote_{port}"),
             security: Mutex::new(Security::new()),
@@ -826,11 +1049,15 @@ mod tests {
 
     #[tokio::test]
     async fn real_websockets_share_live_state_and_enforce_controller_and_viewer_roles() {
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let server = server(host(), listener.local_addr().unwrap().port());
         server.host.remote_begin("test".into()).await;
+        let (requests, mut desktop) = tokio::sync::mpsc::unbounded_channel();
+        server.host.connect(Arc::new(move |event| {
+            if event["type"] == "remote-terminal-request" {
+                let _ = requests.send(event);
+            }
+        }));
         let app = router(server.clone());
         let mut stop = server.stop.subscribe();
         let task = tokio::spawn(async move {
@@ -869,8 +1096,9 @@ mod tests {
         let (mut controller, _) = tokio_tungstenite::connect_async(make_request(control.clone()))
             .await
             .unwrap();
-        let event = controller.next().await.unwrap().unwrap().into_text().unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&event).unwrap()["role"], "control");
+        let event = socket_event(&mut controller, "remote-initialize").await;
+        assert_eq!(event["role"], "control");
+        let epoch = event["titleEpoch"].as_u64().unwrap();
         let result = tokio_tungstenite::connect_async(make_request(control)).await;
         assert!(matches!(result, Err(tungstenite::Error::Http(response)) if response.status() == StatusCode::CONFLICT));
         let (mut viewer, _) = tokio_tungstenite::connect_async(make_request(view)).await.unwrap();
@@ -883,19 +1111,83 @@ mod tests {
             ))
             .await
             .unwrap();
-        let error = tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                let message = viewer.next().await.unwrap().unwrap().into_text().unwrap();
-                let event: Value = serde_json::from_str(&message).unwrap();
-                if event["type"] == "error" {
-                    break event;
-                }
-            }
-        })
-        .await
-        .unwrap();
+        let error = socket_event(&mut viewer, "error").await;
         assert_eq!(error["message"], "This session is read-only.");
+
+        let launch = json!({"action":"launch", "canvasId":null, "options":{"title":"From browser"}});
+        let command = |request: u64, epoch: u64, command: Value| {
+            tungstenite::Message::Text(
+                json!({"action":"terminal", "request":request, "epoch":epoch, "command":command})
+                    .to_string()
+                    .into(),
+            )
+        };
+        viewer.send(command(1, epoch, launch.clone())).await.unwrap();
+        assert_eq!(
+            socket_event(&mut viewer, "remote-terminal-result").await["result"]["error"],
+            "This session is read-only."
+        );
+        controller
+            .send(command(2, epoch, json!({"action":"remote-stop"})))
+            .await
+            .unwrap();
+        assert_eq!(
+            socket_event(&mut controller, "remote-terminal-result").await["result"]["error"],
+            "Unsupported browser terminal request."
+        );
+        controller.send(command(3, epoch + 1, launch.clone())).await.unwrap();
+        assert!(
+            socket_event(&mut controller, "remote-terminal-result").await["result"]["error"]
+                .as_str()
+                .unwrap()
+                .contains("workspace changed")
+        );
+        assert!(desktop.try_recv().is_err());
+
+        controller.send(command(4, epoch, launch.clone())).await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(3), desktop.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(event["command"], launch);
+        let id = &event["requestId"];
+        server
+            .host
+            .command("remote-terminal-reply", Some(&json!({"id":id})))
+            .await
+            .unwrap();
+        assert!(
+            server
+                .host
+                .command("remote-terminal-reply", Some(&json!({"id":id})))
+                .await
+                .is_err()
+        );
+        server
+            .host
+            .command(
+                "remote-terminal-reply",
+                Some(&json!({"id":id, "result":{"id":"new-terminal"}})),
+            )
+            .await
+            .unwrap();
+        let reply = socket_event(&mut controller, "remote-terminal-result").await;
+        assert_eq!(reply["request"], 4);
+        assert_eq!(reply["result"]["id"], "new-terminal");
+
+        controller.send(command(5, epoch, launch)).await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(3), desktop.recv())
+            .await
+            .unwrap()
+            .unwrap();
         server.security.lock().unwrap().revoke();
+        assert!(
+            server
+                .host
+                .command("remote-terminal-reply", Some(&json!({"id":event["requestId"]})))
+                .await
+                .is_err()
+        );
         // Revocation closes existing sockets, even when they send no new requests.
         tokio::time::timeout(Duration::from_secs(3), async {
             while let Some(Ok(message)) = controller.next().await {
@@ -913,5 +1205,22 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    async fn socket_event(
+        socket: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        kind: &str,
+    ) -> Value {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let message = socket.next().await.unwrap().unwrap().into_text().unwrap();
+                let event: Value = serde_json::from_str(&message).unwrap();
+                if event["type"] == kind {
+                    return event;
+                }
+            }
+        })
+        .await
+        .unwrap()
     }
 }

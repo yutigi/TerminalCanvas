@@ -32,8 +32,8 @@ function attachGeometry(e) {
     if (!e || e.type === 'line') return null;
     return { bounds: { x: e.x, y: e.y, w: e.w, h: e.h }, ellipse: e.type === 'shape' && e.shape === 'ellipse' };
 }
-const attachTarget = id => attachGeometry(findElement(id));
-const linePoints = line => Geometry.resolveLine(line, attachTarget);
+const attachTarget = (id, board = workspace) => attachGeometry(board.cards.find(card => card.id === id) || board.items.find(item => item.id === id));
+const linePoints = (line, board) => Geometry.resolveLine(line, id => attachTarget(id, board));
 function boundsOf(e) {
     if (e.type !== 'line') return { x: e.x, y: e.y, w: e.w, h: e.h };
     const { start, end } = linePoints(e);
@@ -47,8 +47,8 @@ function setGroups(e, path) {
     else delete e.groups;
 }
 // Removing elements can leave a group with one member; such a group no longer groups anything.
-function pruneGroups() {
-    const elements = [...workspace.cards, ...workspace.items];
+function pruneGroups(board = workspace) {
+    const elements = [...board.cards, ...board.items];
     Geometry.pruneGroupPaths(elements).forEach((path, index) => setGroups(elements[index], path));
 }
 function attachableAt(point, exclude) {
@@ -170,19 +170,19 @@ function disposeItem(id) {
     itemViews.delete(id);
 }
 // Connectors keep their last drawn position when the element they point at is removed.
-function detachConnectors(ids) {
+function detachConnectors(ids, board = workspace) {
     const removed = new Set(ids);
-    for (const line of workspace.items) {
+    for (const line of board.items) {
         if (line.type !== 'line' || removed.has(line.id)) continue;
-        const points = linePoints(line);
+        const points = linePoints(line, board);
         if (removed.has(line.start.id)) line.start = points.start;
         if (removed.has(line.end.id)) line.end = points.end;
     }
 }
 // Arrows with either end on one of `ids`. A closed terminal takes these with it; plain lines are only detached.
-function attachedArrows(ids) {
+function attachedArrows(ids, board = workspace) {
     const targets = new Set(ids);
-    return workspace.items
+    return board.items
         .filter(item => item.type === 'line' && item.arrow && (targets.has(item.start.id) || targets.has(item.end.id)))
         .map(item => item.id);
 }

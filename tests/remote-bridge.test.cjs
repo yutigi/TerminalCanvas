@@ -50,10 +50,30 @@ test('viewer, resize, acknowledgments, and forbidden commands send no network me
     const { api, sockets } = boot(), initial = api.invoke('initialize');
     sockets[0].event({ type: 'remote-initialize', role: 'view' }); await initial;
     api.input('one', 'danger'); api.resize('one', 1, 1); api.acknowledge('one', 100);
+    assert.match((await api.invoke('remote-terminal', { epoch: 1, command: { action: 'launch' } })).error, /read-only/);
     for (const action of ['autosave', 'close', 'start', 'save-as', 'remote-status', 'remote-rotate', 'delete-unused-images']) {
         assert.match((await api.invoke(action, {})).error, /desktop app/);
     }
     assert.equal(sockets[0].sent.length, 0);
+});
+
+test('controller terminal requests match their replies and settle when disconnected', async () => {
+    const { api, sockets } = boot(), initial = api.invoke('initialize');
+    const [socket] = sockets;
+    socket.event({ type: 'remote-initialize', role: 'control' }); await initial;
+    const command = { action: 'launch', canvasId: 'canvas-1', options: { command: 'echo example' } };
+    const launch = api.invoke('remote-terminal', { epoch: 7, command });
+    assert.deepEqual(socket.sent, [{ action: 'terminal', request: 1, epoch: 7, command }]);
+    assert.match((await api.invoke('remote-terminal', { epoch: 7, command })).error, /in progress/);
+    socket.event({ type: 'remote-terminal-result', request: 2, result: { error: 'unrelated' } });
+    socket.event({ type: 'remote-terminal-result', request: 1, result: { id: 'new' } });
+    assert.equal((await launch).id, 'new');
+    assert.match((await api.invoke('remote-stop')).error, /desktop app/);
+    const close = api.invoke('remote-terminal', { epoch: 7, command: { action: 'close', id: 'new' } });
+    socket.close();
+    assert.match((await close).error, /Reload/);
+    assert.match((await api.invoke('remote-terminal', { epoch: 7, command })).error, /Reload/);
+    assert.equal(socket.sent.length, 2);
 });
 
 test('browser clipboard stays on the browser and validates copy size', async () => {

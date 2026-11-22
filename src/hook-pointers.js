@@ -17,17 +17,18 @@ function pointerCandidate(item) {
 function renderPointerControls() {
     if (!workspace) return;
     const item = selection.size === 1 ? findItem(selected) : null;
-    const canConfigure = !bridge?.remote && !!pointerCandidate(item);
+    const editable = !bridge?.remote || remoteController();
+    const canConfigure = editable && !!pointerCandidate(item);
     $('#pointer-controls').hidden = !canConfigure && !item?.hook;
     $('#pointer-divider').hidden = !canConfigure;
     $('#pointer-configure').hidden = !canConfigure;
     $('#pointer-configure-label').textContent = item?.hook ? 'Edit automation' : 'Add automation';
-    $('#pointer-toggle').hidden = !!bridge?.remote || !item?.hook;
+    $('#pointer-toggle').hidden = !editable || !item?.hook;
     $('#pointer-toggle').textContent = item?.hook?.armed ? 'Disable' : 'Enable';
     $('#pointer-toggle').setAttribute('aria-label', item?.hook?.armed ? 'Disable automation' : 'Enable automation');
     $('#pointer-status').hidden = !item?.hook;
     if (item?.hook) $('#pointer-status').title = $('#pointer-status').textContent = pointerLabel(item);
-    $('#pointers-pause').hidden = !!bridge?.remote || !canvasStates.some(canvas => canvas.board.items.some(item => item.hook));
+    $('#pointers-pause').hidden = !editable || !canvasStates.some(canvas => canvas.board.items.some(item => item.hook));
     $('#pointers-pause').textContent = workspace.hooksPaused ? 'Resume automations' : 'Pause automations';
     $('#pointers-pause').setAttribute('aria-pressed', String(!!workspace.hooksPaused));
     $('#pointer-paused').hidden = !workspace.hooksPaused;
@@ -84,7 +85,7 @@ function pointerEvent(event) {
     if (event.state === 'failed') toast(`Automation failed · ${event.message}`);
 }
 async function savePointerChange(item, hook, paused) {
-    if (bridge?.remote) throw new Error('Configure hook pointers in the desktop app.');
+    if (bridge?.remote && !remoteController()) throw new Error('This session is read-only.');
     clearTimeout(autosaveTimer);
     const candidate = cloneData(workspaceSnapshot());
     if (item) {

@@ -12,6 +12,7 @@ pub mod pointers;
 pub mod protocol;
 pub mod remote;
 mod remote_mirror;
+mod remote_tls;
 pub mod updates;
 #[cfg(all(feature = "e2e", not(debug_assertions)))]
 compile_error!("The e2e feature must never be enabled in release builds.");
@@ -104,6 +105,9 @@ actions! {
     clipboard_read => "clipboard-read",
     clipboard_write => "clipboard-write",
     launch_result => "launch-result",
+    remote_terminal_reply => "remote-terminal-reply",
+    remote_layout_save => "remote-layout-save",
+    remote_workspace_open => "remote-workspace-open",
 }
 
 /// Connects the renderer's event channel and returns the restored workspace. The renderer also
@@ -142,6 +146,7 @@ macro_rules! remote_actions {
 
 remote_actions! {
     remote_start => "remote-start",
+    remote_certificate => "remote-certificate",
     remote_stop => "remote-stop",
     remote_status => "remote-status",
     remote_rotate => "remote-rotate",
@@ -374,7 +379,11 @@ pub fn run() {
             ack,
             update_install,
             remote_start,
+            remote_certificate,
             remote_snapshot,
+            remote_terminal_reply,
+            remote_layout_save,
+            remote_workspace_open,
             remote_stop,
             remote_status,
             remote_rotate,

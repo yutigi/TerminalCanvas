@@ -133,14 +133,30 @@ function toast(message) {
 }
 async function invoke(action, payload) {
     if (!bridge) throw new Error('Open Terminal Canvas with npm start.');
+    if (bridge.remote && browserWorkspaceActions.has(action)) {
+        if (action === 'pointer-configure') payload = { ...payload, workspace: undefined };
+        return controlTerminal({ action: 'workspace-action', name: action, payload });
+    }
     if (payload === workspace && ['autosave', 'save', 'export', 'close'].includes(action)) payload = workspaceSnapshot();
     const result = await bridge.invoke(action, payload);
     if (result?.error) throw new Error(result.error);
     return result;
 }
 function run(task) { Promise.resolve().then(task).catch(error => toast(error.message)); }
+const remoteController = () => bridge?.remote && bridge.role === 'control' && !bridge.disconnected;
+const browserWorkspaceActions = new Set(['agent-setup', 'claude-accounts', 'delete-unused-images', 'keep-running', 'pointer-check', 'pointer-configure', 'tmux-setup', 'unused-images']);
+async function controlTerminal(command) {
+    if (remoteController()) await saveRemoteLayout();
+    return invoke('remote-terminal', { epoch: titleEpoch, command });
+}
 function changed() {
-    if (!ready || bridge?.remote) return;
+    if (!ready) return;
+    if (bridge?.remote) {
+        if (!remoteController()) return;
+        clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(() => run(saveRemoteLayout), 500);
+        return;
+    }
     const revision = ++saveRevision;
     $('#save-state').lastChild.textContent = 'Saving…';
     clearTimeout(autosaveTimer);
@@ -367,7 +383,7 @@ function movingElements() {
     return { rects: elements.filter(e => e.type !== 'line'), lines: elements.filter(e => e.type === 'line') };
 }
 function startMove(event, id, handle) {
-    if (bridge?.remote) return;
+    if (bridge?.remote && (!remoteController() || remoteLayoutSave)) return;
     if (event.button !== 0 || focused || event.shiftKey) return;
     if (!selection.has(id)) select(id);
     const { rects, lines } = movingElements(), z = workspace.camera.z;
@@ -467,7 +483,7 @@ const switcherQuery = $('#switcher-query');
 let switcherActive = null, switcherMatches = [], switcherReturnFocus = null;
 // Shared entry point for the UI button, shortcut, and the context menu (#37).
 function openTerminalSwitcher() {
-    if (!ready || canvasMutation || boardBusy() || document.querySelector('dialog[open]')) return false;
+    if (!ready || canvasMutation || activeDrags || document.querySelector('dialog[open]')) return false;
     switcherReturnFocus = document.activeElement;
     switcherQuery.value = '';
     switcherActive = focused || selected;
@@ -702,7 +718,7 @@ function recoveryInfo(card) {
         toggle.setAttribute('aria-label', toggle.title);
     }
 }
-function mount(card) {
+function mount(card, canvas = activeCanvas) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
@@ -711,8 +727,9 @@ function mount(card) {
     el.querySelector('.card-title').textContent = terminalDisplayTitle(card);
     el.querySelector('.card-title').setAttribute('aria-label', 'Rename terminal: ' + terminalDisplayTitle(card));
     el.querySelector('.card-title').onclick = () => openTitleDialog(card);
-    el.querySelector('.card-title').disabled = !!bridge?.remote;
-    const s = { element: el, canvas: activeCanvas, card, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
+    el.querySelector('.card-title').disabled = !!bridge?.remote && !remoteController();
+    const s = { element: el, canvas, card, status: 'idle', generation: 0, terminal: null, fit: null, metadataRevision: 0, placeholder: el.querySelector('.terminal-placeholder') };
+    el.hidden = canvas !== activeCanvas;
     sessions.set(card.id, s); world.append(el); renderGeometry(card);
     recoveryInfo(card); renderAccount(card); renderTerminalAppearance(card);
     if (window.Terminal && window.FitAddon) {
@@ -725,6 +742,13 @@ function mount(card) {
                 activate(event, uri) {
                     if (!event.isTrusted || event.button !== 0) return;
                     event.preventDefault();
+                    if (bridge?.remote) {
+                        if (URL.canParse(uri)) {
+                            const url = new URL(uri);
+                            if (['https:', 'http:'].includes(url.protocol)) window.open(url.href, '_blank', 'noopener,noreferrer');
+                        }
+                        return;
+                    }
                     run(() => invoke('open-link', uri));
                 }
             },
@@ -812,8 +836,9 @@ function mount(card) {
         else if (selected !== card.id) { selected = card.id; applySelection(true); }
     });
     el.querySelectorAll('[data-action]').forEach(button => button.onclick = () => run(async () => {
-        if (canvasMutation) return;
+        if (canvasMutation || s.closing) return;
         const action = button.dataset.action;
+        if (bridge?.remote && action !== 'focus' && !remoteController()) return;
         if (action === 'duplicate') await duplicateTerminal(card);
         if (action === 'account') await openAccountDialog(card);
         if (action === 'focus') setFocus(focused ? null : card.id);
@@ -821,19 +846,17 @@ function mount(card) {
         if (action === 'fresh' || action === 'fresh-shell') await start(card, 'fresh');
         if (action === 'toggle') {
             if (s.status === 'starting') return;
-            if (s.status === 'running') { await invoke('stop', { id: card.id }); s.terminal?.writeln('\r\n\x1b[90m[Terminal stopped]\x1b[0m'); setStatus(card, 'exited'); }
+            if (s.status === 'running') await stopTerminal(card);
             else await start(card);
         }
         if (action === 'close') {
             if (['running', 'starting'].includes(s.status) && !await confirmAction('Close this terminal?', 'Its running shell and child processes will be stopped. Terminal output is not saved.', 'Close terminal')) return;
-            s.closing = true;
-            try { await invoke('stop', { id: card.id, removePointers: true }); removeCard(card); }
-            finally { s.closing = false; }
+            await closeTerminal(card);
         }
     }));
     const header = el.querySelector('.card-header');
     header.addEventListener('pointerdown', event => { if (!event.target.closest('button')) startMove(event, card.id, header); });
-    drag(el.querySelector('.card-resize'), () => !focused && !bridge?.remote, (dx, dy, initial) => {
+    drag(el.querySelector('.card-resize'), () => !focused && !boardBusy(), (dx, dy, initial) => {
         card.w = Math.max(400, Math.min(2400, initial.w + dx / workspace.camera.z));
         card.h = Math.max(280, Math.min(1800, initial.h + dy / workspace.camera.z));
         renderGeometry(card);
@@ -842,15 +865,45 @@ function mount(card) {
 // Closing a terminal is not undoable. Arrows attached to it are removed with it; other connectors,
 // and those in undo steps that refer to it, are left with free ends.
 function removeCard(card) {
-    if (revealOnReturn === card.id) revealOnReturn = null;
-    if (focused === card.id) setFocus(null);
-    removeItems(attachedArrows([card.id]));
-    detachConnectors([card.id]);
-    dispose(card.id); workspace.cards = workspace.cards.filter(c => c.id !== card.id);
-    pruneGroups();
-    selection.delete(card.id);
-    if (selected === card.id) selected = [...selection].at(-1) ?? null;
+    const canvas = sessions.get(card.id).canvas, board = canvas.board;
+    const visible = canvas === activeCanvas;
+    if (visible) {
+        if (revealOnReturn === card.id) revealOnReturn = null;
+        if (focused === card.id) setFocus(null);
+    } else {
+        if (canvas.revealOnReturn === card.id) canvas.revealOnReturn = null;
+        if (canvas.focused === card.id) canvas.focused = null;
+    }
+    const arrows = attachedArrows([card.id], board);
+    const removed = new Set([card.id, ...arrows]);
+    detachConnectors([...removed], board);
+    arrows.forEach(disposeItem);
+    board.items = board.items.filter(item => !removed.has(item.id));
+    dispose(card.id); board.cards = board.cards.filter(c => c.id !== card.id);
+    pruneGroups(board);
+    const picked = visible ? selection : canvas.selection;
+    for (const id of removed) picked.delete(id);
+    if (visible && removed.has(selected)) selected = [...picked].at(-1) ?? null;
+    if (!visible && removed.has(canvas.selected)) canvas.selected = [...picked].at(-1) ?? null;
     renderLines(); applySelection(false); changed();
+}
+async function stopTerminal(card) {
+    if (bridge.remote) return controlTerminal({ action: 'stop', id: card.id });
+    await invoke('stop', { id: card.id });
+    const s = sessions.get(card.id);
+    if (s?.card !== card) return;
+    s.terminal?.writeln('\r\n\x1b[90m[Terminal stopped]\x1b[0m');
+    setStatus(card, 'exited');
+}
+async function closeTerminal(card) {
+    const s = sessions.get(card.id);
+    if (s?.card !== card || s.closing) return;
+    s.closing = true;
+    try {
+        if (bridge.remote) return await controlTerminal({ action: 'close', id: card.id });
+        await invoke('stop', { id: card.id, removePointers: true });
+        if (sessions.get(card.id) === s) removeCard(card);
+    } finally { s.closing = false; }
 }
 function dispose(id) {
     const s = sessions.get(id); if (!s) return;
@@ -889,7 +942,7 @@ function applyTitleEvent(event) {
     }
 }
 function openTitleDialog(card) {
-    if (!ready || bridge?.remote || titleBusy || document.querySelector('dialog[open]')) return;
+    if (!ready || (bridge?.remote && !remoteController()) || titleBusy || document.querySelector('dialog[open]')) return;
     titleCard = card;
     $('#rename-title').value = card.title;
     $('#title-mode').textContent = card.titleMode === 'automatic' ? 'Automatic title' : 'Manual title';
@@ -898,8 +951,13 @@ function openTitleDialog(card) {
     $('#rename-title').focus(); $('#rename-title').select();
 }
 async function renameTerminal(card, mode, title) {
-    if (bridge?.remote || titleBusy || anyCard(card.id) !== card) return;
+    if ((bridge?.remote && !remoteController()) || titleBusy || anyCard(card.id) !== card) return;
     if (mode === 'manual' && !validTerminalTitle(title)) throw new Error('Use a name of 1 to 100 characters without controls.');
+    if (bridge?.remote) {
+        await controlTerminal({ action: 'rename', id: card.id, mode, title: mode === 'manual' ? title.trim() : null });
+        $('#title-dialog').close(); titleCard = null;
+        return;
+    }
     titleBusy = true;
     const s = sessions.get(card.id), previous = { title: card.title, titleMode: card.titleMode, titleRevision: card.titleRevision };
     // Immediate manual precedence, even while an older automatic event is in flight.
@@ -942,9 +1000,14 @@ $('#automatic-title').onclick = () => {
 };
 $('#terminal-title').oninput = () => { launchTitleEdited = true; };
 // `launch` names the program's request that opened this card, so the host can log its output.
-async function start(card, mode = card.session ? 'resume' : 'start', launch) {
+async function start(card, mode = card.session ? 'resume' : 'start', launch, { type = true } = {}) {
     const s = sessions.get(card.id);
     if (!s || ['running', 'starting'].includes(s.status)) return;
+    if (bridge.remote) {
+        await controlTerminal({ action: 'start', id: card.id, fresh: mode === 'fresh' });
+        if (s.canvas === activeCanvas && s.status === 'running') s.terminal?.focus();
+        return;
+    }
     if (!s.terminal) throw new Error('Live terminals require the desktop app and installed xterm dependencies. Run npm install, then npm start.');
     s.generation++;
     s.startupCursorQueries = 0; s.startupQueryTail = ''; s.kept = false;
@@ -962,7 +1025,7 @@ async function start(card, mode = card.session ? 'resume' : 'start', launch) {
         }
         recoveryInfo(card); changed();
         if (s.status === 'starting') setStatus(card, 'running');
-        if (s.canvas === activeCanvas) s.terminal.focus();
+        if (type && s.canvas === activeCanvas) s.terminal.focus();
     } catch (error) { showDirectory(s, card.cwd || 'Home directory'); setStatus(card, 'idle', error.message); throw error; }
 }
 // Tracks one pointer from `event` until release. `move(dx, dy, e)` gets screen deltas; `end(moved, e)` runs once.
@@ -1176,13 +1239,27 @@ viewport.addEventListener('wheel', event => {
     if (!ready) return;
     zoomFromWheel(event);
 }, { passive: false });
-async function duplicateTerminal(source) {
-    if (!ready || duplicateBusy || canvasMutation || document.querySelector('dialog[open]')) return;
+async function duplicateTerminal(source, { fromBrowser = false } = {}) {
+    if (!ready || duplicateBusy || (canvasMutation && !fromBrowser) || document.querySelector('dialog[open]')) return;
     duplicateBusy = true;
     try {
+        if (bridge?.remote) {
+            const { id, warning, cwd } = await controlTerminal({ action: 'duplicate', id: source.id });
+            if (id) showTerminal(id) && sessions.get(id)?.terminal?.focus();
+            else if (warning) {
+                openLaunch();
+                $('#cwd').value = cwd;
+                $('#launch-error').textContent = warning;
+                $('#launch-error').hidden = false;
+            }
+            return;
+        }
+        const canvas = canvasForCard(source.id);
+        const current = () => (fromBrowser ? anyCard(source.id) : findCard(source.id)) === source;
         const result = await invoke('duplicate-directory', source);
-        if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
+        if (!current() || document.querySelector('dialog[open]')) return;
         if (result.warning) {
+            if (fromBrowser) return result;
             openLaunch('shell', { fontSize: source.fontSize, claudeAccount: source.claudeAccount, color: source.color, theme: source.theme });
             $('#cwd').value = result.cwd;
             $('#launch-error').textContent = result.warning;
@@ -1190,14 +1267,18 @@ async function duplicateTerminal(source) {
             return;
         }
         const { card } = await invoke('create-card', { profile: 'shell', titleMode: 'automatic', command: '', cwd: result.cwd, x: clampCoordinate(source.x + 40), y: clampCoordinate(source.y + 40) });
-        if (findCard(source.id) !== source || document.querySelector('dialog[open]')) return;
+        if (!current() || document.querySelector('dialog[open]')) return;
         if (source.fontSize) card.fontSize = source.fontSize;
         if (source.color) card.color = source.color;
         if (source.theme) card.theme = source.theme;
         if (source.claudeAccount) card.claudeAccount = source.claudeAccount;
-        workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
-        if (focused) setFocus(card.id);
-        await start(card);
+        canvas.board.cards.push(card); mount(card, canvas); changed(); refresh();
+        if (!fromBrowser) {
+            select(card.id);
+            if (focused) setFocus(card.id);
+        }
+        await start(card, undefined, undefined, { type: !fromBrowser });
+        return { id: card.id };
     } finally { duplicateBusy = false; }
 }
 // A program asked for a new terminal with `tc-hook new-terminal`: an agent of any kind, a harness, or
@@ -1262,7 +1343,7 @@ async function openRequestedTerminal(event) {
 // Folder review preserves a duplicate's text size, appearance, and account.
 let launchFontSize, launchAccount, launchColor, launchTheme, launchPoint;
 function openLaunch(profileId = 'shell', { fontSize, claudeAccount, color, theme, point } = {}) {
-    if (!ready || canvasMutation || document.querySelector('dialog[open]')) return;
+    if (!ready || (bridge?.remote && !remoteController()) || canvasMutation || document.querySelector('dialog[open]')) return;
     closeCanvasMenu();
     launchFontSize = fontSize; launchAccount = claudeAccount; launchColor = color; launchTheme = theme; launchPoint = point;
     launchTitleEdited = false;
@@ -1376,7 +1457,14 @@ async function openCommandTerminal({ beside = null, title, command, claudeAccoun
         const size = { w: 660, h: 430 };
         const taken = [...workspace.cards, ...workspace.items.filter(item => item.type !== 'line')].map(boundsOf);
         const spot = beside && findCard(beside.id) === beside ? Geometry.placeBeside(beside, size, taken) : Geometry.placeNear(viewportCenterWorld(), size, taken);
-        const { card } = await invoke('create-card', { profile: 'shell', title, command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) });
+        const options = { profile: 'shell', title, command, x: clampCoordinate(spot.x), y: clampCoordinate(spot.y) };
+        if (bridge.remote) {
+            const { id, warning } = await controlTerminal({ action: 'launch', canvasId: canvasExtended ? activeCanvas.id : null, options, claudeAccount: claudeAccount || null });
+            showTerminal(id);
+            toast(warning || notice);
+            return;
+        }
+        const { card } = await invoke('create-card', options);
         if (claudeAccount) card.claudeAccount = claudeAccount;
         workspace.cards.push(card); mount(card); select(card.id); changed(); refresh();
         if (focused) setFocus(card.id);
@@ -1564,7 +1652,18 @@ $('#launch-form').onsubmit = event => {
             const { x, y, z } = workspace.camera;
             const count = workspace.cards.length;
             const point = launchPoint || { x: Math.round((60 - x) / z + (count % 4) * 35), y: Math.round((40 - y) / z + (count % 4) * 35) };
-            const result = await invoke('create-card', { profile: $('#profile').value, title: $('#terminal-title').value.trim(), titleMode: launchTitleEdited && $('#terminal-title').value.trim() ? 'manual' : 'automatic', cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), ...point });
+            const title = $('#terminal-title').value.trim();
+            const options = { profile: $('#profile').value, title, titleMode: launchTitleEdited && title ? 'manual' : 'automatic', cwd: $('#cwd').value.trim(), command: $('#command').value.trim(), ...point };
+            if (bridge.remote) {
+                const { id, warning } = await controlTerminal({ action: 'launch', canvasId: canvasExtended ? activeCanvas.id : null, options: {
+                    ...options, x: clampCoordinate(point.x), y: clampCoordinate(point.y)
+                } });
+                $('#launch-dialog').close();
+                if (showTerminal(id) && sessions.get(id).status === 'running') sessions.get(id).terminal?.focus();
+                if (warning) toast(warning);
+                return;
+            }
+            const result = await invoke('create-card', options);
             if (launchFontSize) result.card.fontSize = launchFontSize;
             if (launchColor) result.card.color = launchColor;
             if (launchTheme) result.card.theme = launchTheme;
@@ -1579,6 +1678,75 @@ $('#launch-form').onsubmit = event => {
         } finally { formBusy = false; $('#launch-submit').disabled = false; }
     });
 };
+
+async function runRemoteTerminalRequest(event) {
+    // Claim once in the host so a queued action cannot run after revocation or a workspace change.
+    const id = event.requestId;
+    try { await invoke('remote-terminal-reply', { id }); }
+    catch { return; }
+    let result;
+    try {
+        if (event.titleEpoch !== titleEpoch) throw new Error('The workspace changed. Try again from the current canvas.');
+        if (canvasLocked()) throw new Error('Finish the current action on the desktop, then try again.');
+        canvasMutation = true;
+        try {
+            const command = event.command;
+            if (command.action === 'layout') {
+                result = await applyBrowserLayout(command, event.titleEpoch);
+            } else if (command.action === 'workspace-action') {
+                result = await runBrowserWorkspaceAction(command);
+            } else if (command.action === 'new-workspace' || command.action === 'open-workspace') {
+                result = command.action === 'new-workspace' ? await invoke('new')
+                    : await invoke('remote-workspace-open', { epoch: event.titleEpoch, workspace: command.workspace });
+                loadWorkspace(result.workspace, result.titleEpoch); changed(); attachKept(result.keepRunning);
+            } else if (command.action === 'launch') {
+                const canvas = canvasExtended ? canvasStates.find(canvas => canvas.id === command.canvasId)
+                    : command.canvasId === null ? activeCanvas : null;
+                if (!canvas) throw new Error('This canvas changed. Choose a canvas and try again.');
+                const { card } = await invoke('create-card', command.options);
+                if (event.titleEpoch !== titleEpoch || !canvasStates.includes(canvas)) throw new Error('The workspace changed. Try again from the current canvas.');
+                if (command.claudeAccount) card.claudeAccount = command.claudeAccount;
+                canvas.board.cards.push(card); mount(card, canvas); refresh(); changed();
+                result = { id: card.id };
+                try { await start(card, undefined, undefined, { type: false }); }
+                catch (error) { result.warning = error.message; }
+            } else {
+                const card = anyCard(command.id);
+                if (!card) throw new Error('This terminal is no longer on the canvas.');
+                if (command.action === 'start') await start(card, command.fresh ? 'fresh' : undefined, undefined, { type: false });
+                if (command.action === 'stop') await stopTerminal(card);
+                if (command.action === 'rename') await renameTerminal(card, command.mode, command.title);
+                if (command.action === 'close') {
+                    await closeTerminal(card);
+                    clearTimeout(autosaveTimer);
+                    await invoke('autosave', workspace);
+                }
+                result = command.action === 'duplicate' ? await duplicateTerminal(card, { fromBrowser: true }) : { ok: true };
+            }
+        } finally { canvasMutation = false; }
+    } catch (error) { result = { error: error.message }; }
+    await invoke('remote-terminal-reply', { id, result });
+}
+
+async function runBrowserWorkspaceAction({ name, payload = {} }) {
+    payload ||= {};
+    if (name === 'unused-images' || name === 'delete-unused-images') {
+        if (imageImports) throw new Error('Wait for images to finish importing on the desktop, then try again.');
+        payload.keep = [...new Set([...referencedImages(), ...(Array.isArray(payload.keep) ? payload.keep : [])])];
+    }
+    if (name !== 'pointer-configure') return invoke(name, payload);
+    const result = await invoke(name, { ...payload, workspace: workspaceSnapshot() });
+    if (typeof payload.paused === 'boolean') setHooksPaused(payload.paused);
+    else {
+        const item = anyPointerItem(payload.id);
+        if (item && payload.hook) item.hook = payload.hook;
+        else if (item) delete item.hook;
+        pointerStates.delete(payload.id);
+    }
+    renderLines(); renderPointerControls(); changed();
+    return result;
+}
+
 function loadWorkspace(board, epoch) {
     titleEpoch = epoch;
     $('#title-dialog').close(); titleCard = null;
@@ -1605,12 +1773,93 @@ function loadWorkspace(board, epoch) {
     setHooksPaused(!!board.hooksPaused);
     for (const canvas of canvasStates) {
         activeCanvas = canvas; workspace = canvas.board; workspace.name = board.name;
-        workspace.cards.forEach(mount); workspace.items.forEach(mountItem);
+        for (const card of workspace.cards) mount(card);
+        workspace.items.forEach(mountItem);
     }
     revealCanvas(canvasStates.find(canvas => canvas.id === board.activeCanvas) || canvasStates[0], { restoreKeyboard: false });
 }
 
-// A browser updates layout without recreating its terminal emulators or sharing focus/selection.
+// Keep terminal metadata and each client's navigation out of layout conflict checks.
+function layoutKey(board) {
+    const layout = {
+        name: board.name, terminalTheme: board.terminalTheme || 'current',
+        cards: board.cards.map(({ id, x, y, w, h, groups, color, fontSize, theme, claudeAccount }) => ({ id, x, y, w, h, groups, color, fontSize, theme, claudeAccount })),
+        items: board.items.map(({ hook, ...item }) => item),
+        canvases: board.canvases?.map(({ id, name, cardIds, itemIds }) => ({ id, name, cardIds, itemIds }))
+    };
+    return JSON.stringify(layout, (_, value) => value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
+}
+async function layoutDigest(key) {
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+let remoteLayoutBase, remoteLayoutSave, pendingRemoteWorkspace;
+async function applyBrowserLayout(command, epoch) {
+    const current = workspaceSnapshot();
+    const key = layoutKey(current);
+    if (command.base !== await layoutDigest(key) || layoutKey(workspaceSnapshot()) !== key || editing || activeDrags) {
+        return { workspace: workspaceSnapshot(), titleEpoch: epoch, warning: 'The desktop changed the workspace first. Review its changes and try your edit again.' };
+    }
+    const board = command.workspace;
+    board.camera = current.camera;
+    if (Array.isArray(board.canvases) && board.canvases.length) {
+        for (const [index, canvas] of board.canvases.entries()) {
+            const previous = current.canvases?.find(definition => definition.id === canvas.id);
+            canvas.camera = previous?.camera || (!current.canvases && index === 0 ? current.camera : { x: 48, y: 48, z: 1 });
+            canvas.selected = canvas.cardIds?.includes(previous?.selected) || canvas.itemIds?.includes(previous?.selected) ? previous.selected : undefined;
+            canvas.focused = canvas.cardIds?.includes(previous?.focused) ? previous.focused : undefined;
+        }
+        board.activeCanvas = board.canvases.some(canvas => canvas.id === current.activeCanvas) ? current.activeCanvas : board.canvases[0].id;
+    }
+    const result = await invoke('remote-layout-save', { workspace: board, epoch });
+    if (epoch === titleEpoch) {
+        clearTimeout(autosaveTimer);
+        remoteWorkspace(result.workspace, result.titleEpoch);
+        $('#save-state').lastChild.textContent = result.warning ? 'Save failed' : 'Saved locally';
+    }
+    return result;
+}
+function receiveRemoteWorkspace(board, epoch) {
+    if (epoch === titleEpoch && remoteController() && (remoteLayoutSave || activeDrags || editing || layoutKey(workspaceSnapshot()) !== remoteLayoutBase)) {
+        pendingRemoteWorkspace = { board, epoch };
+        return;
+    }
+    pendingRemoteWorkspace = null;
+    remoteLayoutBase = layoutKey(board);
+    remoteWorkspace(board, epoch);
+}
+async function saveRemoteLayout() {
+    if (!remoteController() || activeDrags || editing) return;
+    if (remoteLayoutSave) return remoteLayoutSave;
+    const workspace = workspaceSnapshot(), epoch = titleEpoch;
+    if (layoutKey(workspace) === remoteLayoutBase) {
+        if (pendingRemoteWorkspace) receiveRemoteWorkspace(pendingRemoteWorkspace.board, pendingRemoteWorkspace.epoch);
+        return;
+    }
+    const base = remoteLayoutBase;
+    remoteLayoutSave = (async () => {
+        $('#save-state').lastChild.textContent = 'Saving…';
+        try {
+            const command = { action: 'layout', base: await layoutDigest(base), workspace };
+            const result = await invoke('remote-terminal', { epoch, command });
+            if (titleEpoch === epoch) {
+                pendingRemoteWorkspace = null;
+                remoteLayoutBase = layoutKey(result.workspace);
+                remoteWorkspace(result.workspace, result.titleEpoch);
+                $('#save-state').lastChild.textContent = 'Saved on desktop';
+            }
+            if (result.warning) toast(result.warning);
+        } catch (error) {
+            $('#save-state').lastChild.textContent = 'Changes unsaved';
+            throw error;
+        }
+    })();
+    try { await remoteLayoutSave; }
+    finally { remoteLayoutSave = null; }
+}
+
+// Update layout without recreating terminal emulators or sharing focus and selection.
 function remoteWorkspace(board, epoch) {
     titleEpoch = epoch;
     rememberCanvas();
@@ -1624,7 +1873,13 @@ function remoteWorkspace(board, epoch) {
         Object.assign(previous, card);
         return [card.id, previous];
     }));
-    const items = new Map(board.items.map(item => [item.id, item]));
+    const previousItems = new Map(canvasStates.flatMap(canvas => canvas.board.items).map(item => [item.id, item]));
+    const items = new Map(board.items.map(item => {
+        const previous = previousItems.get(item.id);
+        if (!previous || previous === item) return [item.id, item];
+        for (const key of Object.keys(previous)) delete previous[key];
+        return [item.id, Object.assign(previous, item)];
+    }));
     for (const id of [...itemViews.keys()]) disposeItem(id);
     const wasExtended = canvasExtended;
     canvasExtended = Array.isArray(board.canvases) && board.canvases.length > 0;
@@ -1670,13 +1925,23 @@ function remoteTerminals(terminals) {
     for (const terminal of terminals) {
         const s = sessions.get(terminal.id), card = anyCard(terminal.id);
         if (!s || !card) continue;
-        if (terminal.running && s.remoteGeneration !== terminal.generation) s.terminal?.reset();
+        if (s.remoteGeneration !== terminal.generation) {
+            s.generation++;
+            if (terminal.running) {
+                s.terminal?.reset();
+                s.canvas.activity = '';
+            }
+        }
         s.remoteGeneration = terminal.generation;
         s.terminal?.resize(terminal.cols, terminal.rows);
         // Keep desktop columns even when Focus view or a narrower browser would propose another size.
         const screen = s.element.querySelector('.terminal-body .xterm');
         if (screen) screen.style.width = `${Math.ceil(terminal.cols * terminalFontSize(card) * 0.61)}px`;
-        setStatus(card, terminal.running ? 'running' : 'idle');
+        if (terminal.running) setStatus(card, 'running');
+        else if (s.status === 'running') {
+            s.terminal?.writeln('\r\n\x1b[90m[Terminal stopped]\x1b[0m');
+            setStatus(card, 'exited');
+        }
     }
 }
 async function canReplace() {
@@ -1684,11 +1949,31 @@ async function canReplace() {
     if (canvasStates.length === 1 && !workspace.cards.length && !workspace.items.length) return true;
     return confirmAction('Replace this workspace?', keepEnabled ? 'Save a workspace file first if you want to keep this layout. Kept terminals keep running and attach again when you reopen this workspace; others stop.' : 'Save a workspace file first if you want to keep this layout. Running terminals will stop; their output will not be saved.', 'Replace workspace');
 }
-async function save() { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.'); }
+async function save() {
+    workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace';
+    if (bridge.remote) { if (remoteController()) await downloadWorkspace(false); return; }
+    const result = await invoke('save', workspace); if (!result.canceled) toast('Workspace saved. Restoring it will not rerun commands.');
+}
 $('#save').onclick = () => run(save);
-$('#open-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('open'); if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); attachKept(result.keepRunning); } });
-$('#new-workspace').onclick = () => run(async () => { if (!await canReplace()) return; const result = await invoke('new'); loadWorkspace(result.workspace, result.titleEpoch); changed(); });
-$('#workspace-name').oninput = () => { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; changed(); };
+$('#open-workspace').onclick = () => run(async () => {
+    if (bridge.remote) {
+        if (!remoteController() || boardBusy()) return;
+        const file = await chooseBrowserFile('.terminalcanvas,.json');
+        if (!file || !await canReplace()) return;
+        if (file.size > 64 * 1024 * 1024) throw new Error('Workspace files must be smaller than 64 MB.');
+        await controlTerminal({ action: 'open-workspace', workspace: JSON.parse(await file.text()) });
+        return;
+    }
+    if (!await canReplace()) return;
+    const result = await invoke('open');
+    if (result.workspace) { loadWorkspace(result.workspace, result.titleEpoch); changed(); toast('Workspace restored. Start each terminal when you are ready.'); attachKept(result.keepRunning); }
+});
+$('#new-workspace').onclick = () => run(async () => {
+    if (!await canReplace()) return;
+    if (bridge.remote) { await controlTerminal({ action: 'new-workspace' }); return; }
+    const result = await invoke('new'); loadWorkspace(result.workspace, result.titleEpoch); changed();
+});
+$('#workspace-name').oninput = () => { if (!boardBusy()) { workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace'; changed(); } };
 $('#canvas-list').onchange = () => { if (!switchCanvas($('#canvas-list').value)) renderCanvases(); };
 $('#canvas-add').onclick = () => createCanvas();
 $('#canvas-rename').onclick = renameCanvas;
@@ -1722,6 +2007,26 @@ $('#undo').onclick = undo;
 $('#redo').onclick = redo;
 $('#zoom-out').onclick = () => { if (ready) zoom(1 / 1.15); };
 $('#zoom-reset').onclick = () => { if (ready) zoom(1 / workspace.camera.z); };
+function chooseBrowserFile(accept) {
+    return new Promise(resolve => {
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = accept; input.hidden = true;
+        const finish = file => { input.remove(); resolve(file); };
+        input.onchange = () => finish(input.files[0]);
+        input.oncancel = () => finish(null);
+        document.body.append(input); input.click();
+    });
+}
+async function downloadWorkspace(portable) {
+    await saveRemoteLayout();
+    const { name, text, missing } = await invoke('workspace-copy', { portable });
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = name;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    if (missing) toast(`Downloaded the workspace. ${missing} image${missing === 1 ? ' was' : 's were'} unavailable.`);
+}
 function setTool(name) {
     if (editing) document.activeElement?.blur();
     activeTool = name; hand = name === 'hand';
@@ -1736,6 +2041,12 @@ document.querySelectorAll('[data-tool]').forEach(button => button.onclick = () =
 document.querySelectorAll('[data-color]').forEach(button => button.onclick = () => { if (ready) setItemColor(button.dataset.color); });
 document.querySelectorAll('[data-font-size]').forEach(button => button.onclick = () => { if (ready) setItemFontSize(button.dataset.fontSize); });
 $('#image-tool').onclick = () => run(async () => {
+    if (bridge.remote) {
+        if (!remoteController() || boardBusy()) return;
+        const file = await chooseBrowserFile('image/png,image/jpeg,image/gif,image/webp');
+        if (file) await importImageFiles([file], viewportCenterWorld());
+        return;
+    }
     if (!ready || focused) return;
     await importing(async () => {
         const result = await invoke('pick-image');
@@ -1746,6 +2057,7 @@ $('#clean-images').onclick = () => run(async () => { if (ready) await cleanUpIma
 $('#export-workspace').onclick = () => run(async () => {
     if (!ready) return;
     workspace.name = $('#workspace-name').value.trim() || 'Untitled workspace';
+    if (bridge.remote) { if (remoteController()) await downloadWorkspace(true); return; }
     const result = await invoke('export', workspace);
     if (result.canceled) return;
     const images = `${result.images} image${result.images === 1 ? '' : 's'}`;
@@ -1894,6 +2206,9 @@ async function captureRemoteScreens(event) {
                     const start = screen.indexOf('\x1b[?1049h');
                     screen = start < 0 ? '' : screen.slice(start);
                 }
+                // xterm 6's serializer omits DECTCEM. Preserve it so focusing a browser copy
+                // cannot draw a block cursor over a cell where the desktop hides the cursor.
+                if (s.terminal._core?.coreService?.isCursorHidden) screen += '\x1b[?25l';
                 const bytes = encoder.encode(screen).length;
                 if (bytes <= remaining) { screens[id] = screen; remaining -= bytes; }
                 resolve();
@@ -1926,9 +2241,12 @@ if (bridge) {
         if (!bridge.remote && event.type === 'remote-capture') {
             captureRemoteScreens(event).catch(error => toast(error.message));
         }
-        if (bridge.remote && event.type === 'remote-workspace' && ready) remoteWorkspace(event.workspace, event.titleEpoch);
+        if (!bridge.remote && event.type === 'remote-terminal-request') run(() => runRemoteTerminalRequest(event));
+        if (bridge.remote && event.type === 'remote-workspace' && ready) receiveRemoteWorkspace(event.workspace, event.titleEpoch);
         if (bridge.remote && event.type === 'remote-terminals' && ready) remoteTerminals(event.terminals);
         if (bridge.remote && event.type === 'remote-disconnected') {
+            document.body.classList.remove('remote-controller');
+            $('#workspace-name').readOnly = true;
             for (const s of sessions.values()) if (s.terminal) s.terminal.options.disableStdin = true;
             const banner = $('#remote-banner');
             if (banner) banner.textContent = event.message;
@@ -1966,6 +2284,7 @@ if (bridge) {
         if (event.type === 'update') showUpdate(event);
         if (event.type === 'launch') requestTerminal(event);
         if (event.type === 'pointer') pointerEvent(event);
+        if (event.type === 'keep-status') showKeep(event.status);
         if (event.type === 'pointers-paused') { setHooksPaused(true); renderLines(); renderPointerControls(); toast(event.message); }
         if (event.type === 'closing') run(async () => {
             if (event.running && !await confirmAction('Close Terminal Canvas?', keepEnabled ? `Kept terminals keep running and attach again when you reopen; others stop. Your layout will be saved.` : `${event.running} running terminal${event.running === 1 ? '' : 's'} will stop. Your layout will be saved; terminal output will not.`, 'Close app')) return;
@@ -1993,12 +2312,14 @@ if (bridge) {
         loadWorkspace(initial.workspace, initial.titleEpoch); ready = true; markAppReady(); renderStyleToolbar();
         if (bridge.remote) {
             document.body.classList.add('remote-client');
-            $('#workspace-name').readOnly = true;
-            $('#save-state').lastChild.textContent = 'Desktop owns workspace';
+            document.body.classList.toggle('remote-controller', remoteController());
+            remoteLayoutBase = layoutKey(initial.workspace);
+            $('#workspace-name').readOnly = !remoteController();
+            $('#save-state').lastChild.textContent = remoteController() ? 'Saved on desktop' : 'Read-only viewer';
             $('#runtime-label').textContent = `Browser · ${initial.role === 'control' ? 'Controller' : 'Read-only viewer'}`;
             const banner = document.createElement('div'); banner.id = 'remote-banner'; banner.className = 'remote-banner';
             banner.setAttribute('role', 'status');
-            banner.textContent = initial.role === 'control' ? 'Controller · type in running terminals. Workspace and sizes follow desktop.' : 'Read-only viewer · workspace and sizes follow desktop.';
+            banner.textContent = initial.role === 'control' ? 'Controller · create and manage terminals.' : 'Read-only viewer';
             document.body.append(banner);
             remoteTerminals(initial.terminals || []);
             for (const [id, output] of Object.entries(initial.output || {})) {
@@ -2008,7 +2329,7 @@ if (bridge) {
         }
         if (initial.warning) toast(initial.warning);
         tmuxPending = !!initial.tmuxSetup;
-        if (!bridge.remote) attachKept(initial.keepRunning);
+        attachKept(initial.keepRunning);
         if (initial.agentSetup) await openAgentSetup({ offer: true });
         offerTmuxSetup();
     });

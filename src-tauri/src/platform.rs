@@ -105,9 +105,14 @@ impl Platform for TauriPlatform {
             }
         }
         let (callback, result) = chosen();
+        let (kind, extensions) = if file_name.ends_with(".cer") {
+            ("Browser access certificate", &["cer"][..])
+        } else {
+            ("Terminal Canvas workspace", &["terminalcanvas"][..])
+        };
         self.dialog(title)
             .set_file_name(file_name)
-            .add_filter("Terminal Canvas workspace", &["terminalcanvas"])
+            .add_filter(kind, extensions)
             .save_file(callback);
         result
     }
