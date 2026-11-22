@@ -7,6 +7,7 @@ const os = require('node:os');
 const https = require('node:https');
 const { X509Certificate } = require('node:crypto');
 const { chromium } = require('playwright-core');
+const { image } = require('./fixtures.cjs');
 const { launch, until, hasOutputLine, root } = require('./harness.cjs');
 const { choose } = require('./support.cjs');
 
@@ -253,7 +254,7 @@ test('loopback controller manages and types in shared terminals while the viewer
     await h.page.waitForFunction(() => canvasStates.find(canvas => canvas.name === 'Browser canvas')?.board.items.some(item => item.shape === 'rect'));
     const imagePicker = controller.waitForEvent('filechooser');
     await controller.locator('#image-tool').click();
-    await (await imagePicker).setFiles(path.join(root, 'docs', 'images', 'terminal-clipboard-shortcuts.png'));
+    await (await imagePicker).setFiles({ name: 'test.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
     await h.page.waitForFunction(() => canvasStates.find(canvas => canvas.name === 'Browser canvas')?.board.items.some(item => item.type === 'image'));
     const saved = controller.waitForEvent('download');
     await controller.locator('#save').click();
