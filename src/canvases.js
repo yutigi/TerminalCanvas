@@ -32,7 +32,6 @@ function canvasForCard(id) { return canvasStates.find(canvas => canvas.board.car
 function anyCard(id) { return canvasForCard(id)?.board.cards.find(card => card.id === id); }
 function workspaceItemCount() { return canvasStates.reduce((count, canvas) => count + canvas.board.items.length, 0); }
 function canvasLocked() {
-    // Browser board edits are blocked by boardBusy(), but local canvas navigation is available.
     return !ready || activeDrags > 0 || imageImports > 0 || formBusy || duplicateBusy || canvasMutation
         || [...sessions.values()].some(s => s.closing) || !!document.querySelector('dialog[open]');
 }
@@ -101,25 +100,25 @@ function switchCanvas(id) {
     return true;
 }
 function createCanvas(name = `Canvas ${canvasStates.length + 1}`) {
-    if (bridge?.remote || canvasLocked()) return false;
+    if (boardBusy() || canvasLocked()) return false;
     const canvas = canvasState({ name });
     canvasExtended = true; canvasStates.push(canvas); setWorkspaceTerminalTheme(workspace.terminalTheme); setHooksPaused(!!workspace.hooksPaused); switchCanvas(canvas.id);
     return canvas;
 }
 function reorderCanvas(delta) {
-    if (bridge?.remote || canvasLocked()) return;
+    if (boardBusy() || canvasLocked()) return;
     const from = canvasStates.indexOf(activeCanvas), to = from + delta;
     if (to < 0 || to >= canvasStates.length) return;
     canvasStates.splice(from, 1); canvasStates.splice(to, 0, activeCanvas);
     canvasExtended = true; renderCanvases(); changed();
 }
 function renameCanvas() {
-    if (bridge?.remote || canvasLocked()) return;
+    if (boardBusy() || canvasLocked()) return;
     $('#canvas-name').value = activeCanvas.name;
     $('#canvas-dialog').showModal(); $('#canvas-name').focus(); $('#canvas-name').select();
 }
 async function deleteCanvas() {
-    if (bridge?.remote || canvasLocked() || canvasStates.length <= 1) return;
+    if (boardBusy() || canvasLocked() || canvasStates.length <= 1) return;
     const canvas = activeCanvas;
     const running = canvas.board.cards.filter(card => ['running', 'starting'].includes(sessions.get(card.id)?.status)).length;
     if (!await confirmAction(`Delete “${canvas.name}”?`,
@@ -128,7 +127,7 @@ async function deleteCanvas() {
     canvasMutation = true;
     try {
         // Preserve the canvas if a stop fails; never dispose a view with its process still alive.
-        for (const card of canvas.board.cards) await invoke('stop', { id: card.id, removePointers: true });
+        if (!bridge.remote) for (const card of canvas.board.cards) await invoke('stop', { id: card.id, removePointers: true });
         const index = canvasStates.indexOf(canvas), next = canvasStates[index - 1] || canvasStates[index + 1];
         if (editing) document.activeElement?.blur();
         for (const card of canvas.board.cards) dispose(card.id);

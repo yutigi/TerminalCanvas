@@ -278,6 +278,7 @@ struct State {
     pointers: crate::pointers::Pointers,
     mirror: Option<crate::remote_mirror::Mirror>,
     remote_capture: Option<RemoteCapture>,
+    remote_terminal: Option<RemoteTerminalRequest>,
 }
 
 #[derive(Default)]
@@ -299,6 +300,14 @@ struct RemoteCapture {
     request_id: String,
     generations: HashMap<String, u64>,
     done: tokio::sync::oneshot::Sender<()>,
+}
+
+struct RemoteTerminalRequest {
+    id: String,
+    epoch: u64,
+    active: Arc<AtomicBool>,
+    claimed: bool,
+    done: tokio::sync::oneshot::Sender<CommandResult>,
 }
 
 /// Where events for the UI go.
@@ -431,6 +440,7 @@ impl Host {
             pointers: crate::pointers::Pointers::default(),
             mirror: None,
             remote_capture: None,
+            remote_terminal: None,
         };
         let host = Arc::new(Host {
             state: sender,
@@ -608,6 +618,12 @@ impl Host {
 
     /// Sends an event to the UI, if it is connected.
     pub fn emit(&self, event: Value) {
+        if matches!(
+            event["type"].as_str(),
+            Some("pointer" | "pointers-paused" | "keep-status")
+        ) {
+            let _ = self.remote_events.send(event.clone());
+        }
         if let Some(events) = self.emitter() {
             events(event);
         }
@@ -868,6 +884,10 @@ impl Host {
         }
         let text = String::from_utf8_lossy(&std::fs::read(file)?).into_owned();
         let raw: Value = serde_json::from_str(&text).map_err(|error| Error::Invalid(error.to_string()))?;
+        self.workspace_from_value(raw).await
+    }
+
+    async fn workspace_from_value(&self, raw: Value) -> Result<Workspace, Error> {
         let assets = self.paths.assets();
         let raw = self
             .assets
@@ -878,10 +898,23 @@ impl Host {
     }
 
     async fn store(&self, bytes: Vec<u8>) -> CommandResult {
+        self.store_image(bytes, None).await
+    }
+
+    pub(crate) async fn store_remote_image(&self, bytes: Vec<u8>, active: Arc<AtomicBool>) -> CommandResult {
+        self.store_image(bytes, Some(active)).await
+    }
+
+    async fn store_image(&self, bytes: Vec<u8>, active: Option<Arc<AtomicBool>>) -> CommandResult {
         let assets = self.paths.assets();
         let name = self
             .assets
-            .run(move || store_image(&assets, &bytes))
+            .run(move || {
+                if active.is_some_and(|active| !active.load(Ordering::Acquire)) {
+                    return Err(Error::Invalid("Session revoked.".into()));
+                }
+                store_image(&assets, &bytes)
+            })
             .await
             .ok_or("The image queue stopped.")?;
         Ok(json!({ "asset": name.map_err(message)? }))
@@ -1005,9 +1038,50 @@ impl Host {
                 let mut status = self.keep_status().await;
                 status["enabled"] = json!(setting.enabled);
                 status["available"] = json!(keeper.is_ok());
+                if enable.is_some() {
+                    self.emit(json!({"type":"keep-status", "status":status}));
+                }
                 Ok(status)
             }
             "create-card" => Ok(json!({ "card": create_card(payload.unwrap_or(&Value::Null)).map_err(message)? })),
+            "remote-terminal-reply" => {
+                let id = field(payload, "id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let result = field(payload, "result").cloned();
+                self.with_state(move |_, state| {
+                    let request = state
+                        .remote_terminal
+                        .as_mut()
+                        .filter(|request| request.id == id)
+                        .ok_or("This browser request is no longer pending.")?;
+                    if let Some(result) = result {
+                        if !request.claimed {
+                            return Err("This browser request was not accepted.".into());
+                        }
+                        let request = state.remote_terminal.take().expect("request matched");
+                        let result = match result["error"].as_str() {
+                            Some(error) => Err(error.to_owned()),
+                            None => Ok(result),
+                        };
+                        let _ = request.done.send(result);
+                    } else {
+                        if request.claimed || request.done.is_closed() || !request.active.load(Ordering::Acquire) {
+                            return Err("This browser request is no longer authorized.".into());
+                        }
+                        if request.epoch != state.recovery.epoch() {
+                            let error = "The workspace changed. Try again from the current canvas.";
+                            let request = state.remote_terminal.take().expect("request matched");
+                            let _ = request.done.send(Err(error.into()));
+                            return Err(error.into());
+                        }
+                        request.claimed = true;
+                    }
+                    Ok(json!({ "ok": true }))
+                })
+                .await
+            }
             "rename-title" => {
                 let id = field(payload, "id")
                     .and_then(Value::as_str)
@@ -1346,6 +1420,15 @@ impl Host {
                 self.flush(payload).await?;
                 Ok(json!({ "ok": true }))
             }
+            "remote-layout-save" => self.save_remote_layout(payload).await,
+            "remote-workspace-open" => {
+                let epoch = field(payload, "epoch")
+                    .and_then(Value::as_u64)
+                    .ok_or("Invalid workspace revision.")?;
+                let raw = field(payload, "workspace").cloned().ok_or("Invalid workspace.")?;
+                let workspace = self.workspace_from_value(raw).await.map_err(message)?;
+                self.open_workspace(workspace, None, Some(epoch)).await
+            }
             "save" | "save-as" => {
                 let raw = payload.cloned().unwrap_or(Value::Null);
                 let use_filename = action == "save";
@@ -1459,21 +1542,7 @@ impl Host {
                     return Ok(json!({ "canceled": true }));
                 };
                 let workspace = self.read_workspace(&file).await.map_err(message)?;
-                let opened = workspace.clone();
-                let title_epoch = self
-                    .with_state(move |host, state| {
-                        state.manager.stop_all();
-                        host.dispatch(state);
-                        state.manager.forget();
-                        state.pointers = crate::pointers::Pointers::default();
-                        state.recovery.reset(opened);
-                        state.recovery.epoch()
-                    })
-                    .await;
-                self.flush(None).await?;
-                self.with_state(move |_, state| state.filename = Some(file)).await;
-                let keep = self.keep_status().await;
-                Ok(json!({ "workspace": workspace, "titleEpoch": title_epoch, "keepRunning": keep }))
+                self.open_workspace(workspace, Some(file), None).await
             }
             "new" => {
                 self.with_state(|host, state| {
@@ -1506,6 +1575,57 @@ impl Host {
             }
             _ => Err("Unsupported desktop command.".into()),
         }
+    }
+
+    async fn open_workspace(&self, workspace: Workspace, file: Option<PathBuf>, epoch: Option<u64>) -> CommandResult {
+        let opened = workspace.clone();
+        let title_epoch = self
+            .with_state(move |host, state| {
+                if epoch.is_some_and(|epoch| epoch != state.recovery.epoch()) {
+                    return Err("The workspace changed. Try opening the file again.");
+                }
+                state.manager.stop_all();
+                host.dispatch(state);
+                state.manager.forget();
+                state.pointers = crate::pointers::Pointers::default();
+                state.recovery.reset(opened);
+                Ok(state.recovery.epoch())
+            })
+            .await?;
+        self.flush(None).await?;
+        self.with_state(move |_, state| {
+            if state.recovery.epoch() == title_epoch {
+                state.filename = file;
+            }
+        })
+        .await;
+        let keep = self.keep_status().await;
+        Ok(json!({ "workspace": workspace, "titleEpoch": title_epoch, "keepRunning": keep }))
+    }
+
+    pub(crate) async fn remote_workspace_copy(&self, portable: bool, active: Arc<AtomicBool>) -> CommandResult {
+        let session = active.clone();
+        let board = self
+            .with_state(move |host, state| {
+                if !session.load(Ordering::Acquire) {
+                    return Err("Session revoked.");
+                }
+                state.manager.snapshot();
+                host.dispatch(state);
+                Ok(state.recovery.board().clone())
+            })
+            .await?;
+        let name = file_stem(&board.name);
+        let assets = self.paths.assets();
+        self.assets.run(move || {
+            if !active.load(Ordering::Acquire) { return Err("Session revoked.".into()); }
+            if portable {
+                let embedded = embed_assets(&board, &assets);
+                Ok(json!({"name": format!("{name} (portable).terminalcanvas"), "text": board.to_file_string(Some(&embedded.assets)), "missing": embedded.missing.len()}))
+            } else {
+                Ok(json!({"name": format!("{name}.terminalcanvas"), "text": board.to_file_string(None)}))
+            }
+        }).await.ok_or("The image queue stopped.")?
     }
 
     /// Whether terminals keep running after the app quits, how (`helper` or `tmux`), and the cards
@@ -1621,6 +1741,71 @@ impl Host {
         self.paths.assets()
     }
 
+    pub(crate) async fn save_browser_certificate(&self, certificate: Vec<u8>) -> CommandResult {
+        let Some(file) = self
+            .platform
+            .save_file("Save browser certificate", "Terminal Canvas Browser Access.cer".into())
+            .await
+        else {
+            return Ok(json!({"canceled": true}));
+        };
+        tokio::task::spawn_blocking(move || atomic::write(&file, &certificate, Access::Default))
+            .await
+            .map_err(message)?
+            .map_err(message)?;
+        Ok(json!({"ok": true}))
+    }
+
+    async fn save_remote_layout(&self, payload: Option<&Value>) -> CommandResult {
+        let epoch = field(payload, "epoch")
+            .and_then(Value::as_u64)
+            .ok_or("Invalid workspace revision.")?;
+        let raw = field(payload, "workspace").cloned().ok_or("Invalid workspace.")?;
+        let (board, saved) = self
+            .with_state(move |host, state| {
+                if state.recovery.epoch() != epoch {
+                    return Err("The workspace changed. Try again from the current canvas.".to_owned());
+                }
+                let current = state.recovery.board();
+                let raw = pointer_snapshot(current, &raw);
+                let mut incoming = state.recovery.merge(&raw).map_err(message)?;
+                let ids: std::collections::HashSet<_> = incoming.cards.iter().map(|card| card.id.clone()).collect();
+                for card in &mut incoming.cards {
+                    let previous = current
+                        .cards
+                        .iter()
+                        .find(|prior| prior.id == card.id)
+                        .ok_or("Create terminals with New terminal.")?;
+                    // Layout editing may move and style a card. Lifecycle and titles have their own commands.
+                    card.profile = previous.profile;
+                    card.title.clone_from(&previous.title);
+                    card.title_mode = previous.title_mode;
+                    card.title_revision = previous.title_revision;
+                    card.cwd.clone_from(&previous.cwd);
+                    card.command.clone_from(&previous.command);
+                    card.session.clone_from(&previous.session);
+                }
+                let removed: Vec<_> = current
+                    .cards
+                    .iter()
+                    .filter(|card| !ids.contains(&card.id))
+                    .map(|card| card.id.clone())
+                    .collect();
+                let board = state.recovery.accept(&incoming.to_value()).map_err(message)?.clone();
+                for id in removed {
+                    state.manager.stop(&id);
+                }
+                host.dispatch(state);
+                Ok::<_, String>((board.clone(), host.queue_save(host.paths.recovery(), &board, None)))
+            })
+            .await?;
+        let mut result = json!({ "workspace": board, "titleEpoch": epoch });
+        if let Err(error) = saved.await {
+            result["warning"] = json!(error);
+        }
+        Ok(result)
+    }
+
     /// Start buffering PTY output at the same point in the desktop event stream as the capture.
     pub async fn remote_begin(&self, request_id: String) {
         let (done, captured) = tokio::sync::oneshot::channel();
@@ -1683,6 +1868,7 @@ impl Host {
             snapshot["home"] = json!(host.home);
             snapshot["platform"] = json!(node_platform(host.os));
             snapshot["titleEpoch"] = json!(state.recovery.epoch());
+            snapshot["keepRunning"] = json!({"enabled":state.manager.keeper().is_some()});
             Some((snapshot, events))
         })
         .await
@@ -1694,6 +1880,50 @@ impl Host {
             state.mirror = None;
         })
         .await;
+    }
+
+    /// The desktop renderer owns canvas edits and answers startup queries for the PTY. It
+    /// claims a controller's request before running its ordinary terminal actions.
+    pub(crate) async fn remote_terminal(
+        &self,
+        epoch: u64,
+        command: crate::remote::TerminalCommand,
+        active: Arc<AtomicBool>,
+    ) -> CommandResult {
+        let (done, reply) = tokio::sync::oneshot::channel();
+        self.with_state(move |host, state| {
+            if done.is_closed() || !active.load(Ordering::Acquire) || state.mirror.is_none() {
+                return Err("Session revoked.");
+            }
+            if epoch != state.recovery.epoch() {
+                return Err("The workspace changed. Try again from the current canvas.");
+            }
+            let emitter = host.emitter().ok_or("The desktop workspace is unavailable.")?;
+            if state
+                .remote_terminal
+                .as_ref()
+                .is_some_and(|request| !request.done.is_closed())
+            {
+                return Err("The desktop is already handling a browser request.");
+            }
+            let id = uuid::Uuid::new_v4().to_string();
+            emitter(
+                json!({ "type": "remote-terminal-request", "requestId": id, "titleEpoch": epoch, "command": command }),
+            );
+            state.remote_terminal = Some(RemoteTerminalRequest {
+                id,
+                epoch,
+                active,
+                claimed: false,
+                done,
+            });
+            Ok(())
+        })
+        .await?;
+        tokio::time::timeout(Duration::from_secs(20), reply)
+            .await
+            .map_err(|_| "The desktop did not confirm the request. Check the canvas before retrying.")?
+            .map_err(|_| "The desktop request was canceled.")?
     }
 
     /// WebSocket order is already serial. It must not share the desktop bridge's sequence map.

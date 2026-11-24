@@ -4,6 +4,7 @@
     if (root.terminalCanvas || root.__TAURI__ || !['http:', 'https:'].includes(root.location?.protocol)) return;
     const listeners = new Set(), buffered = [];
     let socket, initial, resolveInitial, rejectInitial, sequence = 0, role = 'view', disconnected = false;
+    let requestId = 0, pending;
     const deliver = event => {
         if (!listeners.size) buffered.push(event);
         else for (const listener of listeners) listener(event);
@@ -12,6 +13,8 @@
         if (disconnected) return;
         disconnected = true;
         rejectInitial?.(new Error(message));
+        pending?.resolve({ error: message });
+        pending = null;
         deliver({ type: 'remote-disconnected', message });
     };
     const initialize = () => {
@@ -26,6 +29,11 @@
             if (event.type === 'remote-initialize') {
                 role = event.role;
                 resolveInitial(event);
+            } else if (event.type === 'remote-terminal-result') {
+                if (pending && event.request === pending.id) {
+                    pending.resolve(event.result);
+                    pending = null;
+                }
             } else deliver(event);
         };
         socket.onclose = () => fail('Browser connection closed. Reload to reconnect or enter a new token.');
@@ -36,6 +44,7 @@
     root.terminalCanvas = Object.freeze({
         remote: true,
         get role() { return role; },
+        get disconnected() { return disconnected; },
         assetPrefix: '/images/',
         async invoke(action, payload) {
             try {
@@ -46,7 +55,24 @@
                     if (typeof payload !== 'string' || payload.length > 1048576) return error('Selection exceeds 1 MB.');
                     await root.navigator.clipboard.writeText(payload); return { ok: true };
                 }
-                return error('Use the desktop app to edit the workspace or start and stop terminals.');
+                if (action === 'import-image' && role === 'control' && !disconnected) {
+                    const response = await root.fetch('/upload-image', { method: 'POST', body: payload.bytes });
+                    return response.ok ? await response.json() : error('Could not upload the image. Check the browser session and file size.');
+                }
+                if (action === 'workspace-copy' && role === 'control' && !disconnected) {
+                    const response = await root.fetch('/workspace-copy', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload.portable)
+                    });
+                    return response.ok ? await response.json() : error('Could not download the workspace. Check the browser session.');
+                }
+                if (action !== 'remote-terminal') return error('Use the desktop app for this action.');
+                if (role !== 'control') return error('This session is read-only.');
+                if (disconnected || socket?.readyState !== root.WebSocket.OPEN) return error('Browser connection closed. Reload to reconnect.');
+                if (pending) return error('A terminal request is already in progress.');
+                const id = ++requestId;
+                const message = JSON.stringify({ action: 'terminal', request: id, epoch: payload.epoch, command: payload.command });
+                socket.send(message);
+                return await new Promise(resolve => { pending = { id, resolve }; });
             } catch (failure) { return error(String(failure.message || failure)); }
         },
         input(id, data) {

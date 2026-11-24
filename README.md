@@ -58,25 +58,31 @@ even without command-line flags. Release builds reject the `e2e` feature.
 
 On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text is selected. Windows behavior is tested with real native key events, clipboard IPC, and PowerShell. On macOS, these shortcuts were checked by hand in the native app. Linux desktop behavior has not been validated.
 
-### Browser access (first phase)
+### Browser access
 
-View the live canvas and type into its running terminals from a browser **on the same computer**:
+View and control Terminal Canvas in a browser on this computer or another device on a private network.
 
-1. Start Terminal Canvas, open **Browser access · Off** at the bottom of the sidebar, and choose a
-   port. Leave it at `0` to select an available port, or choose a fixed port from 1 to 65535.
-2. Click **Start**. The dialog shows `http://127.0.0.1:<port>` and separate controller/viewer tokens.
-   Open that exact URL in a browser and enter the appropriate token. The sidebar keeps showing the
-   connected-client count while access is running.
-3. Use the controller token to type into running terminals, including paste and terminal interrupts.
+1. Open **Browser access · Off** in the desktop sidebar. Choose **This computer** for local access.
+   To reach the app from another device, choose **Private network (HTTPS)** and enter this computer’s
+   private IPv4 address. A fixed port makes it easier to allow inbound connections on the private network.
+   Leave it at `0` to choose an available port automatically.
+2. Click **Start**. For network access, click **Save browser certificate**, transfer the `.cer` to
+   each device, and install and trust it as a root certificate. The certificate lasts until the desktop
+   app restarts. On iPhone and iPad, enable full trust for the installed root in **Certificate Trust Settings**.
+3. Open the exact address shown and enter one of the displayed tokens. The sidebar shows how many
+   clients are connected.
+4. Use the controller token to create a terminal on the current canvas, run a launch command, or
+   type into a running shell, including paste and terminal interrupts. You can also start, resume,
+   stop, and close terminals from their cards. Enter project folders as paths on the desktop computer.
    Only one remote controller can connect at once. The desktop can still type; simultaneous input
    reaches the shell in arrival order. Viewer tokens allow additional read-only windows, up to
    eight sessions in total. Use another browser or a private browser profile for a different token;
    tabs in one profile share their login cookie. Each client can switch canvases independently and
    keeps its own focus, selection, pan, and zoom on each canvas. Hidden terminals keep receiving output.
-4. Keep workspace editing, terminal start/stop, folder/file dialogs, image import/cleanup, and
-   updates in the desktop app. Browser output uses the desktop's PTY dimensions and scrolls when
-   necessary. Browser clipboard shortcuts use that browser's permission-controlled clipboard.
-5. **Revoke sessions** disconnects every browser without changing the tokens. **Rotate tokens**
+5. Controllers can also edit canvases and items, manage automations, and open or download workspace
+   files. The **Browser access features** popup lists differences including the native folder picker,
+   app updates, and browser clipboard permissions. Terminal size follows the desktop PTY.
+6. **Revoke sessions** disconnects every browser without changing the tokens. **Rotate tokens**
    also invalidates both tokens. **Stop access** stops listening and disconnects everyone. Starting
    again generates fresh tokens. Reload a disconnected browser to reconnect or enter a new token.
 
@@ -85,11 +91,12 @@ starts from an environment variable, saved setting, command-line argument, or re
 Tokens are generated from OS randomness and kept only in memory. Login uses a same-origin POST;
 tokens never appear in URLs or browser storage. HttpOnly, SameSite=Strict cookies expire after
 12 hours. At most five failed login attempts are allowed per rolling minute, across all browsers.
-Stopping or revoking sessions invalidates queued shell input as well as active connections.
+Stopping or revoking sessions invalidates queued shell input and unclaimed terminal requests, and
+disconnects active connections.
 
-This phase binds only IPv4 loopback and checks the exact Host and Origin. It rejects direct
-LAN/VPN access and arbitrary file paths, and keeps browser CSP separate from the unchanged desktop
-CSP. When you start Browser access, it shares the current screen of each running terminal, including
+Network mode binds one private IPv4 interface with HTTPS and secure session cookies, including a
+Tailscale interface when you supply its `100.64.0.0/10` address. Both modes check the exact browser
+address and origin. When you start Browser access, it shares the current screen of each running terminal, including
 any text already on that screen. Earlier scrollback stays on the desktop. The screens and subsequent
 output share a 2 MiB, memory-only replay buffer. Slow clients disconnect and can reload to replay
 recent output. They never acknowledge or stall the desktop's PTY output. Full-screen programs may
@@ -97,15 +104,8 @@ need a redraw after attachment, especially once older output has dropped out of 
 controller tokens like access to your shells, and viewer tokens like access to terminal output and
 the workspace.
 
-**iPhone/iPad and Tailscale:** direct access at a Tailscale `100.x` address or a LAN address is not
-implemented in this phase. Installing Tailscale does not change that: `127.0.0.1` on an iPhone
-refers to the phone. Do not publish this HTTP endpoint through a proxy, Tailscale Serve/Funnel,
-or port forwarding; exact Host/Origin checks intentionally reject those URLs. A later phase must
-add explicit interface selection and TLS (or an explicitly configured encrypted VPN), before
-documenting the remote-device setup. QR pairing, touch gestures, a mobile extra-keys bar, and
-iPhone/iPad Safari validation remain open under [issue #39](https://github.com/yutigi/TerminalCanvas/issues/39).
-This PR does not provide background sessions (#35) or multiple canvases (#30); browsers attach
-to the one running desktop canvas, and closing the desktop still stops its terminals.
+Physical iPhone/iPad Safari validation, QR pairing, and a mobile extra-keys bar are tracked in
+[issue #39](https://github.com/yutigi/TerminalCanvas/issues/39).
 
 Paste accepts plain text up to 1 MB (1,048,576 UTF-16 code units), the same limit as copying, and uses xterm to normalize line endings and respect bracketed-paste mode. Long pastes are sent in ordered pieces, and keys pressed afterward, Ctrl + C included, follow the whole paste. The limit keeps that wait bounded when a program reads its input slowly; the card's stop control ends a program that stops reading. The shell or running program must enable bracketed paste; without it, pasted newlines can execute commands immediately. Oversized text and OS clipboard failures appear as a notification. Copying an empty selection does not erase existing clipboard text.
 

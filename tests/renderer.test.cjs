@@ -391,7 +391,7 @@ test('the workspace item budget includes hidden boards and prevents undo from ex
     assert.equal(json(context, 'workspaceItemCount()'), 1000);
     assert.match(elements.get('#toast').textContent, /1,000 canvas items/);
 });
-async function boot(workspace, { initialized = true, respond, terminals = false, clipboard = { text: '' }, readClipboard, platform = 'win32', remote = false, ...windowOverrides } = {}) {
+async function boot(workspace, { initialized = true, respond, terminals = false, clipboard = { text: '' }, readClipboard, platform = 'win32', remote = false, role = 'control', ...windowOverrides } = {}) {
     const html = fs.readFileSync(path.join(__dirname, '../src/index.html'), 'utf8');
     const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => ['#' + match[1], new Element()]));
     elements.get('#toast').hidden = true;
@@ -402,7 +402,7 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
     let onEvent;
     const bridge = {
         remote,
-        role: 'control',
+        role,
         async invoke(action, payload) {
             calls.push({ action, payload });
             const response = respond?.(action, payload);
@@ -869,8 +869,8 @@ test('browser snapshots reconcile every canvas while preserving local navigation
     assert.deepEqual(calls.map(call => call.action), ['initialize']);
 });
 
-test('browser clients can switch canvases but cannot create, reorder, rename, or delete them', async () => {
-    const { context, calls, elements } = await boot(twoCanvases(), { remote: true });
+test('browser viewers can switch canvases but cannot create, reorder, rename, or delete them', async () => {
+    const { context, calls, elements } = await boot(twoCanvases(), { remote: true, role: 'view' });
     const before = json(context, 'workspaceSnapshot()');
     await vm.runInContext(`createCanvas(); reorderCanvas(1); renameCanvas(); deleteCanvas()`, context);
     assert.deepEqual(json(context, 'workspaceSnapshot()'), before);
@@ -884,7 +884,7 @@ test('browser clients can switch canvases but cannot create, reorder, rename, or
 test('browser title events and desktop renames update hidden canvases while rejecting old workspace epochs', async () => {
     const board = twoCanvases(), id = board.cards[1].id;
     board.cards.forEach(card => { card.titleMode = 'automatic'; });
-    const { context, onEvent, elements, calls } = await boot(board, { remote: true, terminals: true,
+    const { context, onEvent, elements, calls } = await boot(board, { remote: true, role: 'view', terminals: true,
         respond: action => action === 'initialize' ? { workspace: structuredClone(board), profiles: PROFILES, home: '', platform: 'win32', titleEpoch: 7 } : null });
     const title = () => vm.runInContext(`anyCard('${id}').title`, context);
     const header = vm.runInContext(`sessions.get('${id}').element.querySelector('.card-title')`, context);
@@ -3552,15 +3552,15 @@ test('hook configuration preserves hidden canvases and global pause survives nav
     assert.equal(vm.runInContext('canvasStates.some(canvas => canvas.board.hooksPaused)', context), false);
 });
 
-test('browser pointer controls stay unavailable and follow the desktop global pause', async () => {
+test('browser viewer pointer controls stay unavailable and follow the desktop global pause', async () => {
     const board = createWorkspace(); board.cards.push(createCard(), createCard());
     board.items.push({ id: 'hook', type: 'line', arrow: true,
         start: { id: board.cards[0].id }, end: { id: board.cards[1].id },
         hook: { event: 'trigger', action: 'shell', text: 'echo done', armed: true } });
-    const { context, elements, calls, onEvent } = await boot(board, { remote: true });
+    const { context, elements, calls, onEvent } = await boot(board, { remote: true, role: 'view' });
     vm.runInContext('select("hook")', context);
     for (const id of ['#pointer-configure', '#pointer-toggle', '#pointers-pause']) assert.equal(elements.get(id).hidden, true);
-    await assert.rejects(vm.runInContext('savePointerChange(null, null, true)', context), /desktop app/);
+    await assert.rejects(vm.runInContext('savePointerChange(null, null, true)', context), /read-only/);
     const paused = structuredClone(board); paused.hooksPaused = true;
     onEvent({ type: 'remote-workspace', workspace: paused });
     assert.equal(json(context, 'workspace.hooksPaused'), true);

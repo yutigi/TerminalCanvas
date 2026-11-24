@@ -13,6 +13,8 @@ e2e = []
 [dependencies]
 arboard.workspace = true
 axum.workspace = true
+rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 serde.workspace = true
 serde_json.workspace = true
 subtle.workspace = true
@@ -23,7 +25,9 @@ tauri-plugin-updater.workspace = true
 tc-core.workspace = true
 tc-pty.workspace = true
 tc-tmux.workspace = true
+time = "=0.3.55"
 tokio.workspace = true
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
