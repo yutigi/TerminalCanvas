@@ -28,6 +28,9 @@ use crate::integration::{self, Integration};
 use crate::shell::{POWERSHELL_BOOTSTRAP, powershell_args};
 use crate::tmux::{self, Tmux};
 
+#[path = "bridge.rs"]
+mod bridge;
+
 /// The most input one write may carry, in UTF-16 units.
 pub const MAX_INPUT_UNITS: usize = 65536;
 /// Unacknowledged output above this pauses reading from the terminal.
@@ -365,6 +368,7 @@ struct Session {
     name_session: Option<tc_core::session::SessionMetadata>,
     size: (u16, u16),
     generation: u64,
+    bridge: bridge::CardBridge,
     process: Box<dyn Process>,
     integration: Option<Integration>,
     /// The last live directory report; `None` until the first one.
@@ -833,6 +837,7 @@ impl TerminalManager {
             name_homes,
             size: (cols, rows),
             generation: key.generation,
+            bridge: bridge::CardBridge::default(),
             process,
             integration,
             cwd: None,
@@ -1052,6 +1057,7 @@ impl TerminalManager {
             name_homes,
             size: (cols, rows),
             generation: key.generation,
+            bridge: bridge::CardBridge::default(),
             process,
             integration,
             cwd: None,
@@ -1303,6 +1309,7 @@ impl TerminalManager {
             self.poll_metadata(&id);
             self.poll_launches(&id);
             self.poll_pointer_requests(&id);
+            self.poll_terminal_bridge(&id);
         }
     }
 

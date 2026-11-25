@@ -472,6 +472,7 @@ impl Host {
                         state.manager.poll_hooks();
                         state.manager.stopping();
                         state.launches.idle();
+                        state.manager.poll_app_bridge(&host.paths.launch_requests());
                         host.poll_launch_requests(&mut state);
                         host.poll_names(&mut state);
                     }
@@ -650,6 +651,7 @@ impl Host {
             // Requests, and the output logs of the terminals they opened.
             match &event {
                 TerminalEvent::Launch {
+                    id,
                     request_id,
                     inbox,
                     request,
@@ -658,6 +660,7 @@ impl Host {
                     request_id.clone(),
                     crate::launches::Pending {
                         inbox: inbox.clone(),
+                        parent: state.manager.session_key(id),
                         reply: request.reply,
                         log: request.log,
                     },
@@ -828,6 +831,7 @@ impl Host {
                         id,
                         crate::launches::Pending {
                             inbox: inbox.clone(),
+                            parent: request.parent.as_deref().and_then(|id| state.manager.session_key(id)),
                             reply: request.reply,
                             log: request.log,
                         },
@@ -1267,8 +1271,9 @@ impl Host {
                             .remember_card(field(payload, "card").unwrap_or(&Value::Null))
                             .map_err(message)?;
                         let raw = serde_json::to_value(&card).expect("cards serialize");
+                        let launch = field(payload, "launch").and_then(Value::as_str);
                         // A terminal a program asked for logs its output from the first byte.
-                        if let Some(request) = field(payload, "launch").and_then(Value::as_str) {
+                        if let Some(request) = launch {
                             let cols = tc_pty::manager::dimensions(
                                 field(payload, "cols").unwrap_or(&Value::Null),
                                 field(payload, "rows").unwrap_or(&Value::Null),
@@ -1283,6 +1288,11 @@ impl Host {
                             field(payload, "rows"),
                             field(payload, "mode"),
                         );
+                        if started.is_ok()
+                            && let Some(parent) = launch.and_then(|request| state.launches.take_parent(request))
+                        {
+                            state.manager.set_bridge_parent(&card.id, parent);
+                        }
                         host.dispatch(state);
                         if started.is_err() {
                             state.launches.forget_output(&card.id);

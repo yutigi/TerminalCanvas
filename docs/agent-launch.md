@@ -106,6 +106,67 @@ checking the canvas can leave two copies running.
 The new card's ID can be passed as `--parent` later, so an orchestrating program can build chains of
 terminals from outside the canvas.
 
+## Communicating with running cards
+
+Use the `card` returned by `new-terminal` to reach a running card. A child can use `--parent` to
+reach the terminal that opened it. This works across agent providers and with custom CLI programs.
+Each side uses its own `TC_HOOK` and `TC_LAUNCH_DIR`.
+
+```bash
+# Parent sends work to a child.
+"$TC_HOOK" send-message --to "$CHILD_CARD_ID" --text 'Review the test results.' --json
+
+# Child receives work, then replies to the parent.
+"$TC_HOOK" receive-messages --wait 30 --json
+"$TC_HOOK" send-message --parent --text 'Review complete. All tests passed.' --json
+
+# Parent receives the reply.
+"$TC_HOOK" receive-messages --wait 30 --json
+```
+
+```powershell
+& $env:TC_HOOK send-message --to $childCardId --text 'Review the test results.' --json
+& $env:TC_HOOK send-message --parent --text 'Review complete. All tests passed.' --json
+& $env:TC_HOOK receive-messages --wait 30 --json
+```
+
+A `delivered` response confirms that the message reached the recipient's mailbox. The recipient
+calls `receive-messages` to read and drain the queue. It returns a JSON object with status
+`received` and a `messages` array. Each message has an `id`, a `from` card ID, and the original
+`text`. Use `--to <from>` to reply to a sender. Without `--wait`, an empty queue returns immediately.
+With `--wait <seconds>`, the hook checks for messages until one arrives or the wait ends, then
+returns an empty array if none arrived. Agents and scripts should call the receiver during their
+workflow. Mail arrives as data and leaves the recipient's CLI prompt and current turn alone.
+
+Each mailbox holds 16 messages for the current terminal run. A full mailbox returns an error to the
+sender. Mailboxes and automatic parent routing are held in memory by the app. Restarting a card
+clears its mailbox, and restarting the app clears all mailboxes and automatic parent routing.
+`--parent` addresses the original run of the parent. If that terminal restarted, use its card ID
+explicitly when you want to address the new run.
+
+Use `send-input` when you intend to type into the foreground program. It sends the supplied text,
+including any trailing line breaks, as terminal input. Add `--enter` to press Enter afterward. To
+press only Enter, omit `--text`.
+
+```bash
+"$TC_HOOK" send-input --to "$CHILD_CARD_ID" --text 'Continue with the review.' --enter --json
+```
+
+```powershell
+& $env:TC_HOOK send-input --to $childCardId --text 'Continue with the review.' --enter --json
+```
+
+`sent` confirms the input was accepted for the terminal. What happens next depends on the foreground
+program and its current prompt. For example, text submitted at a shell prompt runs as a shell
+command. Send it only when you know what is waiting for input. Outside Terminal Canvas, use
+`send-input --to <card ID>` with the running app's data folder if needed (`--data-dir <folder>`).
+
+Both send commands accept `--text <text>` or `--stdin` for UTF-8 text, up to 8,192 UTF-16 units.
+`--timeout <seconds>` sets the time allowed for the app to claim the request and then to answer it
+(1 to 600 seconds, default 10). Bridge commands exit 0 on success, 1 on invalid options or an
+unavailable request folder, 2 on refusal, 3 if a request was withdrawn before the app took it, and
+4 if the result is unconfirmed. Check the target before retrying an unconfirmed send.
+
 ## When no terminal opens
 
 | What you see | Cause | What to do |
@@ -202,6 +263,10 @@ Terminal Canvas integration (the app showed why) or your harness dropped the var
 give the folder and command the same way.
 To follow its output, add `--log` and read the file named by `log`; a line starting with
 `[Terminal Canvas: the process exited` marks the end. Never open more terminals than the task needs.
+Use `"$TC_HOOK" send-message --to <card ID> --text "<message>" --json` for agent messages,
+`send-message --parent` to reply to the terminal that opened yours, and
+`receive-messages --wait 30 --json` to read replies. Use `send-input --to <card ID>` when you intend
+to type into the target terminal's foreground program.
 ```
 
 For more than this snippet, install the [`terminal-canvas` skill](../skills/terminal-canvas/SKILL.md).
@@ -237,8 +302,8 @@ commands outside its sandbox. If you rely on a harness sandbox, make that harnes
 ## Security
 
 Requests travel only through owner-only folders, never through terminal output, so viewing a file or
-a remote session cannot open a terminal. Any program running as you can write those folders, just as
-it could start processes itself; sandboxed agents are the exception described above. The app
+a remote session cannot open a terminal or write to another card. Any program running as you can
+write those folders, just as it could start processes itself. The app
 validates each request again, takes each one once, opens at most four per inbox every half second,
 and discards requests left while it was closed. Answers and logs are written only for requests the
 app took from an inbox, into that same inbox; the UI never chooses a path. A terminal's request

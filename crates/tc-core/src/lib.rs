@@ -40,6 +40,7 @@ macro_rules! string_enum {
 pub mod accounts;
 pub mod assets;
 pub mod atomic;
+pub mod bridge;
 pub mod dirs;
 pub mod js;
 pub mod launch;

@@ -27,6 +27,8 @@ const IDLE_POLLS: u8 = 3;
 #[derive(Debug, Clone)]
 pub struct Pending {
     pub inbox: PathBuf,
+    /// The original live parent, so replies cannot reach a later run of the same card.
+    pub parent: Option<tc_pty::manager::SessionKey>,
     /// The sender waits for an answer.
     pub reply: bool,
     /// The sender wants the new terminal's output logged.
@@ -94,6 +96,10 @@ impl Launches {
         }
         self.order.push_back(id.clone());
         self.pending.insert(id, pending);
+    }
+
+    pub fn take_parent(&mut self, request: &str) -> Option<tc_pty::manager::SessionKey> {
+        self.pending.get_mut(request)?.parent.take()
     }
 
     /// Starts logging `card`'s output when request `request` asked for it. Call before the card's
@@ -319,6 +325,7 @@ mod tests {
         let mut launches = Launches::new();
         let pending = |reply, log| Pending {
             inbox: inbox.clone(),
+            parent: None,
             reply,
             log,
         };
@@ -389,6 +396,7 @@ mod tests {
             "req-1".into(),
             Pending {
                 inbox: inbox.clone(),
+                parent: None,
                 reply: false,
                 log: true,
             },
@@ -431,6 +439,7 @@ mod tests {
                 format!("req-{index}"),
                 Pending {
                     inbox: inbox.clone(),
+                    parent: None,
                     reply: false,
                     log: index == PENDING_LIMIT + 4,
                 },
