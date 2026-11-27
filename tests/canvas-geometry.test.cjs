@@ -247,3 +247,29 @@ test('clearing an overlay never pushes the card past the edge of a small view', 
     assert.ok(shown.x >= 0 && shown.y >= 0 && shown.x + shown.w <= view.width && shown.y + shown.h <= view.height, JSON.stringify(shown));
     for (const box of [tools, toolbar, minimap]) assert.equal(G.intersects(shown, box), false);
 });
+
+test('split panes share the room side by side or stacked, with gaps for the dividers', () => {
+    const area = { x: 18, y: 60, w: 1010, h: 610 };
+    assert.deepEqual(G.splitLayout(area, { orientation: 'row', sizes: [.5, .5] }, 10), {
+        panes: [{ x: 18, y: 60, w: 500, h: 610 }, { x: 528, y: 60, w: 500, h: 610 }],
+        dividers: [{ x: 518, y: 60, w: 10, h: 610 }]
+    });
+    // Shares are scaled to fill the room, whatever they add up to.
+    const stacked = G.splitLayout(area, { orientation: 'column', sizes: [.5, .25, .25] }, 5);
+    assert.deepEqual(stacked.panes.map(pane => [pane.y, pane.h]), [[60, 300], [365, 150], [520, 150]]);
+    assert.deepEqual(stacked.dividers.map(divider => [divider.y, divider.h, divider.w]), [[360, 5, 1010], [515, 5, 1010]]);
+    assert.deepEqual(G.splitLayout(area, { orientation: 'row', sizes: [.01, .01] }, 10).panes.map(pane => pane.w), [500, 500]);
+});
+
+test('moving a divider changes only its two panes, which keep a minimum size', () => {
+    const near = (actual, expected) => actual.forEach((value, index) => assert.ok(Math.abs(value - expected[index]) < 1e-9, `${actual} != ${expected}`));
+    near(G.moveSplitDivider([.25, .25, .5], 0, 100, 1000), [.35, .15, .5]);
+    near(G.moveSplitDivider([1, 1], 0, -100, 1000), [.4, .6], 'shares come back normalized');
+    // Neither neighbour goes below `min` pixels, or 2% of the room when that is more.
+    near(G.moveSplitDivider([.5, .5], 0, -900, 1000, 120), [.12, .88]);
+    near(G.moveSplitDivider([.5, .5], 0, 9000, 10000, 120), [.98, .02]);
+    // Two panes smaller together than twice the minimum share what they have equally.
+    near(G.moveSplitDivider([.9, .06, .04], 1, 50, 1000, 120), [.9, .05, .05]);
+    near(G.moveSplitDivider([.5, .5], 1, 50, 1000), [.5, .5], 'no divider after the last pane');
+    near(G.moveSplitDivider([.5, .5], 0, 50, 0), [.5, .5], 'no room, no change');
+});

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { launch, until, hasOutputLine, click, key, screenshot } = require('./harness.cjs');
-const { startTerminal } = require('./support.cjs');
+const { startTerminal, fixtureScene } = require('./support.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 180000 };
 
 // Native keys move between two running PowerShell terminals: typing focus changes only on Enter and
@@ -124,4 +124,62 @@ test('native terminal switcher isolates shell keys, restores focus, and reveals 
     await until(async () => hasOutputLine(await h.output(right.id), 'SWITCHER_RIGHT_OK'), 'Explicit Enter did not move typing into the chosen shell.');
     assert.equal(hasOutputLine(await h.output(left.id), 'SWITCHER_RIGHT_OK'), false);
     assert.deepEqual(h.errors, []);
+});
+
+// A split view of three terminals: native keys open and close it, a native divider drag and the layout
+// buttons refit the terminals, the host saves it, and every card returns to its canvas place.
+test('native split view lays out, refits, saves, and restores selected terminals', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const page = h.page;
+    await fixtureScene(page, [0, 700, 1400].map(x => ({ profile: 'shell', title: `At ${x}`, x, y: 0 })));
+    const view = () => page.evaluate(() => workspace.cards.map(card => {
+        const box = sessions.get(card.id).element.getBoundingClientRect(), terminal = sessions.get(card.id).terminal;
+        return { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height), cols: terminal.cols, rows: terminal.rows };
+    }));
+    await page.evaluate(() => { workspace.camera = { x: 40, y: 60, z: .5 }; renderCamera(); setSelection(workspace.cards.map(card => card.id)); });
+    const canvas = await view();
+    await key(page, 'Control+Shift+F');
+    const area = await page.evaluate(() => { const box = viewport.getBoundingClientRect(); return { x: box.x + 18, y: box.y + 60, w: box.width - 36, h: box.height - 80 }; });
+    const pane = Math.round((area.w - 20) / 3);
+    const split = await until(async () => {
+        const panes = await view();
+        return panes.every((box, index) => Math.abs(box.w - pane) <= 1 && box.cols < canvas[index].cols) && panes;
+    }, 'The split view did not lay out and refit three panes.');
+    for (const [index, box] of split.entries()) {
+        assert.ok(Math.abs(box.x - (area.x + index * (pane + 10))) <= 1, `pane ${index} starts at its place: ${JSON.stringify(box)}`);
+        assert.ok(Math.abs(box.h - area.h) <= 1 && Math.abs(box.y - area.y) <= 1);
+    }
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#split-layout').hidden, document.querySelectorAll('.split-divider').length]), [false, 2]);
+    await screenshot(page, 'split-view');
+    // Dragging the first divider 60px right widens the first pane and refits both of its neighbours.
+    const divider = await page.evaluate(() => { const box = document.querySelector('.split-divider').getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; });
+    await page.mouse.move(divider.x, divider.y); await page.mouse.down();
+    await page.mouse.move(divider.x + 60, divider.y, { steps: 4 });
+    await page.mouse.up();
+    const dragged = await until(async () => {
+        const panes = await view();
+        return Math.abs(panes[0].w - (pane + 60)) <= 1 && Math.abs(panes[1].w - (pane - 60)) <= 1 && panes[0].cols > split[0].cols && panes[1].cols < split[1].cols && panes;
+    }, 'The divider did not resize and refit its panes.');
+    assert.equal(dragged[2].w, split[2].w, 'the third pane is untouched');
+    await click(page, await page.evaluate(() => { const box = document.querySelector('#split-column').getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; }));
+    const stacked = await until(async () => {
+        const panes = await view();
+        return panes.every(box => Math.abs(box.w - area.w) <= 1) && panes[0].y < panes[1].y && panes[1].y < panes[2].y && panes;
+    }, 'The panes were not stacked.');
+    assert.ok(stacked.every(box => box.h < area.h / 2));
+    assert.deepEqual(await page.evaluate(() => ['#split-row', '#split-column'].map(id => document.querySelector(id).getAttribute('aria-pressed'))), ['false', 'true']);
+    // Buttons fade between states; the screenshot waits until Stacked shows as pressed.
+    await until(() => page.evaluate(() => getComputedStyle(document.querySelector('#split-column')).backgroundColor === 'rgb(53, 64, 46)'), 'Stacked did not show as pressed.');
+    await screenshot(page, 'split-view-stacked');
+    // The host validates and saves the split view with its canvas.
+    const saved = await page.evaluate(async () => { await invoke('autosave', workspace); return workspaceSnapshot().canvases[0]; });
+    assert.equal(saved.split.orientation, 'column');
+    assert.deepEqual(saved.split.cardIds, await page.evaluate(() => workspace.cards.map(card => card.id)));
+    await key(page, 'Control+Shift+F');
+    const restored = await until(async () => {
+        const panes = await view();
+        return panes.every((box, index) => box.x === canvas[index].x && box.y === canvas[index].y && box.w === canvas[index].w && box.cols === canvas[index].cols) && panes;
+    }, 'The terminals did not return to their canvas places.');
+    assert.deepEqual(restored.map(box => box.h), canvas.map(box => box.h));
+    assert.equal(await page.evaluate(() => 'split' in workspaceSnapshot().canvases[0]), false);
 });

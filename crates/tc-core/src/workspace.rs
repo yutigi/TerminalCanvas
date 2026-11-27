@@ -230,6 +230,34 @@ pub struct Canvas {
     pub selected: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focused: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split: Option<Split>,
+}
+
+/// Focus on several terminals of a canvas at once, side by side (`row`) or stacked (`column`).
+/// Like `focused`, it is optional view state: older readers ignore it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Split {
+    /// Two to four distinct terminals of the canvas, in the order they are shown.
+    pub card_ids: Vec<String>,
+    pub orientation: SplitOrientation,
+    /// Each terminal's share of the room, from 0.01 to 1. The renderer scales them to fill the view.
+    #[serde(serialize_with = "serialize_numbers")]
+    pub sizes: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SplitOrientation {
+    Row,
+    Column,
+}
+
+fn serialize_numbers<S: Serializer>(values: &[f64], serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Number(#[serde(serialize_with = "serialize_number")] f64);
+    serializer.collect_seq(values.iter().map(|value| Number(*value)))
 }
 
 /// A validated workspace in the current format.
@@ -835,6 +863,50 @@ pub fn create_workspace() -> Workspace {
     }
 }
 
+/// A canvas's split view: two to four distinct terminals of `card_ids`, a known orientation, and one
+/// share of the room for each.
+fn split(raw: &Value, card_ids: &[String]) -> Result<Split> {
+    let fail = || invalid("Invalid canvas split.");
+    let Some(ids) = raw
+        .get("cardIds")
+        .and_then(Value::as_array)
+        .filter(|ids| (2..=4).contains(&ids.len()))
+    else {
+        return fail();
+    };
+    let mut members = Vec::with_capacity(ids.len());
+    for value in ids {
+        let id = identifier(Some(value), "canvas split")?;
+        if !card_ids.contains(&id) || members.contains(&id) {
+            return fail();
+        }
+        members.push(id);
+    }
+    let orientation = match raw.get("orientation").and_then(Value::as_str) {
+        Some("row") => SplitOrientation::Row,
+        Some("column") => SplitOrientation::Column,
+        _ => return fail(),
+    };
+    let sizes = raw
+        .get("sizes")
+        .and_then(Value::as_array)
+        .filter(|sizes| sizes.len() == members.len())
+        .and_then(|sizes| {
+            sizes
+                .iter()
+                .map(|size| finite(Some(size), 0.01, 1.0))
+                .collect::<Option<Vec<_>>>()
+        });
+    let Some(sizes) = sizes else {
+        return fail();
+    };
+    Ok(Split {
+        card_ids: members,
+        orientation,
+        sizes,
+    })
+}
+
 fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec<Canvas>, Option<String>)> {
     let Some(list) = raw.get("canvases") else {
         if raw.get("activeCanvas").is_some() {
@@ -895,6 +967,10 @@ fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec
         };
         let selected = preference("selected", &[card_ids.clone(), item_ids.clone()].concat())?;
         let focused = preference("focused", &card_ids)?;
+        let split = match canvas.get("split") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(split(value, &card_ids)?),
+        };
         canvases.push(Canvas {
             id,
             name,
@@ -903,6 +979,7 @@ fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec
             item_ids,
             selected,
             focused,
+            split,
         });
     }
     if owners.len() != cards.len() + items.len() {

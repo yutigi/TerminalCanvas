@@ -209,10 +209,39 @@
         search(inset, 0);
         return found || place(inset);
     }
+    // Split view. `sizes` are each pane's share of the room, scaled to fill `area` side by side
+    // (`orientation: 'row'`) or stacked ('column'), with `gap` pixels between panes for the dividers.
+    function splitLayout(area, { orientation, sizes }, gap = 0) {
+        const row = orientation === 'row', total = sizes.reduce((sum, size) => sum + size, 0) || 1;
+        const room = Math.max(0, (row ? area.w : area.h) - gap * (sizes.length - 1));
+        const panes = [], dividers = [];
+        let offset = row ? area.x : area.y;
+        sizes.forEach((size, index) => {
+            const extent = room * size / total;
+            panes.push(row ? { x: offset, y: area.y, w: extent, h: area.h } : { x: area.x, y: offset, w: area.w, h: extent });
+            offset += extent;
+            if (index === sizes.length - 1) return;
+            dividers.push(row ? { x: offset, y: area.y, w: gap, h: area.h } : { x: area.x, y: offset, w: area.w, h: gap });
+            offset += gap;
+        });
+        return { panes, dividers };
+    }
+    // Shares after moving the divider behind pane `index` by `delta` pixels of a `room` pixels long.
+    // Only its two neighbours change; each keeps `min` pixels and 2% of the room, or half of what the
+    // two have together if that is less. The result sums to 1.
+    function moveSplitDivider(sizes, index, delta, room, min = 0) {
+        const total = sizes.reduce((sum, size) => sum + size, 0) || 1;
+        const shares = sizes.map(size => size / total);
+        if (!(room > 0) || index < 0 || index >= shares.length - 1) return shares;
+        const pair = shares[index] + shares[index + 1], floor = Math.min(Math.max(min / room, .02), pair / 2);
+        const first = Math.max(floor, Math.min(pair - floor, shares[index] + delta / room));
+        shares[index] = first; shares[index + 1] = pair - first;
+        return shares;
+    }
     const geometry = {
         center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
         outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt,
-        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera
+        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, splitLayout, moveSplitDivider
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;
     else root.TerminalCanvasGeometry = geometry;

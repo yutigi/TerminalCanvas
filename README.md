@@ -44,6 +44,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Scroll or two-finger scroll over empty space to zoom the canvas at the pointer. Plain scrolling over terminals, board items, the minimap, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A gesture stays with its starting area until you pause, so crossing a terminal does not change zooming into terminal scrolling. Ctrl + scroll (Command on macOS) also zooms the canvas elsewhere; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
+- Select two to four terminals and press **Focus** or **Ctrl + Shift + F** for a split view of them. See [Split view](#split-view).
 - Select a terminal and use the canvas style bar to color its frame/title bar. The same seven colors work across terminals and board items; **Default color** restores the original look. Profile badges keep identifying the terminal's tool. Card colors also appear in the sidebar and minimap.
 - Choose **Default theme** above the canvas for all terminals, or **Theme** in the selected terminal's style bar to override it. **Workspace default** clears an override; **Current** explicitly keeps the original theme. Current, Midnight (dark blue), and Paper (light) include complete ANSI palettes. Changes apply immediately, preserving running shells and scrollback. Themes and colors are saved in the workspace and support undo/redo. Duplicate copies the source card's color and theme override.
 - Use the canvas icon in the top toolbar or **Ctrl/Cmd + Shift + B** to hide or show the sidebar, including while typing in a terminal. Click a sidebar section heading to collapse it; its terminal count stays visible. **/** outside text fields and terminals reveals the sidebar search. These choices are remembered on this device, separately from workspace files. Focus mode temporarily hides the sidebar and restores your choice when you return; the toggle or search can reveal it during Focus mode. Small windows keep your manual choice.
@@ -144,6 +145,25 @@ open as one canvas. Canvas organization uses optional format-3 metadata; an unch
 workspace retains its original serialized defaults. Older format-3 apps can read the flat items
 and terminals, but show them on a single board and discard canvas organization if they save.
 The 1,000-item and 64 MB workspace limits still apply across all canvases.
+
+### Split view
+
+**Focus** shows one terminal across the canvas area. With two to four terminals selected (Shift + click, Shift + drag,
+or a group), **Focus** or **Ctrl + Shift + F** shows all of them instead, side by side in their canvas order, left to
+right. More than four are refused with a message; selected board items are ignored.
+
+- **Side by side** and **Stacked**, at the top left, switch the layout.
+- Drag a divider between two panes to share the room differently, or focus it with Tab and use the arrow keys
+  (Shift for larger steps). Each pane keeps at least 120 pixels, and every terminal refits its rows and columns.
+- Click a pane to type in it. Alt + arrow keys move between panes as they are laid out. A pane's own Focus button
+  narrows the view to that terminal alone.
+- Closing a pane's terminal removes it from the split view; the last one left stays in Focus.
+- **Back to canvas** or **Ctrl + Shift + F** returns every terminal to its place on the canvas.
+
+Each canvas saves its split view in the workspace file with its Focus terminal, so opening the workspace returns
+to it. A single-canvas workspace starts saving canvas metadata when a split view opens, as it does when you rename
+the canvas. Older versions of Terminal Canvas ignore the split view. In the browser, controllers and viewers keep
+their own Focus and split view; the desktop keeps its own.
 
 ### Board items
 
@@ -333,7 +353,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + N | New terminal |
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
-| Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl + Shift + F | Toggle focus for the selected terminal, or a split view of 2 to 4 selected terminals |
 | Ctrl + Shift + P / Command + Shift + P | Open the terminal switcher, including while typing in a terminal |
 | Ctrl/Cmd + Shift + B | Hide / show sidebar, including inside terminals |
 | Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |

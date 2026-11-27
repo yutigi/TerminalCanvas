@@ -36,7 +36,9 @@ const paths = {
     trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
-    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>'
+    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>',
+    columns: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
+    rows: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -66,6 +68,8 @@ try {
 } catch { /* Missing, malformed, or unavailable storage keeps the expanded defaults. */ }
 // Focus hides the sidebar temporarily; the toggle and search can reveal it for this Focus visit.
 let focusSidebarRevealed = false;
+// A Focus view of several terminals: `{ cardIds, orientation: 'row' | 'column', sizes }`, saved with its canvas.
+let split = null;
 function saveSidebarPreferences() {
     try { window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, JSON.stringify(sidebarPreferences)); }
     catch { /* A blocked or full store must not prevent using the sidebar. */ }
@@ -97,7 +101,7 @@ function renderSidebar({ preserveCenter = true } = {}) {
         workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + (viewport.clientWidth - width) / 2));
         workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + (viewport.clientHeight - height) / 2));
     }
-    renderCamera();
+    renderCamera(); renderFocus();
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
 }
 function setSidebarCollapsed(collapsed) {
@@ -294,7 +298,9 @@ function refresh() {
     $('#running-count').textContent = `${running} running`;
     $('#terminal-total').textContent = `${workspace.cards.length} terminal${workspace.cards.length === 1 ? '' : 's'}`;
     $('#empty-state').hidden = workspace.cards.length + workspace.items.length > 0;
-    $('#focus-toggle').disabled = !findCard(selected);
+    const terminals = [...selection].filter(id => findCard(id)).length;
+    $('#focus-toggle').disabled = !findCard(selected) && !terminals;
+    $('#focus-toggle').title = terminals > 1 ? 'Show the selected terminals in a split view (Ctrl+Shift+F)' : 'Focus the selected terminal (Ctrl+Shift+F)';
     const outline = $('#outline');
     outline.replaceChildren();
     matchingTerminals($('#search').value).forEach(card => {
@@ -568,11 +574,14 @@ $('#switcher-close').onclick = () => terminalSwitcher.close();
 function navigateTerminals(direction) {
     if (boardBusy()) return;
     if (editing) document.activeElement?.blur();
-    const candidates = workspace.cards.map(card => ({ id: card.id, bounds: boundsOf(card) }));
+    // In a split view, the keys move between its panes as they are laid out on screen.
+    const panes = focused && split ? splitPanes().panes : null;
+    const where = e => (panes && e.type === 'terminal' ? panes[split.cardIds.indexOf(e.id)] : boundsOf(e));
+    const candidates = (panes ? split.cardIds.map(findCard) : workspace.cards).map(card => ({ id: card.id, bounds: where(card) }));
     if (!candidates.length) return toast('There are no terminals on this canvas yet.');
     const origin = findElement(focused || selected);
     const id = origin
-        ? Geometry.nearestInDirection(boundsOf(origin), direction, candidates.filter(candidate => candidate.id !== origin.id), origin.id)
+        ? Geometry.nearestInDirection(where(origin), direction, candidates.filter(candidate => candidate.id !== origin.id), origin.id)
         : Geometry.nearestToPoint(viewportCenterWorld(), candidates);
     showTerminal(id || (origin?.type === 'terminal' ? origin.id : null));
 }
@@ -611,12 +620,18 @@ function zoom(factor, point = { x: viewport.clientWidth / 2, y: viewport.clientH
     cam.y = Math.max(-100000, Math.min(100000, point.y - (point.y - cam.y) * z / cam.z));
     cam.z = z; renderCamera(); changed();
 }
-function setFocus(id, { type = true } = {}) {
+// Focus shows one terminal across the canvas area, or a split view of several. `panes` starts a split
+// view of those terminals, in that order, with `id` the one to type in; fewer than two ends it. Without
+// `panes`, a split view stays while `id` is one of its terminals.
+function setFocus(id, { type = true, panes = null } = {}) {
     if (!!focused !== !!id) focusSidebarRevealed = false;
+    const before = split;
+    if (panes) split = panes.length > 1 ? { cardIds: [...panes], orientation: 'row', sizes: panes.map(() => 1 / panes.length) } : null;
+    else if (!id || !split?.cardIds.includes(id)) split = null;
+    // A split view is saved with its canvas, so a single-canvas workspace starts keeping canvas metadata.
+    if (split && split !== before) canvasExtended = true;
     focused = id;
-    viewport.classList.toggle('focus-mode', !!id);
-    $('#exit-focus').hidden = !id;
-    for (const [key, s] of sessions) s.element.classList.toggle('focused', key === id);
+    renderFocus();
     renderSidebar();
     renderCamera(); renderStyleToolbar();
     if (id) select(id, { type });
@@ -626,6 +641,118 @@ function setFocus(id, { type = true } = {}) {
         if (card) revealCard(card);
     }
     requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
+    if (split !== before) changed();
+}
+// Ctrl+Shift+F and the Focus button: Focus on the selected terminal, or a split view of two to four
+// selected terminals in their canvas order, left to right; again to return to the canvas.
+const SPLIT_LIMIT = 4;
+function toggleFocus() {
+    if (!ready) return;
+    if (focused) return setFocus(null);
+    const terminals = [...selection].map(findCard).filter(Boolean);
+    if (terminals.length < 2) { if (findCard(selected)) setFocus(selected); return; }
+    if (terminals.length > SPLIT_LIMIT) return toast('A split view shows up to four terminals. Select fewer, then try again.');
+    terminals.sort((a, b) => a.x - b.x || a.y - b.y);
+    setFocus(findCard(selected) ? selected : terminals[0].id, { panes: terminals.map(card => card.id) });
+}
+// Panes fill the same area as a single focused terminal, with room between them for the dividers.
+const SPLIT_GAP = 10, SPLIT_MIN = 120;
+let splitDividers = [];
+const focusArea = () => ({ x: 18, y: 60, w: viewport.clientWidth - 36, h: viewport.clientHeight - 80 });
+const splitPanes = () => Geometry.splitLayout(focusArea(), split, SPLIT_GAP);
+const splitRoom = () => {
+    const area = focusArea();
+    return (split.orientation === 'row' ? area.w : area.h) - SPLIT_GAP * (split.cardIds.length - 1);
+};
+// Shows the focused terminal, or every pane of the split view, and places the dividers.
+function renderFocus() {
+    const layout = focused && split ? splitPanes() : null, panes = layout ? split.cardIds : [focused];
+    viewport.classList.toggle('focus-mode', !!focused);
+    viewport.classList.toggle('split-mode', !!layout);
+    $('#exit-focus').hidden = !focused;
+    $('#split-layout').hidden = !layout;
+    for (const [id, s] of sessions) {
+        const index = s.canvas === activeCanvas && focused ? panes.indexOf(id) : -1;
+        s.element.classList.toggle('focused', index >= 0);
+        if (!layout || index < 0) continue;
+        const pane = layout.panes[index];
+        for (const [key, value] of Object.entries({ x: pane.x, y: pane.y, w: pane.w, h: pane.h })) s.element.style.setProperty(`--pane-${key}`, `${value}px`);
+    }
+    // Dividers are replaced only when their number changes, so one being dragged stays in place.
+    const wanted = layout ? layout.dividers.length : 0;
+    if (splitDividers.length !== wanted) {
+        splitDividers = Array.from({ length: wanted }, (_, index) => splitDividers[index] || splitDivider(index));
+        $('#split-dividers').replaceChildren(...splitDividers);
+    }
+    if (!layout) return;
+    const row = split.orientation === 'row', sum = list => list.reduce((total, size) => total + size, 0);
+    layout.dividers.forEach((box, index) => {
+        const divider = splitDividers[index];
+        Object.assign(divider.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+        divider.className = `split-divider ${row ? 'vertical' : 'horizontal'}`;
+        divider.setAttribute('aria-orientation', row ? 'vertical' : 'horizontal');
+        // The share of the room before this divider, whatever the shares add up to.
+        divider.setAttribute('aria-valuenow', String(Math.round(sum(split.sizes.slice(0, index + 1)) / sum(split.sizes) * 100)));
+        const [before, after] = [split.cardIds[index], split.cardIds[index + 1]].map(id => findCard(id)?.title || 'terminal');
+        divider.setAttribute('aria-label', `Resize ${before} and ${after}`);
+    });
+    $('#split-row').setAttribute('aria-pressed', String(row));
+    $('#split-column').setAttribute('aria-pressed', String(!row));
+}
+// A divider between pane `index` and the next. Drag it, or use the arrow keys (Shift for larger steps).
+function splitDivider(index) {
+    const divider = document.createElement('div');
+    divider.tabIndex = 0;
+    divider.setAttribute('role', 'separator');
+    divider.setAttribute('aria-valuemin', '0'); divider.setAttribute('aria-valuemax', '100');
+    divider.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || !split) return;
+        const sizes = [...split.sizes], room = splitRoom(), row = split.orientation === 'row';
+        beginDrag(divider, event, (dx, dy) => {
+            split.sizes = Geometry.moveSplitDivider(sizes, index, row ? dx : dy, room, SPLIT_MIN);
+            renderFocus();
+        }, moved => { if (moved) changed(); });
+    });
+    divider.addEventListener('keydown', event => {
+        const row = split?.orientation === 'row';
+        const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -1, ArrowDown: 1 }[event.key];
+        if (!split || !step || ['ArrowUp', 'ArrowDown'].includes(event.key) === row || event.altKey || event.ctrlKey || event.metaKey) return;
+        event.preventDefault(); event.stopPropagation();
+        const room = splitRoom();
+        split.sizes = Geometry.moveSplitDivider(split.sizes, index, step * room * (event.shiftKey ? .2 : .05), room, SPLIT_MIN);
+        renderFocus(); changed();
+    });
+    return divider;
+}
+function setSplitOrientation(orientation) {
+    if (!split || split.orientation === orientation) return;
+    split.orientation = orientation;
+    renderFocus(); changed();
+}
+$('#split-row').onclick = () => setSplitOrientation('row');
+$('#split-column').onclick = () => setSplitOrientation('column');
+// Clicking or tabbing into a pane makes it the one Alt + arrow keys move from and Ctrl+Shift+F leaves.
+function activatePane(id) {
+    if (!split || !focused || focused === id || !split.cardIds.includes(id)) return;
+    focused = id;
+    changed();
+}
+// The split view without terminal `id`, or null when fewer than two terminals would remain.
+function splitWithout(state, id) {
+    const index = state?.cardIds.indexOf(id) ?? -1;
+    if (index < 0) return state;
+    const cardIds = state.cardIds.filter(key => key !== id);
+    return cardIds.length > 1 ? { ...state, cardIds, sizes: state.sizes.filter((_, at) => at !== index) } : null;
+}
+// A split view as loaded from a file or another client: two to four distinct terminals of `cards`, a
+// known orientation, and a share from 1% to 100% for each; anything else is dropped.
+function validSplit(state, cards) {
+    const ids = new Set(cards.map(card => card.id));
+    const cardIds = Array.isArray(state?.cardIds) ? state.cardIds : [];
+    const valid = cardIds.length >= 2 && cardIds.length <= SPLIT_LIMIT && new Set(cardIds).size === cardIds.length && cardIds.every(id => ids.has(id))
+        && ['row', 'column'].includes(state.orientation) && Array.isArray(state.sizes) && state.sizes.length === cardIds.length
+        && state.sizes.every(size => typeof size === 'number' && size >= .01 && size <= 1);
+    return valid ? { cardIds: [...cardIds], orientation: state.orientation, sizes: [...state.sizes] } : null;
 }
 function fitTerminal(s) {
     if (bridge?.remote) return;
@@ -830,7 +957,9 @@ function mount(card, canvas = activeCanvas) {
         s.observer.observe(el.querySelector('.terminal-body'));
         requestAnimationFrame(() => fitTerminal(s));
     }
+    el.addEventListener('focusin', () => activatePane(card.id));
     el.addEventListener('pointerdown', event => {
+        activatePane(card.id);
         if (event.shiftKey) select(card.id, { additive: true });
         else if (!selection.has(card.id)) select(card.id);
         else if (selected !== card.id) { selected = card.id; applySelection(true); }
@@ -841,7 +970,8 @@ function mount(card, canvas = activeCanvas) {
         if (bridge?.remote && action !== 'focus' && !remoteController()) return;
         if (action === 'duplicate') await duplicateTerminal(card);
         if (action === 'account') await openAccountDialog(card);
-        if (action === 'focus') setFocus(focused ? null : card.id);
+        // In a split view, a pane's Focus button narrows the view to that terminal alone.
+        if (action === 'focus') setFocus(split && focused ? card.id : focused ? null : card.id, { panes: split && focused ? [card.id] : null });
         if (action === 'start') await start(card);
         if (action === 'fresh' || action === 'fresh-shell') await start(card, 'fresh');
         if (action === 'toggle') {
@@ -869,10 +999,19 @@ function removeCard(card) {
     const visible = canvas === activeCanvas;
     if (visible) {
         if (revealOnReturn === card.id) revealOnReturn = null;
-        if (focused === card.id) setFocus(null);
+        // A closed pane leaves the split view; the last one left stays in Focus on its own.
+        if (split?.cardIds.includes(card.id)) {
+            const rest = split.cardIds.filter(id => id !== card.id);
+            split = splitWithout(split, card.id);
+            setFocus(focused === card.id ? rest[0] : focused);
+        } else if (focused === card.id) setFocus(null);
     } else {
         if (canvas.revealOnReturn === card.id) canvas.revealOnReturn = null;
-        if (canvas.focused === card.id) canvas.focused = null;
+        if (canvas.split?.cardIds.includes(card.id)) {
+            const rest = canvas.split.cardIds.filter(id => id !== card.id);
+            canvas.split = splitWithout(canvas.split, card.id);
+            if (canvas.focused === card.id) canvas.focused = rest[0];
+        } else if (canvas.focused === card.id) canvas.focused = null;
     }
     const arrows = attachedArrows([card.id], board);
     const removed = new Set([card.id, ...arrows]);
@@ -1222,7 +1361,9 @@ viewport.addEventListener('wheel', event => {
 const WHEEL_NOTCH = 100;
 viewport.addEventListener('wheel', event => {
     if (!ready || (!event.ctrlKey && !event.metaKey)) return;
-    const id = focused || event.target?.closest?.('.terminal-card')?.dataset.id;
+    // In a split view, the pane under the pointer; in Focus, the focused terminal anywhere.
+    const under = event.target?.closest?.('.terminal-card')?.dataset.id;
+    const id = (split && focused && under) || focused || under;
     const card = findCard(id), s = sessions.get(id);
     if (!card || !s?.terminal || !s.placeholder.hidden || (!focused && id !== selected)) return;
     event.preventDefault(); event.stopPropagation();
@@ -1809,6 +1950,7 @@ async function applyBrowserLayout(command, epoch) {
             canvas.camera = previous?.camera || (!current.canvases && index === 0 ? current.camera : { x: 48, y: 48, z: 1 });
             canvas.selected = canvas.cardIds?.includes(previous?.selected) || canvas.itemIds?.includes(previous?.selected) ? previous.selected : undefined;
             canvas.focused = canvas.cardIds?.includes(previous?.focused) ? previous.focused : undefined;
+            canvas.split = previous?.split && previous.split.cardIds.every(id => canvas.cardIds?.includes(id)) ? previous.split : undefined;
         }
         board.activeCanvas = board.canvases.some(canvas => canvas.id === current.activeCanvas) ? current.activeCanvas : board.canvases[0].id;
     }
@@ -1896,6 +2038,7 @@ function remoteWorkspace(board, epoch) {
         canvas.selection = new Set([...canvas.selection].filter(id => ids.has(id)));
         if (!ids.has(canvas.selected)) canvas.selected = null;
         if (!canvas.board.cards.some(card => card.id === canvas.focused)) canvas.focused = null;
+        canvas.split = canvas.focused ? validSplit(canvas.split, canvas.board.cards) : null;
         return canvas;
     });
     setWorkspaceTerminalTheme(board.terminalTheme);
@@ -1999,7 +2142,7 @@ $('#arrange').onclick = () => {
     recordChange(() => workspace.cards.forEach((c, i) => { c.x = (i % columns) * 700; c.y = Math.floor(i / columns) * 470; c.w = 660; c.h = 430; renderGeometry(c); }));
     fitCanvas();
 };
-$('#focus-toggle').onclick = () => { if (ready) setFocus(focused ? null : selected); };
+$('#focus-toggle').onclick = toggleFocus;
 $('#exit-focus').onclick = () => setFocus(null);
 $('#fit').onclick = () => { if (ready) fitCanvas(); };
 $('#zoom-in').onclick = () => { if (ready) zoom(1.15); };
@@ -2079,7 +2222,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Split view of 2 to 4 selected terminals / resize panes</span><kbd>Ctrl Shift F / drag or arrow keys on a divider</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
@@ -2119,7 +2262,7 @@ document.addEventListener('keydown', event => {
             if (card) { event.preventDefault(); run(() => duplicateTerminal(card)); }
         }
         if (key === 'n' && event.shiftKey) { event.preventDefault(); openLaunch(); }
-        if (key === 'f' && event.shiftKey) { event.preventDefault(); if (findCard(selected)) setFocus(focused ? null : selected); }
+        if (key === 'f' && event.shiftKey) { event.preventDefault(); toggleFocus(); }
         if (key === 'e' && event.shiftKey && !event.altKey) { event.preventDefault(); leaveToBoard(event.target); }
         const onBoard = !focused && !event.target.closest('input,textarea,select,.xterm');
         if (key === 'g' && onBoard) { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }
@@ -2176,7 +2319,7 @@ $('#update').onclick = () => run(async () => {
     try { await invoke('update-install'); } catch (error) { $('#update').disabled = false; throw error; }
     clearTimeout(autosaveTimer); await invoke('close', workspace);
 });
-window.addEventListener('resize', () => { if (ready) renderCamera(); });
+window.addEventListener('resize', () => { if (ready) { renderCamera(); renderFocus(); } });
 installPointerControls();
 
 // Output is acknowledged once xterm has parsed it, which paces the program writing it. xterm parses
