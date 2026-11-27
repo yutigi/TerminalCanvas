@@ -10,7 +10,7 @@ function boot() {
         static OPEN = 1;
         constructor(url) { this.url = url; this.readyState = 1; this.bufferedAmount = 0; this.sent = []; sockets.push(this); }
         send(text) { this.sent.push(JSON.parse(text)); }
-        close() { this.readyState = 3; this.onclose?.(); }
+        close(event) { this.readyState = 3; this.onclose?.(event); }
         event(value) { this.onmessage({ data: JSON.stringify(value) }); }
     }
     const window = { location: { protocol: 'http:', href: 'http://127.0.0.1:4312/' }, WebSocket: Socket,
@@ -93,6 +93,27 @@ test('disconnect stops input and exposes a reconnect message; failed initializat
     api.input('one', 'unsafe');
     assert.equal(sockets[0].sent.length, 0);
     assert.equal(events[0].type, 'remote-disconnected');
+});
+
+test('an open socket that closes before initialization reports a workspace loading failure', async () => {
+    const { api, sockets } = boot(), initial = api.invoke('initialize');
+    const [socket] = sockets;
+    socket.onopen();
+    socket.onerror();
+    socket.close();
+    assert.match((await initial).error, /closed while loading the workspace/);
+});
+
+test('an initialized socket reports why the server closed it', async () => {
+    const { api, sockets } = boot(), events = [], initial = api.invoke('initialize');
+    api.onEvent(event => events.push(event));
+    const [socket] = sockets;
+    socket.onopen();
+    socket.event({ type: 'remote-initialize', role: 'view' });
+    await initial;
+    const reason = 'Browser connection fell behind terminal output. Reload to reconnect.';
+    socket.close({ reason });
+    assert.equal(events[0].message, reason);
 });
 
 test('oversized paste and a stalled socket are bounded', async () => {

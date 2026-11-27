@@ -23,10 +23,13 @@
         const url = new URL('/ws', root.location.href);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new root.WebSocket(url.href);
+        let opened = false, initialized = false;
+        socket.onopen = () => { opened = true; };
         socket.onmessage = message => {
             let event;
             try { event = JSON.parse(message.data); } catch { fail('Invalid server response. Reload to reconnect.'); socket.close(); return; }
             if (event.type === 'remote-initialize') {
+                initialized = true;
                 role = event.role;
                 resolveInitial(event);
             } else if (event.type === 'remote-terminal-result') {
@@ -36,8 +39,12 @@
                 }
             } else deliver(event);
         };
-        socket.onclose = () => fail('Browser connection closed. Reload to reconnect or enter a new token.');
-        socket.onerror = () => fail('Browser connection failed. Only one controller can connect; use a viewer token for another window.');
+        socket.onclose = event => fail(event?.reason || (opened && !initialized
+            ? 'Browser connection closed while loading the workspace. Reload to reconnect.'
+            : 'Browser connection closed. Reload to reconnect or enter a new token.'));
+        socket.onerror = () => {
+            if (!opened) fail('Browser connection failed. Only one controller can connect; use a viewer token for another window.');
+        };
         return initial;
     };
     const error = message => ({ error: message });

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
@@ -28,6 +28,9 @@ const MAX_CLIENTS: usize = 8;
 // One 64 Ki UTF-16 input piece can use six JSON bytes per code unit when escaped.
 const MAX_MESSAGE: usize = 512 * 1024;
 const MAX_CONTROLLER_MESSAGE: usize = tc_core::workspace::limits::BYTES as usize + 4096;
+// Startup sends the workspace and up to 2 MiB of replay before JSON escaping.
+const SNAPSHOT_WRITE_TIMEOUT: Duration = Duration::from_secs(15);
+const EVENT_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub type Assets = Arc<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>;
@@ -610,82 +613,121 @@ async fn connected(server: Arc<Server>, id: String, role: Role, mut socket: WebS
     } else {
         "view"
     });
+    // A cancelled or timed-out write can leave part of the snapshot buffered in
+    // the socket. Drop it without flushing if the session ends during startup.
+    let initialized = tokio::select! {
+        biased;
+        _ = session_ended(&server, &active) => false,
+        result = send(&mut socket, snapshot, SNAPSHOT_WRITE_TIMEOUT) => result.is_ok(),
+    };
+    if initialized {
+        let close = stream_events(&server, &active, role, &mut socket, &mut events).await;
+        let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(close))).await;
+    }
+    disconnect(&server, &id);
+}
+
+async fn session_ended(server: &Server, active: &AtomicBool) {
     let mut stop = server.stop.subscribe();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(1));
+    while active.load(Ordering::Acquire) && !*stop.borrow() {
+        tokio::select! {
+            _ = stop.changed() => return,
+            _ = heartbeat.tick() => {
+                server.security.lock().unwrap_or_else(|e| e.into_inner()).expire();
+            }
+        }
+    }
+}
+
+async fn stream_events(
+    server: &Server,
+    active: &Arc<AtomicBool>,
+    role: Role,
+    socket: &mut WebSocket,
+    events: &mut tokio::sync::broadcast::Receiver<Value>,
+) -> Option<CloseFrame> {
+    let ended = session_ended(server, active);
+    tokio::pin!(ended);
     let mut messages = 0;
     let mut started = Instant::now();
     let mut next_sequence = 0u64;
     let mut pending: Option<BoxFuture<Value>> = None;
-    if active.load(Ordering::Acquire) && !*stop.borrow() && send(&mut socket, snapshot).await.is_ok() {
-        'connection: loop {
-            if !active.load(Ordering::Acquire) || *stop.borrow() {
-                break;
-            }
-            tokio::select! {
-                _ = stop.changed() => break,
-                _ = heartbeat.tick() => {
-                    server.security.lock().unwrap_or_else(|e| e.into_inner()).expire();
-                }
-                event = events.recv() => {
-                    // Lagging clients reconnect for a fresh snapshot; never pause the desktop PTY.
-                    let Ok(event) = event else { break; };
-                    if !active.load(Ordering::Acquire) || send(&mut socket, event).await.is_err() { break; }
-                }
-                result = async { pending.as_mut().expect("pending command").await }, if pending.is_some() => {
-                    pending = None;
-                    // Deliver the lifecycle changes queued by the desktop before its reply.
-                    for _ in 0..events.len() {
-                        let Ok(event) = events.try_recv() else { break 'connection; };
-                        if !active.load(Ordering::Acquire) || send(&mut socket, event).await.is_err() { break 'connection; }
+    'connection: loop {
+        if !active.load(Ordering::Acquire) || *server.stop.borrow() {
+            break;
+        }
+        tokio::select! {
+            _ = &mut ended => break,
+            event = events.recv() => {
+                // Lagging clients reconnect for a fresh snapshot; never pause the desktop PTY.
+                if !active.load(Ordering::Acquire) { break; }
+                match event {
+                    Ok(event) => if send(socket, event, EVENT_WRITE_TIMEOUT).await.is_err() { break; },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        return Some(CloseFrame {
+                            code: close_code::AGAIN,
+                            reason: "Browser connection fell behind terminal output. Reload to reconnect.".into(),
+                        });
                     }
-                    if !active.load(Ordering::Acquire) || send(&mut socket, result).await.is_err() { break; }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-                message = socket.recv() => {
-                    let Some(Ok(Message::Text(message))) = message else { break; };
-                    if started.elapsed() >= Duration::from_secs(1) { started = Instant::now(); messages = 0; }
-                    messages += 1;
-                    if messages > 200 { break; }
-                    let response = match serde_json::from_str::<RequestMessage>(&message) {
-                        Ok(RequestMessage::Terminal { request, epoch, command }) => {
-                            if !matches!(role, Role::Control) {
-                                Some(terminal_result(request, Err("This session is read-only.".into())))
-                            } else if pending.is_some() {
-                                Some(terminal_result(request, Err("A terminal request is already in progress.".into())))
-                            } else if let Ok(command) = serde_json::from_value::<TerminalCommand>(command) {
-                                let (host, active) = (server.host.clone(), active.clone());
-                                pending = Some(Box::pin(async move {
-                                    terminal_result(request, host.remote_terminal(epoch, command, active).await)
-                                }));
-                                None
-                            } else {
-                                Some(terminal_result(request, Err("Unsupported browser terminal request.".into())))
-                            }
-                        }
-                        Ok(RequestMessage::Input { id, data, seq }) => {
-                            input(&server.host, role, &active, id, data, seq, &mut next_sequence).await.err()
-                                .map(|message| json!({ "type": "error", "message": message }))
-                        }
-                        Err(_) => Some(json!({ "type": "error", "message": "Unsupported browser request." })),
-                    };
-                    if let Some(response) = response
-                        && send(&mut socket, response).await.is_err() { break; }
+            }
+            result = async { pending.as_mut().expect("pending command").await }, if pending.is_some() => {
+                pending = None;
+                // Deliver the lifecycle changes queued by the desktop before its reply.
+                for _ in 0..events.len() {
+                    let Ok(event) = events.try_recv() else { break 'connection; };
+                    if !active.load(Ordering::Acquire) || send(socket, event, EVENT_WRITE_TIMEOUT).await.is_err() { break 'connection; }
                 }
+                if !active.load(Ordering::Acquire) || send(socket, result, EVENT_WRITE_TIMEOUT).await.is_err() { break; }
+            }
+            message = socket.recv() => {
+                let Some(Ok(message)) = message else { break; };
+                if started.elapsed() >= Duration::from_secs(1) { started = Instant::now(); messages = 0; }
+                messages += 1;
+                if messages > 200 { break; }
+                let message = match message {
+                    Message::Text(message) => message,
+                    // The WebSocket implementation automatically writes the pong.
+                    Message::Ping(_) | Message::Pong(_) => continue,
+                    _ => break,
+                };
+                let response = match serde_json::from_str::<RequestMessage>(&message) {
+                    Ok(RequestMessage::Terminal { request, epoch, command }) => {
+                        if !matches!(role, Role::Control) {
+                            Some(terminal_result(request, Err("This session is read-only.".into())))
+                        } else if pending.is_some() {
+                            Some(terminal_result(request, Err("A terminal request is already in progress.".into())))
+                        } else if let Ok(command) = serde_json::from_value::<TerminalCommand>(command) {
+                            let (host, active) = (server.host.clone(), active.clone());
+                            pending = Some(Box::pin(async move {
+                                terminal_result(request, host.remote_terminal(epoch, command, active).await)
+                            }));
+                            None
+                        } else {
+                            Some(terminal_result(request, Err("Unsupported browser terminal request.".into())))
+                        }
+                    }
+                    Ok(RequestMessage::Input { id, data, seq }) => {
+                        input(&server.host, role, active, id, data, seq, &mut next_sequence).await.err()
+                            .map(|message| json!({ "type": "error", "message": message }))
+                    }
+                    Err(_) => Some(json!({ "type": "error", "message": "Unsupported browser request." })),
+                };
+                if let Some(response) = response
+                    && send(socket, response, EVENT_WRITE_TIMEOUT).await.is_err() { break; }
             }
         }
     }
-    drop(pending);
-    let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(None))).await;
-    disconnect(&server, &id);
+    None
 }
 
-async fn send(socket: &mut WebSocket, event: Value) -> Result<(), ()> {
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        socket.send(Message::Text(event.to_string().into())),
-    )
-    .await
-    .map_err(|_| ())?
-    .map_err(|_| ())
+async fn send(socket: &mut WebSocket, event: Value, timeout: Duration) -> Result<(), ()> {
+    tokio::time::timeout(timeout, socket.send(Message::Text(event.to_string().into())))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())
 }
 
 #[derive(Deserialize)]
@@ -1102,7 +1144,24 @@ mod tests {
         let result = tokio_tungstenite::connect_async(make_request(control)).await;
         assert!(matches!(result, Err(tungstenite::Error::Http(response)) if response.status() == StatusCode::CONFLICT));
         let (mut viewer, _) = tokio_tungstenite::connect_async(make_request(view)).await.unwrap();
-        // Discard initial snapshot and any initial layout/terminal updates before the error.
+        assert_eq!(socket_event(&mut viewer, "remote-initialize").await["role"], "view");
+        let ping = b"still connected".to_vec();
+        viewer
+            .send(tungstenite::Message::Ping(ping.clone().into()))
+            .await
+            .unwrap();
+        let pong = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match viewer.next().await.unwrap().unwrap() {
+                    tungstenite::Message::Pong(pong) => break pong,
+                    tungstenite::Message::Text(_) => continue,
+                    other => panic!("expected pong, received {other:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(pong.as_ref(), ping.as_slice());
         viewer
             .send(tungstenite::Message::Text(
                 json!({"action":"input","id":"x","data":"danger","seq":0})
