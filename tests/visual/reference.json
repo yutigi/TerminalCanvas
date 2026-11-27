@@ -40,10 +40,13 @@
             }
         },
         "card": {
-            "reason": "Find terminal adds an independent sidebar action. The Claude account icon takes 26px and a 3px gap. The accessible rename button adds 2px to the title height and stays vertically centered.",
-            "added": [".card-account-icon[0]"],
+            "reason": "Find terminal adds an independent sidebar action. The Claude account icon takes 26px and a 3px gap. The accessible rename button adds 2px to the title height and stays vertically centered. The Pin button, measured on its own, takes another 26px and a 3px gap before Focus, so the title narrows by 29px more and the duplicate, start, and fresh-shell buttons move 29px left.",
+            "added": [".card-account-icon[0]", ".card-actions [data-action=\"pin\"][0]"],
             "resized": {
-                ".card-title[0]": [0, -1, -29, 2]
+                ".card-title[0]": [0, -1, -58, 2],
+                ".icon-button[0]": [-29, 0, 0, 0],
+                ".icon-button[1]": [-29, 0, 0, 0],
+                ".icon-button[2]": [-29, 0, 0, 0]
             }
         },
         "launch": {

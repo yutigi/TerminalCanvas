@@ -10,10 +10,12 @@ const report = elements => ({ scenes: { '1000x680-card': { width: 1000, height: 
 const before = report({ '.card-title[0]': control([100, 20, 300, 14]), '.icon-button[0]': control([450, 15, 26, 26]) });
 
 test('intended layout changes are accepted exactly as listed', () => {
+    // The account icon and the Pin button each take 26px and a 3px gap; buttons left of Pin move with them.
     const after = report({
-        '.card-title[0]': control([100, 19, 271, 16]),
-        '.icon-button[0]': control([450, 15, 26, 26]),
-        '.card-account-icon[0]': control([421, 15, 26, 26]),
+        '.card-title[0]': control([100, 19, 242, 16]),
+        '.icon-button[0]': control([421, 15, 26, 26]),
+        '.card-account-icon[0]': control([363, 15, 26, 26]),
+        '.card-actions [data-action="pin"][0]': control([392, 15, 26, 26]),
         '#find-terminal[0]': control([180, 100, 26, 26]),
     });
     assert.deepEqual(compare(before, after, 1.5, { intended }), []);
@@ -24,17 +26,19 @@ test('intended layout changes are accepted exactly as listed', () => {
 test('changes beyond the listed ones still fail', () => {
     const wider = report({
         '.card-title[0]': control([100, 20, 300, 14]),
-        '.icon-button[0]': control([450, 15, 26, 26]),
-        '.card-account-icon[0]': control([421, 15, 26, 26]),
+        '.icon-button[0]': control([421, 15, 26, 26]),
+        '.card-account-icon[0]': control([363, 15, 26, 26]),
+        '.card-actions [data-action="pin"][0]': control([392, 15, 26, 26]),
         '#find-terminal[0]': control([180, 100, 26, 26]),
     });
     assert.match(compare(before, wider, 1.5, { intended }).join('\n'), /card-title\[0\] bounds/);
-    const missing = report({ '.card-title[0]': control([100, 19, 271, 16]), '.icon-button[0]': control([450, 15, 26, 26]), '#find-terminal[0]': control([180, 100, 26, 26]) });
+    const missing = report({ '.card-title[0]': control([100, 19, 242, 16]), '.icon-button[0]': control([421, 15, 26, 26]), '#find-terminal[0]': control([180, 100, 26, 26]) });
     assert.throws(() => compare(before, missing, 1.5, { intended }), /intended control \.card-account-icon\[0\] is missing/);
     const extra = report({
-        '.card-title[0]': control([100, 19, 271, 16]),
-        '.icon-button[0]': control([450, 15, 26, 26]),
-        '.card-account-icon[0]': control([421, 15, 26, 26]),
+        '.card-title[0]': control([100, 19, 242, 16]),
+        '.icon-button[0]': control([421, 15, 26, 26]),
+        '.card-account-icon[0]': control([363, 15, 26, 26]),
+        '.card-actions [data-action="pin"][0]': control([392, 15, 26, 26]),
         '#find-terminal[0]': control([180, 100, 26, 26]),
         '.icon-button[1]': control([480, 15, 26, 26]),
     });
@@ -102,6 +106,7 @@ test('every scene requires Find terminal and still checks existing controls and 
         current.scenes[key].elements['#find-terminal[0]'] = control([180, 520, 26, 26]);
         if (scene === 'launch') current.scenes[key].elements['#automatic-title-hint[0]'] = control([280, 350, 440, 32]);
         if (scene === 'card') current.scenes[key].elements['.card-account-icon[0]'] = control([421, 15, 26, 26]);
+        if (scene === 'card') current.scenes[key].elements['.card-actions [data-action="pin"][0]'] = control([392, 15, 26, 26]);
         assert.deepEqual(compare(old, current, 1.5, { intended }), []);
         assert.throws(() => compare(old, old, 1.5, { intended }), /intended control .* is missing/);
         const moved = structuredClone(current); moved.scenes[key].elements['#search[0]'].rect[1] += 14;

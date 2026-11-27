@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { launch, until, hasOutputLine, click, key, screenshot } = require('./harness.cjs');
-const { startTerminal } = require('./support.cjs');
+const { startTerminal, fixtureScene } = require('./support.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 180000 };
 
 // Native keys move between two running PowerShell terminals (#58). Ctrl+Alt+Shift+arrow keys move typing
@@ -152,3 +152,144 @@ test('native terminal switcher isolates shell keys, restores focus, and reveals 
     assert.equal(hasOutputLine(await h.output(left.id), 'SWITCHER_RIGHT_OK'), false);
     assert.deepEqual(h.errors, []);
 });
+
+// A split view of three terminals: native keys open and close it, a native divider drag and the layout
+// buttons refit the terminals, the host saves it, and every card returns to its canvas place.
+test('native split view lays out, refits, saves, and restores selected terminals', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const page = h.page;
+    await fixtureScene(page, [0, 700, 1400].map(x => ({ profile: 'shell', title: `At ${x}`, x, y: 0 })));
+    const view = () => page.evaluate(() => workspace.cards.map(card => {
+        const box = sessions.get(card.id).element.getBoundingClientRect(), terminal = sessions.get(card.id).terminal;
+        return { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height), cols: terminal.cols, rows: terminal.rows };
+    }));
+    await page.evaluate(() => { workspace.camera = { x: 40, y: 60, z: .5 }; renderCamera(); setSelection(workspace.cards.map(card => card.id)); });
+    const canvas = await view();
+    await key(page, 'Control+Shift+F');
+    const area = await page.evaluate(() => { const box = viewport.getBoundingClientRect(); return { x: box.x + 18, y: box.y + 60, w: box.width - 36, h: box.height - 80 }; });
+    const pane = Math.round((area.w - 20) / 3);
+    const split = await until(async () => {
+        const panes = await view();
+        return panes.every((box, index) => Math.abs(box.w - pane) <= 1 && box.cols < canvas[index].cols) && panes;
+    }, 'The split view did not lay out and refit three panes.');
+    for (const [index, box] of split.entries()) {
+        assert.ok(Math.abs(box.x - (area.x + index * (pane + 10))) <= 1, `pane ${index} starts at its place: ${JSON.stringify(box)}`);
+        assert.ok(Math.abs(box.h - area.h) <= 1 && Math.abs(box.y - area.y) <= 1);
+    }
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#split-layout').hidden, document.querySelectorAll('.split-divider').length]), [false, 2]);
+    await screenshot(page, 'split-view');
+    // Dragging the first divider 60px right widens the first pane and refits both of its neighbours.
+    const divider = await page.evaluate(() => { const box = document.querySelector('.split-divider').getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; });
+    await page.mouse.move(divider.x, divider.y); await page.mouse.down();
+    await page.mouse.move(divider.x + 60, divider.y, { steps: 4 });
+    await page.mouse.up();
+    const dragged = await until(async () => {
+        const panes = await view();
+        return Math.abs(panes[0].w - (pane + 60)) <= 1 && Math.abs(panes[1].w - (pane - 60)) <= 1 && panes[0].cols > split[0].cols && panes[1].cols < split[1].cols && panes;
+    }, 'The divider did not resize and refit its panes.');
+    assert.equal(dragged[2].w, split[2].w, 'the third pane is untouched');
+    await click(page, await page.evaluate(() => { const box = document.querySelector('#split-column').getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; }));
+    const stacked = await until(async () => {
+        const panes = await view();
+        return panes.every(box => Math.abs(box.w - area.w) <= 1) && panes[0].y < panes[1].y && panes[1].y < panes[2].y && panes;
+    }, 'The panes were not stacked.');
+    assert.ok(stacked.every(box => box.h < area.h / 2));
+    assert.deepEqual(await page.evaluate(() => ['#split-row', '#split-column'].map(id => document.querySelector(id).getAttribute('aria-pressed'))), ['false', 'true']);
+    // Buttons fade between states; the screenshot waits until Stacked shows as pressed.
+    await until(() => page.evaluate(() => getComputedStyle(document.querySelector('#split-column')).backgroundColor === 'rgb(53, 64, 46)'), 'Stacked did not show as pressed.');
+    await screenshot(page, 'split-view-stacked');
+    // The host validates and saves the split view with its canvas.
+    const saved = await page.evaluate(async () => { await invoke('autosave', workspace); return workspaceSnapshot().canvases[0]; });
+    assert.equal(saved.split.orientation, 'column');
+    assert.deepEqual(saved.split.cardIds, await page.evaluate(() => workspace.cards.map(card => card.id)));
+    await key(page, 'Control+Shift+F');
+    const restored = await until(async () => {
+        const panes = await view();
+        return panes.every((box, index) => box.x === canvas[index].x && box.y === canvas[index].y && box.w === canvas[index].w && box.cols === canvas[index].cols) && panes;
+    }, 'The terminals did not return to their canvas places.');
+    assert.deepEqual(restored.map(box => box.h), canvas.map(box => box.h));
+    assert.equal(await page.evaluate(() => 'split' in workspaceSnapshot().canvases[0]), false);
+});
+
+// Terminals pinned beside a live canvas: native pin buttons and header drags build nested splits in the
+// dock, terminals refit, the host saves the dock, and dropping one on the canvas unpins it there.
+// Display scale 1.5 makes the page about as small as the CI window's.
+for (const scale of [1, 1.5]) {
+test(`native dock pins terminals beside the canvas in nested splits and unpins them onto it (display scale ${scale})`, windows, async t => {
+    const h = await launch({ clean: true, scale }); t.after(() => h.dispose());
+    const page = h.page;
+    await fixtureScene(page, [0, 700, 1400].map(x => ({ profile: 'shell', title: `Dock ${x}`, x, y: 0 })));
+    await page.evaluate(() => { workspace.camera = { x: 40, y: 60, z: .5 }; renderCamera(); });
+    const ids = await page.evaluate(() => workspace.cards.map(card => card.id));
+    // The middle of a terminal's header control. A terminal on the canvas is brought into view first,
+    // since the CI window is small enough to leave some off screen, and the point must reach the control.
+    const middle = async (selector, id) => {
+        const point = await page.evaluate(({ selector, id }) => {
+            if (!isPinned(id)) revealCard(findCard(id));
+            const control = sessions.get(id).element.querySelector(selector), box = control.getBoundingClientRect();
+            const point = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+            return { ...point, reached: control.contains(document.elementFromPoint(point.x, point.y)) };
+        }, { selector, id });
+        assert.equal(point.reached, true, `${selector} of ${id} is covered or off screen`);
+        return { x: point.x, y: point.y };
+    };
+    const box = id => page.evaluate(id => {
+        const s = sessions.get(id), r = s.element.getBoundingClientRect();
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), cols: s.terminal.cols, parent: s.element.parentElement.id };
+    }, id);
+    const area = () => page.evaluate(() => [document.querySelector('#dock'), viewport].map(element => {
+        const r = element.getBoundingClientRect();
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), hidden: element.hidden };
+    }));
+    const [, before] = await area();
+    const canvas = await box(ids[0]);
+    await click(page, await middle('[data-action="pin"]', ids[0]));
+    const [dockBox, view] = await area();
+    const pinned = await until(async () => {
+        const b = await box(ids[0]);
+        return b.parent === 'dock' && Math.abs(b.w - (dockBox.w - 16)) <= 1 && b.cols !== canvas.cols && b;
+    }, 'The terminal was not pinned and refitted.');
+    assert.equal(dockBox.hidden, false);
+    assert.ok(view.x >= dockBox.x + dockBox.w && view.w < before.w, 'the canvas sits beside the dock');
+    // Pinned below it, then dragged onto its right edge, the second terminal shares the dock side by side.
+    await click(page, await middle('[data-action="pin"]', ids[1]));
+    // Narrow pinned terminals keep their status dot and profile mark as handles beside the title.
+    const grab = await middle('.card-status', ids[1]), first = await box(ids[0]);
+    await page.mouse.move(grab.x, grab.y); await page.mouse.down();
+    await page.mouse.move(first.x + first.w - 20, first.y + Math.round(first.h / 2), { steps: 5 });
+    assert.equal(await page.evaluate(() => document.querySelector('#dock-drop').hidden), false, 'the drop target is shown');
+    await page.mouse.up();
+    const pair = await until(async () => {
+        const [a, b] = [await box(ids[0]), await box(ids[1])];
+        return Math.abs(a.y - b.y) <= 1 && a.x < b.x && a.cols < pinned.cols && [a, b];
+    }, 'The pinned terminals did not share the dock side by side.');
+    assert.ok(Math.abs(pair[0].w - pair[1].w) <= 1);
+    // The third terminal, dragged from the canvas to the bottom of the dock, goes below both.
+    const third = await middle('.card-status', ids[2]), canvasPlace = await page.evaluate(id => ({ ...findCard(id) }), ids[2]);
+    await page.mouse.move(third.x, third.y); await page.mouse.down();
+    await page.mouse.move(Math.round(dockBox.x + dockBox.w / 2), dockBox.y + dockBox.h - 30, { steps: 6 });
+    await page.mouse.up();
+    await until(async () => (await box(ids[2])).parent === 'dock', 'The canvas terminal was not pinned by dragging.');
+    assert.deepEqual(await page.evaluate(() => dock.layout), { orientation: 'column', sizes: [.5, .5], children: [
+        { orientation: 'row', children: [{ cardId: ids[0] }, { cardId: ids[1] }], sizes: [.5, .5] }, { cardId: ids[2] }] });
+    const placed = await page.evaluate(id => ({ ...findCard(id) }), ids[2]);
+    assert.deepEqual([placed.x, placed.y], [canvasPlace.x, canvasPlace.y], 'it keeps its canvas place');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.pinned-ghost').length), 3);
+    // The host validates and saves the dock with its canvas.
+    const saved = await page.evaluate(async () => { await invoke('autosave', workspace); return workspaceSnapshot().canvases[0].dock; });
+    assert.equal(saved.layout.children[1].cardId, ids[2]);
+    await screenshot(page, scale === 1 ? 'dock' : `dock-${scale}`);
+    // Dropped on the canvas, the first terminal returns there and the second takes the whole row.
+    const header = await middle('.card-status', ids[0]);
+    await page.mouse.move(header.x, header.y); await page.mouse.down();
+    await page.mouse.move(view.x + Math.round(view.w / 2), view.y + Math.round(view.h / 2), { steps: 5 });
+    await page.mouse.up();
+    await until(async () => (await box(ids[0])).parent === 'world', 'Dropping on the canvas did not unpin the terminal.');
+    assert.deepEqual(await page.evaluate(() => dock.layout), { orientation: 'column', sizes: [.5, .5], children: [{ cardId: ids[1] }, { cardId: ids[2] }] });
+    for (const id of ids.slice(1)) await click(page, await middle('[data-action="pin"]', id));
+    const [closed, restored] = await area();
+    assert.equal(closed.hidden, true);
+    assert.deepEqual([restored.x, restored.w], [before.x, before.w], 'the canvas gets its room back');
+    assert.equal(await page.evaluate(() => 'dock' in workspaceSnapshot().canvases[0]), false);
+});
+}

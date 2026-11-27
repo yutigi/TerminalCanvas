@@ -66,7 +66,7 @@ window.captureLayout = async function (scene) {
         '#profile', '#terminal-title', '#cwd', '#command', '#browse-folder',
         // Give the new hint its own identity so the original command hint keeps a stable index.
         '.field-hint:not(#automatic-title-hint)', '#automatic-title-hint', '.dialog-footer', '.dialog-footer button', '.icon-button', '#find-terminal',
-        '.terminal-card', '.card-header', '.card-title', '.card-directory', '.card-account-icon',
+        '.terminal-card', '.card-header', '.card-title', '.card-directory', '.card-account-icon', '.card-actions [data-action="pin"]',
         '.terminal-placeholder .button', '.minimap', '.canvas-item',
         '.canvas-manager', '#canvas-list', '#canvas-add', '#canvas-rename', '#canvas-earlier', '#canvas-later', '#canvas-delete',
         '#workspace-theme',
@@ -77,7 +77,7 @@ window.captureLayout = async function (scene) {
         // Hidden controls do not shift visible identities; new actions use stable IDs.
         let index = 0;
         document.querySelectorAll(selector).forEach(element => {
-            if (selector === '.icon-button' && (element.closest('.canvas-controls') || element.id === 'find-terminal')) return;
+            if (selector === '.icon-button' && (element.closest('.canvas-controls') || element.id === 'find-terminal' || element.dataset.action === 'pin')) return;
             const style = getComputedStyle(element);
             if (!element.getClientRects().length || style.visibility === 'hidden') return;
             const box = element.getBoundingClientRect();

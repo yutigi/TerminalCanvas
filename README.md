@@ -46,6 +46,8 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
 - **Arrange** lays out terminals joined by lines or arrows as left-to-right flows in connector direction, with branches stacked below. Separate flows stack in order, and unconnected terminals follow in a grid. Terminals keep their sizes and connectors, and the layout starts at the terminals' current top-left corner. Other board items stay put: the terminals move down until they clear notes, text, shapes, and images, but may sit over frames. Arranging again changes nothing, and one undo restores the previous layout. Press **F** to arrange only the selected terminals, notes, text, shapes, and images the same way, keeping them clear of everything else; with nothing selected, F does nothing.
+- Select two to four terminals and press **Focus** or **Ctrl + Shift + F** for a split view of them. See [Split view](#split-view).
+- Pin terminals in a dock beside the canvas and arrange them in nested splits while you keep working on the canvas. See [Dock](#dock).
 - Select a terminal and use the canvas style bar to color its frame/title bar. The same seven colors work across terminals and board items; **Default color** restores the original look. Profile badges keep identifying the terminal's tool. Card colors also appear in the sidebar and minimap.
 - Choose **Default theme** above the canvas for all terminals, or **Theme** in the selected terminal's style bar to override it. **Workspace default** clears an override; **Current** explicitly keeps the original theme. Current, Midnight (dark blue), and Paper (light) include complete ANSI palettes. Changes apply immediately, preserving running shells and scrollback. Themes and colors are saved in the workspace and support undo/redo. Duplicate copies the source card's color and theme override.
 - Use the canvas icon in the top toolbar or **Ctrl/Cmd + Shift + B** to hide or show the sidebar, including while typing in a terminal. Click a sidebar section heading to collapse it; its terminal count stays visible. **/** outside text fields and terminals reveals the sidebar search. These choices are remembered on this device, separately from workspace files. Focus mode temporarily hides the sidebar and restores your choice when you return; the toggle or search can reveal it during Focus mode. Small windows keep your manual choice.
@@ -146,6 +148,50 @@ open as one canvas. Canvas organization uses optional format-3 metadata; an unch
 workspace retains its original serialized defaults. Older format-3 apps can read the flat items
 and terminals, but show them on a single board and discard canvas organization if they save.
 The 1,000-item and 64 MB workspace limits still apply across all canvases.
+
+### Split view
+
+**Focus** shows one terminal across the canvas area. With two to four terminals selected (Shift + click, Shift + drag,
+or a group), **Focus** or **Ctrl + Shift + F** shows all of them instead, side by side in their canvas order, left to
+right. More than four are refused with a message; selected board items are ignored.
+
+- **Side by side** and **Stacked**, at the top left, switch the layout.
+- Drag a divider between two panes to share the room differently, or focus it with Tab and use the arrow keys
+  (Shift for larger steps). Each pane keeps at least 120 pixels, and every terminal refits its rows and columns.
+- Click a pane to type in it. Ctrl + Alt + Shift + arrow keys move between panes as they are laid out. A pane's own Focus button
+  narrows the view to that terminal alone.
+- Closing a pane's terminal removes it from the split view; the last one left stays in Focus.
+- **Back to canvas** or **Ctrl + Shift + F** returns every terminal to its place on the canvas.
+
+Each canvas saves its split view in the workspace file with its Focus terminal, so opening the workspace returns
+to it. A single-canvas workspace starts saving canvas metadata when a split view opens, as it does when you rename
+the canvas. Older versions of Terminal Canvas ignore the split view. In the browser, controllers and viewers keep
+their own Focus and split view; the desktop keeps its own.
+
+### Dock
+
+The **Pin** button in a terminal's header moves it into a dock on the left of the canvas, where it stays in view
+while you pan, zoom, and arrange the canvas beside it. A dashed outline keeps its place on the canvas, so its
+connectors still lead somewhere, and **Pin** again (now **Unpin**) puts it back there.
+
+- The dock arranges pinned terminals in nested splits, as many and as deep as you like. A new pin goes below the
+  others. Drag a pinned terminal by its header (its profile mark or status dot; the title renames it) onto any edge
+  of another one to split that terminal's room with it, side by side or stacked; a highlight shows where it will
+  land. Drop it on the canvas instead to unpin it there. Narrow terminals hide their less-used header buttons, but
+  always keep Pin and Close.
+- Drag a terminal from the canvas onto the dock to pin it in the same way.
+- Drag a divider between pinned terminals, or focus it with Tab and use the arrow keys (Shift for larger steps), to
+  share the room differently. Drag the bar between the dock and the canvas to resize the dock; the canvas keeps at
+  least 240 pixels. Every terminal refits its rows and columns.
+- Pinned terminals keep running, typing, and resizing their text as usual. Focus, the split view, and Ctrl + Alt +
+  Shift + arrow navigation apply to the terminals on the canvas; the sidebar and Find terminal select pinned ones in
+  place.
+- Closing a pinned terminal removes it from the dock, and its neighbours share its room.
+
+Each canvas saves its dock in the workspace file, so opening the workspace brings it back. Like the split view, it
+gives a single-canvas workspace canvas metadata, older versions ignore it, and in the browser every client keeps its
+own dock. Pinning and arranging are not undo steps; unpinning a terminal onto a spot of the canvas moves it there as
+one.
 
 ### Board items
 
@@ -354,7 +400,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + N | New terminal |
 | Ctrl + Shift + D | Duplicate selected terminal into a fresh shell |
 | Ctrl + S / Ctrl + O | Save / open workspace |
-| Ctrl + Shift + F | Toggle focus for the selected terminal |
+| Ctrl + Shift + F | Toggle focus for the selected terminal, or a split view of 2 to 4 selected terminals |
 | Ctrl + Shift + P / Command + Shift + P | Open the terminal switcher, including while typing in a terminal |
 | Ctrl/Cmd + Shift + B | Hide / show sidebar, including inside terminals |
 | Ctrl + Alt + Shift + arrow keys | Move to the nearest terminal in that direction; from a terminal, type in it |

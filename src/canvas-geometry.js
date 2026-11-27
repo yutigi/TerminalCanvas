@@ -209,6 +209,126 @@
         search(inset, 0);
         return found || place(inset);
     }
+    // Split view. `sizes` are each pane's share of the room, scaled to fill `area` side by side
+    // (`orientation: 'row'`) or stacked ('column'), with `gap` pixels between panes for the dividers.
+    function splitLayout(area, { orientation, sizes }, gap = 0) {
+        const row = orientation === 'row', total = sizes.reduce((sum, size) => sum + size, 0) || 1;
+        const room = Math.max(0, (row ? area.w : area.h) - gap * (sizes.length - 1));
+        const panes = [], dividers = [];
+        let offset = row ? area.x : area.y;
+        sizes.forEach((size, index) => {
+            const extent = room * size / total;
+            panes.push(row ? { x: offset, y: area.y, w: extent, h: area.h } : { x: area.x, y: offset, w: area.w, h: extent });
+            offset += extent;
+            if (index === sizes.length - 1) return;
+            dividers.push(row ? { x: offset, y: area.y, w: gap, h: area.h } : { x: area.x, y: offset, w: area.w, h: gap });
+            offset += gap;
+        });
+        return { panes, dividers };
+    }
+    // Shares after moving the divider behind pane `index` by `delta` pixels of a `room` pixels long.
+    // Only its two neighbours change; each keeps `min` pixels and 2% of the room, or half of what the
+    // two have together if that is less. The result sums to 1.
+    function moveSplitDivider(sizes, index, delta, room, min = 0) {
+        const total = sizes.reduce((sum, size) => sum + size, 0) || 1;
+        const shares = sizes.map(size => size / total);
+        if (!(room > 0) || index < 0 || index >= shares.length - 1) return shares;
+        const pair = shares[index] + shares[index + 1], floor = Math.min(Math.max(min / room, .02), pair / 2);
+        const first = Math.max(floor, Math.min(pair - floor, shares[index] + delta / room));
+        shares[index] = first; shares[index + 1] = pair - first;
+        return shares;
+    }
+    // The dock: terminals pinned beside the canvas in nested splits. A node is a pinned terminal
+    // `{ cardId }` or a split `{ orientation: 'row' | 'column', children, sizes }` of two or more nodes
+    // sharing its room, as in `splitLayout`. Nesting stops at DOCK_DEPTH splits.
+    const DOCK_DEPTH = 32;
+    const dockLeaves = node => (!node ? [] : node.cardId ? [node.cardId] : node.children.flatMap(dockLeaves));
+    const dockDepth = node => (!node || node.cardId ? 0 : 1 + Math.max(...node.children.map(dockDepth)));
+    const shares = sizes => { const total = sizes.reduce((sum, size) => sum + size, 0) || 1; return sizes.map(size => size / total); };
+    // A split never holds a split of its own orientation: those children join it, keeping their room.
+    function dockFlatten(node) {
+        if (!node || node.cardId) return node;
+        const children = [], sizes = [];
+        node.children.map(dockFlatten).forEach((child, index) => {
+            const share = shares(node.sizes)[index];
+            if (child.cardId || child.orientation !== node.orientation) { children.push(child); sizes.push(share); return; }
+            shares(child.sizes).forEach((inner, at) => { children.push(child.children[at]); sizes.push(share * inner); });
+        });
+        return { orientation: node.orientation, children, sizes };
+    }
+    // Every pinned terminal's rectangle (`panes`, by card ID) and every divider: its rectangle, the
+    // path of child indexes to its split, the child before it, and the length of the split's room.
+    function dockLayout(node, area, gap = 0) {
+        const panes = new Map(), dividers = [];
+        const visit = (node, area, path) => {
+            if (node.cardId) { panes.set(node.cardId, area); return; }
+            const { panes: rects, dividers: lines } = splitLayout(area, node, gap);
+            const room = Math.max(0, (node.orientation === 'row' ? area.w : area.h) - gap * (node.children.length - 1));
+            node.children.forEach((child, index) => visit(child, rects[index], [...path, index]));
+            lines.forEach((rect, index) => dividers.push({ rect, path, index, orientation: node.orientation, room }));
+        };
+        if (node) visit(node, area, []);
+        return { panes, dividers };
+    }
+    // `tree` with `cardId` pinned on `side` ('left', 'right', 'top', 'bottom') of the pane of `target`,
+    // which gives it half its room; without a target that is in the tree, beside the whole dock.
+    function dockInsert(tree, cardId, target = null, side = 'bottom') {
+        const leaf = { cardId };
+        tree = dockRemove(tree, cardId);
+        if (!tree) return leaf;
+        const orientation = side === 'left' || side === 'right' ? 'row' : 'column', first = side === 'left' || side === 'top';
+        const beside = node => ({ orientation, children: first ? [leaf, node] : [node, leaf], sizes: [.5, .5] });
+        if (target === null || !dockLeaves(tree).includes(target)) {
+            // Beside the whole dock, the newcomer takes an equal share of a split of its orientation.
+            if (tree.cardId || tree.orientation !== orientation) return beside(tree);
+            const count = tree.children.length + 1, rest = shares(tree.sizes).map(size => size * (count - 1) / count);
+            return { ...tree, children: first ? [leaf, ...tree.children] : [...tree.children, leaf], sizes: first ? [1 / count, ...rest] : [...rest, 1 / count] };
+        }
+        const visit = node => (node.cardId ? (node.cardId === target ? beside(node) : node) : { ...node, children: node.children.map(visit) });
+        return dockFlatten(visit(tree));
+    }
+    // `tree` without `cardId`. A split left with one child gives way to it, and the other children
+    // share the freed room in proportion. Null when no terminal is left.
+    function dockRemove(tree, cardId) {
+        if (!tree) return null;
+        if (tree.cardId) return tree.cardId === cardId ? null : tree;
+        const kept = tree.children.map((child, index) => [dockRemove(child, cardId), tree.sizes[index]]).filter(([child]) => child);
+        if (!kept.length) return null;
+        if (kept.length === 1) return kept[0][0];
+        return dockFlatten({ orientation: tree.orientation, children: kept.map(([child]) => child), sizes: shares(kept.map(([, size]) => size)) });
+    }
+    // `tree` after moving the divider behind child `index` of the split at `path`, as `moveSplitDivider`.
+    function dockResize(tree, path, index, delta, room, min = 0) {
+        const visit = (node, depth) => (depth === path.length
+            ? { ...node, sizes: moveSplitDivider(node.sizes, index, delta, room, min) }
+            : { ...node, children: node.children.map((child, at) => (at === path[depth] ? visit(child, depth + 1) : child)) });
+        return tree && !tree.cardId ? visit(tree, 0) : tree;
+    }
+    // The side of `rect` that `point` is nearest to, relative to the rectangle's size.
+    function dropSide(rect, point) {
+        const distances = {
+            left: (point.x - rect.x) / rect.w, right: (rect.x + rect.w - point.x) / rect.w,
+            top: (point.y - rect.y) / rect.h, bottom: (rect.y + rect.h - point.y) / rect.h
+        };
+        return Object.keys(distances).reduce((best, side) => (distances[side] < distances[best] ? side : best));
+    }
+    // A dock as stored: `{ width, layout }`, with `width` its share of the room beside the canvas, from
+    // 0.05 to 0.95, and every terminal of `cardIds` at most once. Returns a copy, or null when invalid.
+    function validDock(dock, cardIds) {
+        const allowed = new Set(cardIds), seen = new Set();
+        const node = (value, depth) => {
+            if (!value || typeof value !== 'object') return null;
+            if ('cardId' in value) return allowed.has(value.cardId) && !seen.has(value.cardId) && seen.add(value.cardId) ? { cardId: value.cardId } : null;
+            const { orientation, children, sizes } = value;
+            // `depth` splits enclose this one.
+            if (depth >= DOCK_DEPTH || !['row', 'column'].includes(orientation) || !Array.isArray(children) || children.length < 2 || !Array.isArray(sizes)
+                || sizes.length !== children.length || !sizes.every(size => typeof size === 'number' && size > 0 && size <= 1)) return null;
+            const nodes = children.map(child => node(child, depth + 1));
+            return nodes.every(Boolean) ? { orientation, children: nodes, sizes: [...sizes] } : null;
+        };
+        const width = dock?.width, layout = typeof width === 'number' && width >= .05 && width <= .95 ? node(dock.layout, 0) : null;
+        return layout ? { width, layout } : null;
+    }
     // Arrange. `cards` are the elements to arrange, `{ id, x, y, w, h }` in board order (terminal cards, or a selection
     // that may include board items), and `links` are `{ from, to }` IDs. Cards joined
     // by links form left-to-right flows: a card's column is its longest path from a card with no incoming link,
@@ -397,7 +517,9 @@
     const geometry = {
         center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
         outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt,
-        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, snapMove, snapResize, snapGuides, arrangeCards, ARRANGE_GAP
+        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, snapMove, snapResize, snapGuides, arrangeCards, ARRANGE_GAP,
+        splitLayout, moveSplitDivider,
+        DOCK_DEPTH, dockLeaves, dockDepth, dockFlatten, dockLayout, dockInsert, dockRemove, dockResize, dropSide, validDock
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;
     else root.TerminalCanvasGeometry = geometry;

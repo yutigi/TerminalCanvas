@@ -248,6 +248,101 @@ test('clearing an overlay never pushes the card past the edge of a small view', 
     for (const box of [tools, toolbar, minimap]) assert.equal(G.intersects(shown, box), false);
 });
 
+test('split panes share the room side by side or stacked, with gaps for the dividers', () => {
+    const area = { x: 18, y: 60, w: 1010, h: 610 };
+    assert.deepEqual(G.splitLayout(area, { orientation: 'row', sizes: [.5, .5] }, 10), {
+        panes: [{ x: 18, y: 60, w: 500, h: 610 }, { x: 528, y: 60, w: 500, h: 610 }],
+        dividers: [{ x: 518, y: 60, w: 10, h: 610 }]
+    });
+    // Shares are scaled to fill the room, whatever they add up to.
+    const stacked = G.splitLayout(area, { orientation: 'column', sizes: [.5, .25, .25] }, 5);
+    assert.deepEqual(stacked.panes.map(pane => [pane.y, pane.h]), [[60, 300], [365, 150], [520, 150]]);
+    assert.deepEqual(stacked.dividers.map(divider => [divider.y, divider.h, divider.w]), [[360, 5, 1010], [515, 5, 1010]]);
+    assert.deepEqual(G.splitLayout(area, { orientation: 'row', sizes: [.01, .01] }, 10).panes.map(pane => pane.w), [500, 500]);
+});
+
+test('moving a divider changes only its two panes, which keep a minimum size', () => {
+    const near = (actual, expected) => actual.forEach((value, index) => assert.ok(Math.abs(value - expected[index]) < 1e-9, `${actual} != ${expected}`));
+    near(G.moveSplitDivider([.25, .25, .5], 0, 100, 1000), [.35, .15, .5]);
+    near(G.moveSplitDivider([1, 1], 0, -100, 1000), [.4, .6], 'shares come back normalized');
+    // Neither neighbour goes below `min` pixels, or 2% of the room when that is more.
+    near(G.moveSplitDivider([.5, .5], 0, -900, 1000, 120), [.12, .88]);
+    near(G.moveSplitDivider([.5, .5], 0, 9000, 10000, 120), [.98, .02]);
+    // Two panes smaller together than twice the minimum share what they have equally.
+    near(G.moveSplitDivider([.9, .06, .04], 1, 50, 1000, 120), [.9, .05, .05]);
+    near(G.moveSplitDivider([.5, .5], 1, 50, 1000), [.5, .5], 'no divider after the last pane');
+    near(G.moveSplitDivider([.5, .5], 0, 50, 0), [.5, .5], 'no room, no change');
+});
+
+const leaf = cardId => ({ cardId });
+test('pinning builds nested splits: beside the whole dock, or sharing one pane\'s room', () => {
+    let dock = null;
+    for (const id of ['a', 'b', 'c']) dock = G.dockInsert(dock, id);
+    assert.deepEqual(dock, { orientation: 'column', children: [leaf('a'), leaf('b'), leaf('c')], sizes: [1 / 3, 1 / 3, 1 / 3] });
+    dock = G.dockInsert(dock, 'd', 'b', 'right');
+    assert.deepEqual(dock.children[1], { orientation: 'row', children: [leaf('b'), leaf('d')], sizes: [.5, .5] });
+    // Splitting a pane in its parent's direction adds a sibling instead of nesting.
+    dock = G.dockInsert(dock, 'e', 'b', 'left');
+    assert.deepEqual(dock.children[1], { orientation: 'row', children: [leaf('e'), leaf('b'), leaf('d')], sizes: [.25, .25, .5] });
+    assert.equal(G.dockDepth(dock), 2);
+    // Pinning a pinned terminal again moves it.
+    dock = G.dockInsert(dock, 'a', 'd', 'top');
+    assert.deepEqual(G.dockLeaves(dock), ['e', 'b', 'a', 'd', 'c']);
+    assert.deepEqual(dock.sizes.map(size => Math.round(size * 1000) / 1000), [.5, .5]);
+    assert.deepEqual(G.dockInsert(null, 'x', 'missing', 'left'), leaf('x'));
+    assert.deepEqual(G.dockInsert(leaf('a'), 'b', null, 'right'), { orientation: 'row', children: [leaf('a'), leaf('b')], sizes: [.5, .5] });
+    assert.deepEqual(G.dockInsert(leaf('a'), 'b', 'a', 'top'), { orientation: 'column', children: [leaf('b'), leaf('a')], sizes: [.5, .5] });
+});
+
+test('unpinning collapses splits and lets the rest share the room', () => {
+    const dock = { orientation: 'row', sizes: [.2, .8], children: [leaf('a'), { orientation: 'column', sizes: [.5, .5], children: [leaf('b'), { orientation: 'row', sizes: [.5, .5], children: [leaf('c'), leaf('d')] }] }] };
+    // Removing b leaves the row c|d in the outer row, so it joins it with its share of the room.
+    assert.deepEqual(G.dockRemove(dock, 'b'), { orientation: 'row', children: [leaf('a'), leaf('c'), leaf('d')], sizes: [.2, .4, .4] });
+    assert.deepEqual(G.dockRemove(dock, 'a'), dock.children[1]);
+    assert.equal(G.dockRemove(leaf('a'), 'a'), null);
+    assert.deepEqual(G.dockRemove(dock, 'missing'), G.dockFlatten(dock));
+    assert.equal(G.dockRemove(null, 'a'), null);
+});
+
+test('the dock lays out every pane and divider, and a divider moves within its own split', () => {
+    const dock = { orientation: 'column', sizes: [.5, .5], children: [leaf('a'), { orientation: 'row', sizes: [.5, .5], children: [leaf('b'), leaf('c')] }] };
+    const { panes, dividers } = G.dockLayout(dock, { x: 8, y: 8, w: 408, h: 708 }, 8);
+    assert.deepEqual(Object.fromEntries(panes), { a: { x: 8, y: 8, w: 408, h: 350 }, b: { x: 8, y: 366, w: 200, h: 350 }, c: { x: 216, y: 366, w: 200, h: 350 } });
+    assert.deepEqual(dividers, [
+        { rect: { x: 208, y: 366, w: 8, h: 350 }, path: [1], index: 0, orientation: 'row', room: 400 },
+        { rect: { x: 8, y: 358, w: 408, h: 8 }, path: [], index: 0, orientation: 'column', room: 700 }
+    ]);
+    const resized = G.dockResize(dock, [1], 0, 100, 400);
+    assert.deepEqual(resized.children[1].sizes, [.75, .25]);
+    assert.deepEqual(resized.sizes, [.5, .5], 'other splits keep their shares');
+    assert.deepEqual(G.dockResize(leaf('a'), [], 0, 10, 100), leaf('a'));
+    assert.deepEqual(G.dockLayout(null, { x: 0, y: 0, w: 1, h: 1 }), { panes: new Map(), dividers: [] });
+});
+
+test('a drop lands on the side of a pane nearest the pointer, relative to its size', () => {
+    const rect = { x: 0, y: 0, w: 400, h: 100 };
+    assert.equal(G.dropSide(rect, { x: 10, y: 50 }), 'left');
+    assert.equal(G.dropSide(rect, { x: 380, y: 50 }), 'right');
+    assert.equal(G.dropSide(rect, { x: 200, y: 20 }), 'top');
+    assert.equal(G.dropSide(rect, { x: 120, y: 80 }), 'bottom');
+});
+
+test('stored docks keep their shape only when every part is valid', () => {
+    const ids = ['a', 'b', 'c'];
+    const dock = { width: .35, layout: { orientation: 'row', children: [leaf('a'), leaf('b')], sizes: [1, .25] } };
+    assert.deepEqual(G.validDock(dock, ids), dock);
+    for (const broken of [
+        { ...dock, width: .96 }, { ...dock, width: .04 }, { width: .3 }, { ...dock, layout: leaf('z') },
+        { ...dock, layout: { ...dock.layout, children: [leaf('a'), leaf('a')] } },
+        { ...dock, layout: { ...dock.layout, orientation: 'grid' } },
+        { ...dock, layout: { ...dock.layout, children: [leaf('a')], sizes: [1] } },
+        { ...dock, layout: { ...dock.layout, sizes: [0, 1] } }, { ...dock, layout: { ...dock.layout, sizes: [1.5, 1] } }, null
+    ]) assert.equal(G.validDock(broken, ids), null, JSON.stringify(broken));
+    const nest = depth => (depth ? { orientation: 'row', children: [leaf(`n${depth}`), nest(depth - 1)], sizes: [.5, .5] } : leaf('n0'));
+    const many = Array.from({ length: G.DOCK_DEPTH + 2 }, (_, index) => `n${index}`);
+    assert.ok(G.validDock({ width: .5, layout: nest(G.DOCK_DEPTH) }, many));
+    assert.equal(G.validDock({ width: .5, layout: nest(G.DOCK_DEPTH + 1) }, many), null);
+});
 // Arrange: cards `{ id, x, y, w, h }`, links `{ from, to }`. Results are `{ id, x, y }` in card order.
 const GAP = G.ARRANGE_GAP;
 const card = (id, w = 660, h = 430, x = 0, y = 0) => ({ id, x, y, w, h });

@@ -230,6 +230,64 @@ pub struct Canvas {
     pub selected: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focused: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split: Option<Split>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dock: Option<Dock>,
+}
+
+/// Terminals pinned beside the canvas in nested splits. `width` is the dock's share of the room it
+/// shares with the canvas, from 0.05 to 0.95. Like `focused`, it is optional view state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Dock {
+    #[serde(serialize_with = "serialize_number")]
+    pub width: f64,
+    pub layout: DockNode,
+}
+
+/// A pinned terminal, or two or more nodes sharing a split's room in proportion to `sizes`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum DockNode {
+    Terminal {
+        #[serde(rename = "cardId")]
+        card_id: String,
+    },
+    Split {
+        orientation: SplitOrientation,
+        children: Vec<DockNode>,
+        #[serde(serialize_with = "serialize_numbers")]
+        sizes: Vec<f64>,
+    },
+}
+
+/// Dock splits nest at most this deep.
+pub const DOCK_DEPTH: usize = 32;
+
+/// Focus on several terminals of a canvas at once, side by side (`row`) or stacked (`column`).
+/// Like `focused`, it is optional view state: older readers ignore it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Split {
+    /// Two to four distinct terminals of the canvas, in the order they are shown.
+    pub card_ids: Vec<String>,
+    pub orientation: SplitOrientation,
+    /// Each terminal's share of the room, from 0.01 to 1. The renderer scales them to fill the view.
+    #[serde(serialize_with = "serialize_numbers")]
+    pub sizes: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SplitOrientation {
+    Row,
+    Column,
+}
+
+fn serialize_numbers<S: Serializer>(values: &[f64], serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Number(#[serde(serialize_with = "serialize_number")] f64);
+    serializer.collect_seq(values.iter().map(|value| Number(*value)))
 }
 
 /// A validated workspace in the current format.
@@ -835,6 +893,96 @@ pub fn create_workspace() -> Workspace {
     }
 }
 
+/// A canvas's split view: two to four distinct terminals of `card_ids`, a known orientation, and one
+/// share of the room for each.
+fn split(raw: &Value, card_ids: &[String]) -> Result<Split> {
+    let fail = || invalid("Invalid canvas split.");
+    let Some(ids) = raw
+        .get("cardIds")
+        .and_then(Value::as_array)
+        .filter(|ids| (2..=4).contains(&ids.len()))
+    else {
+        return fail();
+    };
+    let mut members = Vec::with_capacity(ids.len());
+    for value in ids {
+        let id = identifier(Some(value), "canvas split")?;
+        if !card_ids.contains(&id) || members.contains(&id) {
+            return fail();
+        }
+        members.push(id);
+    }
+    let orientation = match raw.get("orientation").and_then(Value::as_str) {
+        Some("row") => SplitOrientation::Row,
+        Some("column") => SplitOrientation::Column,
+        _ => return fail(),
+    };
+    let sizes = raw
+        .get("sizes")
+        .and_then(Value::as_array)
+        .filter(|sizes| sizes.len() == members.len())
+        .and_then(|sizes| {
+            sizes
+                .iter()
+                .map(|size| finite(Some(size), 0.01, 1.0))
+                .collect::<Option<Vec<_>>>()
+        });
+    let Some(sizes) = sizes else {
+        return fail();
+    };
+    Ok(Split {
+        card_ids: members,
+        orientation,
+        sizes,
+    })
+}
+
+/// A canvas's dock: a width and a layout pinning each terminal of `card_ids` at most once.
+fn canvas_dock(raw: &Value, card_ids: &[String]) -> Result<Dock> {
+    let width = finite(raw.get("width"), 0.05, 0.95);
+    let mut pinned = HashSet::new();
+    match (width, dock_node(raw.get("layout"), card_ids, &mut pinned, 0)) {
+        (Some(width), Some(layout)) => Ok(Dock { width, layout }),
+        _ => invalid("Invalid canvas dock."),
+    }
+}
+
+/// `depth` splits enclose `raw`. Shares are positive and at most 1; the renderer scales them.
+fn dock_node(raw: Option<&Value>, card_ids: &[String], pinned: &mut HashSet<String>, depth: usize) -> Option<DockNode> {
+    let raw = raw?.as_object()?;
+    if let Some(id) = raw.get("cardId") {
+        let id = id.as_str()?;
+        let known = card_ids.iter().any(|card| card == id);
+        return (known && pinned.insert(id.to_owned())).then(|| DockNode::Terminal { card_id: id.to_owned() });
+    }
+    if depth >= DOCK_DEPTH {
+        return None;
+    }
+    let orientation = match raw.get("orientation")?.as_str()? {
+        "row" => SplitOrientation::Row,
+        "column" => SplitOrientation::Column,
+        _ => return None,
+    };
+    let children = raw.get("children")?.as_array()?;
+    let sizes = raw.get("sizes")?.as_array()?;
+    if children.len() < 2 || sizes.len() != children.len() {
+        return None;
+    }
+    let sizes = sizes
+        .iter()
+        .map(|size| size.as_f64().filter(|share| *share > 0.0 && *share <= 1.0))
+        .collect::<Option<Vec<_>>>()?;
+    let children = children
+        .iter()
+        .map(|child| dock_node(Some(child), card_ids, pinned, depth + 1))
+        .collect::<Option<Vec<_>>>()?;
+    Some(DockNode::Split {
+        orientation,
+        children,
+        sizes,
+    })
+}
+
 fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec<Canvas>, Option<String>)> {
     let Some(list) = raw.get("canvases") else {
         if raw.get("activeCanvas").is_some() {
@@ -895,6 +1043,14 @@ fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec
         };
         let selected = preference("selected", &[card_ids.clone(), item_ids.clone()].concat())?;
         let focused = preference("focused", &card_ids)?;
+        let split = match canvas.get("split") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(split(value, &card_ids)?),
+        };
+        let dock = match canvas.get("dock") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(canvas_dock(value, &card_ids)?),
+        };
         canvases.push(Canvas {
             id,
             name,
@@ -903,6 +1059,8 @@ fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec
             item_ids,
             selected,
             focused,
+            split,
+            dock,
         });
     }
     if owners.len() != cards.len() + items.len() {
