@@ -249,7 +249,7 @@ minimapMap.addEventListener('pointerdown', event => {
     move(event);
 });
 minimapMap.addEventListener('keydown', event => {
-    if (!ready || minimap.hidden || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    if (!ready || minimap.hidden || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) || navigationDirection(event)) return;
     event.preventDefault(); event.stopPropagation();
     const amount = event.shiftKey ? .5 : .1;
     const dx = event.key === 'ArrowLeft' ? 1 : event.key === 'ArrowRight' ? -1 : 0;
@@ -430,11 +430,20 @@ function centerCard(card) {
     workspace.camera.y = Math.max(-100000, Math.min(100000, (viewport.clientHeight - card.h * z) / 2 - card.y * z));
     renderCamera(); changed();
 }
-// Keyboard navigation. The keyboard is either on the board, where Alt+Arrow moves the selection between
-// terminals, or typing in one terminal, where everything except the app's Ctrl+Shift shortcuts reaches
-// the program, Alt+Arrow included. Enter moves the keyboard into the selected terminal; Ctrl+Shift+E
-// moves it back out to the board. Both work in Focus mode, where Alt+Arrow changes the focused terminal.
+// Keyboard navigation. The keyboard is either on the board or typing in one terminal, where every key
+// except the app's Ctrl+Shift shortcuts reaches the program, Alt+Arrow included. Ctrl+Alt+Shift+Arrow
+// (Command in place of Ctrl on macOS) moves to the nearest terminal that way from either place: on the
+// board it selects that terminal without typing in it, and from a terminal it types in that one, as Enter
+// does. Enter moves the keyboard into the selected terminal; Ctrl+Shift+E moves it back out to the board.
+// All of them work in Focus mode, where moving changes the focused terminal.
 const NAV_DIRECTIONS = Object.freeze({ ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' });
+// The direction of a Ctrl+Alt+Shift+Arrow press, or null. Shells and editors leave this chord unbound,
+// unlike Ctrl+Shift+Arrow (word selection) and Ctrl+Alt+Arrow (AltGr+Arrow, and display rotation on
+// some Intel drivers), and it sits beside Ctrl+Alt+Shift+PageUp/PageDown.
+function navigationDirection(event) {
+    if (!(event.ctrlKey || event.metaKey) || !event.altKey || !event.shiftKey) return null;
+    return NAV_DIRECTIONS[event.key] || null;
+}
 // A revealed terminal keeps this far from the view's edges, and this far from the toolbars and minimap.
 const REVEAL_INSET = Object.freeze({ left: 24, top: 24, right: 24, bottom: 24 });
 const REVEAL_GAP = 16;
@@ -563,18 +572,25 @@ terminalSwitcher.addEventListener('keydown', event => {
 switcherQuery.oninput = renderTerminalSwitcher;
 $('#find-terminal').onclick = openTerminalSwitcher;
 $('#switcher-close').onclick = () => terminalSwitcher.close();
-// From the selected element, or with nothing selected from the middle of the view, to the nearest
-// terminal that way. When none lies that way the selection stays, and a selected terminal is shown again.
-function navigateTerminals(direction) {
+// From `from` (the terminal the keyboard is in), the selected element, or with nothing selected the
+// middle of the view, to the nearest terminal that way. When none lies that way the selection stays,
+// and a selected terminal is shown again. With `type`, the keyboard then types in it, as Enter does.
+function navigateTerminals(direction, { from = null, type = false } = {}) {
     if (boardBusy()) return;
     if (editing) document.activeElement?.blur();
     const candidates = workspace.cards.map(card => ({ id: card.id, bounds: boundsOf(card) }));
     if (!candidates.length) return toast('There are no terminals on this canvas yet.');
-    const origin = findElement(focused || selected);
+    const origin = findElement(from || focused || selected);
     const id = origin
         ? Geometry.nearestInDirection(boundsOf(origin), direction, candidates.filter(candidate => candidate.id !== origin.id), origin.id)
         : Geometry.nearestToPoint(viewportCenterWorld(), candidates);
-    showTerminal(id || (origin?.type === 'terminal' ? origin.id : null));
+    // Typing with no terminal that way: stay in this one rather than blur and refocus it.
+    if (type && !id && origin?.id === from) {
+        if (!focused) revealCard(origin);
+        return;
+    }
+    const target = id || (origin?.type === 'terminal' ? origin.id : null);
+    if (showTerminal(target) && type) enterTerminal(target);
 }
 // Enter: type in the selected terminal. One that is not running gets its Start or Resume button instead,
 // so the keyboard never starts a command by itself.
@@ -790,7 +806,7 @@ function mount(card, canvas = activeCanvas) {
         s.terminal.onBell?.(() => markCanvasActivity(s, 'Bell'));
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
-            if (canvasShortcut(event, { detect: true })) return false;
+            if (canvasShortcut(event, { detect: true }) || navigationDirection(event)) return false;
             if (event.altKey || event.isComposing) return true;
             if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'p', 'b'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
@@ -2079,7 +2095,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Move to the nearest terminal in a direction, also while typing</span><kbd>Ctrl Alt Shift + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Ctrl Alt Shift + arrow keys apply to the current canvas. From a terminal, Ctrl Alt Shift + arrow keys move your typing to the nearest terminal that way; from the canvas, they select it without typing in it. Alt + arrow keys inside a terminal reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Ctrl Alt Shift + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
@@ -2099,6 +2115,14 @@ document.addEventListener('keydown', event => {
         return;
     }
     if (canvasShortcut(event)) return;
+    // Ctrl+Alt+Shift+Arrow also works while typing in a terminal, and then types in the terminal it reaches.
+    const direction = navigationDirection(event);
+    if (direction) {
+        event.preventDefault();
+        const card = event.target.closest('.terminal-card');
+        navigateTerminals(direction, { from: card?.dataset.id || null, type: !!card && !!event.target.closest('.xterm') });
+        return;
+    }
     // A held Enter never presses a terminal's buttons: Enter on the board moves focus to a stopped
     // terminal's Start or Resume button, and only a separate press may start it.
     if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
@@ -2129,11 +2153,6 @@ document.addEventListener('keydown', event => {
         if (!event.shiftKey && onBoard && (key === 'c' || key === 'x') && copySelection({ cut: key === 'x' })) event.preventDefault();
         if (!event.shiftKey && onBoard && key === 'd') { event.preventDefault(); duplicateSelection(); }
         return;
-    }
-    // Alt+Arrow inside a terminal or text field stays there; the minimap handles its own arrow keys first.
-    const direction = NAV_DIRECTIONS[event.key];
-    if (direction && event.altKey && !event.shiftKey && !event.target.closest('input,textarea,select,.xterm,[contenteditable="true"]')) {
-        event.preventDefault(); navigateTerminals(direction); return;
     }
     if (event.altKey || event.target.closest('input,textarea,select,.xterm,[contenteditable="true"]')) return;
     if (event.key === '/') {
