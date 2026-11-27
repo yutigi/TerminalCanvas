@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
+const { promisify } = require('node:util');
 const path = require('node:path');
 const { until, root } = require('./harness.cjs');
 
@@ -87,4 +88,11 @@ async function startTerminal(page, options = {}) {
         workspace.cards.push(card); mount(card); await start(card); return card;
     }, options);
 }
-module.exports = { withSavedClipboard, fixtureScene, cellPoint, placeSelectionFixture, writeTerminal, clipboardRead, clipboardWrite, choose, input, startTerminal, root };
+// Visible windows that the app's WebView2 processes show outside the app window, such as WebView2's own
+// context menu, waiting up to `wait` ms for one to appear.
+async function nativePopups(h, wait = 1000) {
+    const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File',
+        path.join(__dirname, 'native-popups.ps1'), '-AppPid', String(h.child.pid), '-WaitMs', String(wait)], { windowsHide: true });
+    return stdout.split(/\r?\n/).filter(Boolean);
+}
+module.exports = { withSavedClipboard, fixtureScene, cellPoint, placeSelectionFixture, writeTerminal, clipboardRead, clipboardWrite, choose, input, startTerminal, nativePopups, root };

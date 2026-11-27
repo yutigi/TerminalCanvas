@@ -6,6 +6,7 @@ const { createHash } = require('node:crypto');
 const { launch, until, hasOutputLine, sendInput, click, key, screenshot, psQuote, root } = require('./harness.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 120000 };
 const { image } = require('./fixtures.cjs');
+const { fixtureScene, cellPoint, writeTerminal, nativePopups } = require('./support.cjs');
 const { powerShellLiteral } = require('../baseline/support.cjs');
 
 async function newTerminal(h, title = 'E2E terminal') {
@@ -83,6 +84,72 @@ for (const scale of [1, 1.25, 1.5]) {
         await screenshot(h.page, `board-${scale}`);
     });
 }
+
+// WebView2 draws its own context menu in a separate native window: an edit menu over terminals and
+// text fields, and Back, Refresh, Save as, and Print elsewhere. It stays off, while the DOM event still
+// opens the canvas menu and reaches xterm, which reports right-clicks to programs that track the mouse.
+test('native right-clicks never open the WebView2 menu, and the canvas menu and terminal mouse still work', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const [card] = await fixtureScene(h.page, [{ title: 'Right-click', x: 0, y: 0 }]);
+    await writeTerminal(h.page, card.id, 'right-click fixture');
+    await h.page.evaluate(() => {
+        window.__contextMenus = [];
+        window.addEventListener('contextmenu', event => window.__contextMenus.push({
+            xterm: !!event.target.closest('.xterm'), prevented: event.defaultPrevented
+        }));
+    });
+    const targets = await h.page.evaluate(id => {
+        const center = element => {
+            const r = element.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        };
+        const screen = sessions.get(id).element.querySelector('.xterm-screen').getBoundingClientRect(), area = viewport.getBoundingClientRect();
+        const points = {
+            terminal: { x: Math.round(screen.x + 60), y: Math.round(screen.y + 40) }, field: center($('#search')),
+            text: center($('.canvas-caption')), canvas: { x: Math.round(area.right - 300), y: Math.round(area.top + 120) }
+        };
+        // A title shows a native tooltip, which the popup check would also find.
+        for (const [name, point] of Object.entries(points)) {
+            if (document.elementFromPoint(point.x, point.y).closest('[title]')) throw new Error(`The ${name} point has a tooltip.`);
+        }
+        if (!emptyCanvasTarget(document.elementFromPoint(points.canvas.x, points.canvas.y))) throw new Error('The canvas point is not empty.');
+        return points;
+    }, card.id);
+    const menu = h.page.locator('#canvas-menu');
+    for (const [name, point] of Object.entries(targets)) {
+        await sendInput(h.page, () => h.page.mouse.click(point.x, point.y, { button: 'right' }), { type: 'contextmenu' });
+        assert.deepEqual(await nativePopups(h), [], `Right-clicking the ${name} opened a WebView2 window.`);
+        assert.equal(await menu.isVisible(), name === 'canvas', `Only the empty canvas opens the canvas menu (${name}).`);
+    }
+    await key(h.page, 'Escape');
+    assert.equal(await menu.isVisible(), false);
+    assert.deepEqual(await h.page.evaluate(() => window.__contextMenus), [
+        { xterm: true, prevented: false }, { xterm: false, prevented: false }, { xterm: false, prevented: false }, { xterm: false, prevented: true }
+    ], 'The DOM event reaches xterm and the canvas menu');
+    // The keyboard opens the canvas menu from the board.
+    await h.page.evaluate(() => viewport.focus());
+    await key(h.page, 'Shift+F10');
+    assert.equal(await menu.isVisible(), true, 'Shift+F10 on the board opens the canvas menu');
+    assert.deepEqual(await nativePopups(h), []);
+    await key(h.page, 'Escape');
+    // A program that tracks the mouse still gets right-clicks, and selecting text still works afterwards.
+    await writeTerminal(h.page, card.id, '\x1b[?1000h\x1b[?1006h');
+    await h.page.evaluate(id => {
+        window.__reports = []; window.__reportListener = sessions.get(id).terminal.onData(data => window.__reports.push(data));
+    }, card.id);
+    const cell = await cellPoint(h.page, card.id, 30, 3);
+    await sendInput(h.page, () => h.page.mouse.click(cell.x, cell.y, { button: 'right' }), { type: 'contextmenu' });
+    await until(async () => (await h.page.evaluate(() => window.__reports)).length >= 2, 'The right-button report was not delivered.');
+    assert.equal((await h.page.evaluate(() => window.__reports))[0], '\x1b[<2;31;4M');
+    assert.deepEqual(await nativePopups(h), []);
+    await h.page.evaluate(() => window.__reportListener.dispose());
+    await writeTerminal(h.page, card.id, '\x1b[?1006l\x1b[?1000l');
+    const from = await cellPoint(h.page, card.id, 0, 0, .25), to = await cellPoint(h.page, card.id, 10, 0, .75);
+    await sendInput(h.page, async () => {
+        await h.page.mouse.move(from.x, from.y); await h.page.mouse.down();
+        await h.page.mouse.move(to.x, to.y, { steps: 4 }); await h.page.mouse.up();
+    }, { point: to });
+    assert.equal(await h.page.evaluate(id => sessions.get(id).terminal.getSelection(), card.id), 'right-click');
+});
 
 test('native first-click typing reaches xterm and shell directory tracking follows Unicode paths', windows, async t => {
     const h = await launch({ clean: true }); t.after(() => h.dispose());
