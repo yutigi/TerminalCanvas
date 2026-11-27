@@ -9,7 +9,16 @@ use serde_json::{Value, json};
 use tc_core::pointers::{self, Report};
 
 pub fn run(args: &[String], lifecycle: bool) -> ExitCode {
-    let result = if lifecycle { from_stdin(args) } else { explicit(args) }.and_then(send);
+    let report = if lifecycle {
+        from_stdin(args)
+    } else {
+        explicit(args).map(Some)
+    };
+    let result = match report {
+        Ok(Some(report)) => send(report),
+        Ok(None) => return ExitCode::SUCCESS,
+        Err(error) => Err(error),
+    };
     match result {
         Ok(answer) => {
             if lifecycle {
@@ -59,7 +68,7 @@ fn explicit(args: &[String]) -> Result<Report, String> {
     Ok(report)
 }
 
-fn from_stdin(args: &[String]) -> Result<Report, String> {
+fn from_stdin(args: &[String]) -> Result<Option<Report>, String> {
     if args.len() != 1 || !matches!(args[0].as_str(), "claude" | "codex") {
         return Err("Unknown hook provider.".into());
     }
@@ -82,6 +91,10 @@ fn from_stdin(args: &[String]) -> Result<Report, String> {
         Some("SessionEnd") => "session-end",
         _ => return Err("Unsupported hook event.".into()),
     };
+    // A callback from a kept session can omit the conversation ID. Acknowledge it quietly.
+    if input.get("session_id").is_none() {
+        return Ok(None);
+    }
     let mut report = base(kind);
     report.provider.clone_from(&args[0]);
     report.session_id = input["session_id"].as_str().unwrap_or_default().to_owned();
@@ -100,7 +113,7 @@ fn from_stdin(args: &[String]) -> Result<Report, String> {
     if !report.valid() || report.session_id.is_empty() {
         return Err("Invalid lifecycle metadata.".into());
     }
-    Ok(report)
+    Ok(Some(report))
 }
 
 fn send(report: Report) -> Result<Value, String> {

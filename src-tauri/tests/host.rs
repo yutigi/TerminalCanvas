@@ -1192,6 +1192,30 @@ async fn pointer_setup_checks_readiness_without_saving_or_sending_input() {
 }
 
 #[tokio::test]
+async fn an_exit_pointer_fires_when_its_source_shell_is_replaced() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    h.pointer_config(&source, &target, "recover-exit", "shell", "exit")
+        .await;
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+
+    let (key, events, _) = h.launches.lock().unwrap()[0].clone();
+    events(key, SessionEvent::Exit(ExitStatus { code: 7, signal: None }));
+
+    assert_eq!(h.host.running().await, 2);
+    assert_eq!(h.launches.lock().unwrap().len(), 3);
+    assert!(h.pointer_writes(1).contains(&"echo delivered\r".into()));
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| { event["type"] == "recovered" && event["id"] == source["id"] && event["exitCode"] == 7 })
+    );
+}
+
+#[tokio::test]
 async fn pointer_launches_the_selected_ai_in_only_the_idle_target() {
     use tc_core::pointers::PromptLaunch;
 

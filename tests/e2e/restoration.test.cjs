@@ -112,7 +112,7 @@ console.log('SESSION_TEST_DONE:' + provider);
         const resume = argv.indexOf(provider === 'claude' ? '--resume' : 'resume');
         assert.ok(resume >= 0, `${provider} did not receive its resume option`);
         assert.equal(argv[resume + 1], ids[provider]);
-        await second.page.evaluate(id => window.terminalCanvas.input(id, 'exit\r'), card.id);
+        await second.page.evaluate(id => window.terminalCanvas.input(id, '& $env:TC_HOOK finish\r'), card.id);
         await until(async () => !(await second.state()).host.terminals.find(terminal => terminal.id === card.id).running, 'Resumed shell did not exit.');
         await second.page.evaluate(id => {
             window.__e2eEvents = [];

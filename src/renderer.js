@@ -2279,6 +2279,10 @@ if (bridge) {
             else bridge.acknowledge(event.id, event.data.length);
         }
         if (event.type === 'cwd' && s) showDirectory(s, event.cwd);
+        if (event.type === 'recovered' && s && event.exitCode !== undefined) {
+            s.terminal?.writeln(`\x1b[?1049l\x1b[!p\r\n\x1b[90m[Shell exited · code ${event.exitCode}. Started a fresh shell.]\x1b[0m`);
+            markCanvasActivity(s, 'New output');
+        }
         if (event.type === 'exit' && s) { s.terminal?.writeln(`\r\n\x1b[90m[Process exited · code ${event.exitCode}]\x1b[0m`); markCanvasActivity(s, 'Exited'); setStatus(s.card, 'exited'); }
         if (event.type === 'error') toast(event.message);
         if (event.type === 'update') showUpdate(event);

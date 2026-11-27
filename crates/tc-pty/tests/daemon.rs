@@ -152,7 +152,18 @@ fn a_kept_terminal_survives_detaching_replays_its_output_and_cleans_up_when_it_e
         second.until("the second replay", |output| output.contains("2024")),
         None
     );
-    view.exit();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match view
+            .events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            SessionEvent::Superseded => break,
+            SessionEvent::Exit(status) => panic!("a deliberately replaced view reported an exit: {status:?}"),
+            _ => {}
+        }
+    }
     second.attachment.process.kill();
     second.exit();
 
@@ -213,7 +224,7 @@ fn a_helper_that_cannot_prove_the_secret_is_refused() {
 /// The renderer keeps a kept terminal active while the app is in the background, so `start` says
 /// which terminals are kept.
 #[test]
-fn a_kept_start_reports_itself_as_kept() {
+fn a_kept_terminal_recovers_from_a_lost_view_or_a_dead_shell() {
     use serde_json::json;
     use tc_pty::PtyBackend;
     use tc_pty::manager::{Config, Keeper, TerminalManager};
@@ -229,29 +240,75 @@ fn a_kept_start_reports_itself_as_kept() {
         std::thread::sleep(Duration::from_millis(20));
     }
 
+    let (program, _, _) = shell();
     let mut config = Config::from_environment();
     config.home = folder.to_string_lossy().into_owned();
-    let mut manager = TerminalManager::new(config, Box::new(PtyBackend), None, sink().0);
+    if !cfg!(windows) {
+        config.env.insert("SHELL".into(), program.clone());
+    }
+    let (tx, rx) = mpsc::channel();
+    let events: EventSink = Arc::new(move |key, event| {
+        let _ = tx.send((key, event));
+    });
+    let mut manager = TerminalManager::new(config, Box::new(PtyBackend), None, events);
     let card = |command: &str| {
         serde_json::to_value(
             tc_core::workspace::create_card(&json!({ "cwd": folder.to_string_lossy(), "command": command })).unwrap(),
         )
         .unwrap()
     };
-    let (program, _, _) = shell();
-    let plain = card(&program);
+    let command = if cfg!(windows) { &program } else { "" };
+    let plain = card(command);
     let started = manager.start(&plain, None, None, None).unwrap();
     assert!(!started.kept);
     assert_eq!(serde_json::to_value(&started).unwrap().get("kept"), None);
     manager.stop(&started.id);
 
     manager.set_keeper(Some(Keeper::Daemon(daemon.clone())));
-    let kept = card(&program);
+    let kept = card(command);
     let started = manager.start(&kept, None, None, None).unwrap();
     assert!(started.kept);
     assert_eq!(serde_json::to_value(&started).unwrap()["kept"], true);
 
+    // End the helper's process out of band. The manager must replace the shell, and keep it again.
+    daemon.kill(&started.id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (key, event) = rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        manager.handle(key, event);
+        if manager
+            .take_events()
+            .iter()
+            .any(|event| matches!(event, tc_pty::TerminalEvent::Recovered { .. }))
+        {
+            break;
+        }
+    }
+    assert_ne!(manager.process_id(&started.id), started.pid);
+    assert_eq!(daemon.terminals().len(), 1);
+
+    let second = manager.start(&card(command), None, None, None).unwrap();
+    let generation = manager.view(&second.id).unwrap().0;
+    manager.take_events();
+    // Simulate loss of the view while the helper still owns a live shell.
+    manager.handle(
+        SessionKey {
+            id: second.id.clone(),
+            generation,
+        },
+        SessionEvent::Exit(ExitStatus { code: 1, signal: None }),
+    );
+    assert_eq!(manager.process_id(&second.id), second.pid);
+    assert_ne!(manager.view(&second.id).unwrap().0, generation);
+    assert!(manager.take_events().contains(&tc_pty::TerminalEvent::Recovered {
+        id: second.id.clone(),
+        previous_exit: None,
+    }));
+
     manager.stop(&started.id);
+    manager.stop(&second.id);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !daemon.terminals().is_empty() {
         assert!(Instant::now() < deadline, "the kept terminal did not end");

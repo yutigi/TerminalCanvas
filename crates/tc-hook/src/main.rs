@@ -6,6 +6,7 @@
 //! tc-hook emit launch <provider> <session>   report an AI CLI launch to the host (OSC 633)
 //! tc-hook emit end <exit code>               report that it ended
 //! tc-hook new-terminal [options]             ask the app for a new terminal (see `new_terminal`)
+//! tc-hook finish [exit code]                ask the app to end this terminal
 //! tc-hook trigger [name]                     send an explicit hook pointer event
 //! tc-hook lifecycle <provider>               process an AI lifecycle hook for a pointer
 //! tc-hook launch-prompt <request id>         start an AI CLI with a prompt in the current terminal
@@ -34,6 +35,7 @@ mod prompt_launch;
 /// The most hook input read, in UTF-16 units as the JavaScript hook counted it.
 const INPUT_UNITS: usize = 65536;
 const UTF8_PREAMBLE: &[u8] = b"\xef\xbb\xbf";
+const INPUT_BYTES: usize = INPUT_UNITS * 3 + UTF8_PREAMBLE.len() + 1;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args_os()
@@ -47,6 +49,7 @@ fn main() -> ExitCode {
         Some("lifecycle") => pointers::run(&args[1..], true),
         Some("launch-prompt") if args.len() == 2 => prompt_launch::run(&args[1]),
         Some("new-terminal") => new_terminal::run(&args[1..]),
+        Some("finish") => finish(&args[1..]),
         Some(tc_pty::daemon::COMMAND) if args.len() == 2 => match tc_pty::daemon::serve(Path::new(&args[1])) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -60,9 +63,32 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | trigger [name] | lifecycle <provider> | launch-prompt <request id> | terminal-daemon <state file>"
+                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | finish [exit code] | trigger [name] | lifecycle <provider> | launch-prompt <request id> | terminal-daemon <state file>"
             );
             ExitCode::from(2)
+        }
+    }
+}
+
+fn finish(args: &[String]) -> ExitCode {
+    let code = match args {
+        [] => Some(0),
+        [code] => code.parse::<i32>().ok(),
+        _ => None,
+    };
+    let Some(code) = code else {
+        eprintln!("usage: tc-hook finish [exit code]");
+        return ExitCode::from(2);
+    };
+    let Some(inbox) = env::var_os(tc_core::launch::ENV).filter(|value| !value.is_empty()) else {
+        eprintln!("tc-hook: finish must run inside the Terminal Canvas terminal it should end.");
+        return ExitCode::FAILURE;
+    };
+    match tc_core::launch::write_finish(Path::new(&inbox), code) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("tc-hook: could not request a terminal finish: {error}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -187,8 +213,13 @@ fn record(provider: &str) -> bool {
     let mut input = Vec::new();
     // PowerShell's native pipeline may add a UTF-8 encoding signature.
     // Allow its three transport bytes in addition to the UTF-16 document limit.
-    let limit = INPUT_UNITS * 3 + UTF8_PREAMBLE.len() + 1;
-    if io::stdin().lock().take(limit as u64).read_to_end(&mut input).is_err() || input.len() >= limit {
+    if io::stdin()
+        .lock()
+        .take(INPUT_BYTES as u64)
+        .read_to_end(&mut input)
+        .is_err()
+        || input.len() >= INPUT_BYTES
+    {
         return false;
     }
     let input = input.strip_prefix(UTF8_PREAMBLE).unwrap_or(&input);
