@@ -186,16 +186,26 @@ test('native split view lays out, refits, saves, and restores selected terminals
 
 // Terminals pinned beside a live canvas: native pin buttons and header drags build nested splits in the
 // dock, terminals refit, the host saves the dock, and dropping one on the canvas unpins it there.
-test('native dock pins terminals beside the canvas in nested splits and unpins them onto it', windows, async t => {
-    const h = await launch({ clean: true }); t.after(() => h.dispose());
+// Display scale 1.5 makes the page about as small as the CI window's.
+for (const scale of [1, 1.5]) {
+test(`native dock pins terminals beside the canvas in nested splits and unpins them onto it (display scale ${scale})`, windows, async t => {
+    const h = await launch({ clean: true, scale }); t.after(() => h.dispose());
     const page = h.page;
     await fixtureScene(page, [0, 700, 1400].map(x => ({ profile: 'shell', title: `Dock ${x}`, x, y: 0 })));
     await page.evaluate(() => { workspace.camera = { x: 40, y: 60, z: .5 }; renderCamera(); });
     const ids = await page.evaluate(() => workspace.cards.map(card => card.id));
-    const middle = (selector, id) => page.evaluate(({ selector, id }) => {
-        const box = sessions.get(id).element.querySelector(selector).getBoundingClientRect();
-        return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
-    }, { selector, id });
+    // The middle of a terminal's header control. A terminal on the canvas is brought into view first,
+    // since the CI window is small enough to leave some off screen, and the point must reach the control.
+    const middle = async (selector, id) => {
+        const point = await page.evaluate(({ selector, id }) => {
+            if (!isPinned(id)) revealCard(findCard(id));
+            const control = sessions.get(id).element.querySelector(selector), box = control.getBoundingClientRect();
+            const point = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+            return { ...point, reached: control.contains(document.elementFromPoint(point.x, point.y)) };
+        }, { selector, id });
+        assert.equal(point.reached, true, `${selector} of ${id} is covered or off screen`);
+        return { x: point.x, y: point.y };
+    };
     const box = id => page.evaluate(id => {
         const s = sessions.get(id), r = s.element.getBoundingClientRect();
         return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), cols: s.terminal.cols, parent: s.element.parentElement.id };
@@ -241,7 +251,7 @@ test('native dock pins terminals beside the canvas in nested splits and unpins t
     // The host validates and saves the dock with its canvas.
     const saved = await page.evaluate(async () => { await invoke('autosave', workspace); return workspaceSnapshot().canvases[0].dock; });
     assert.equal(saved.layout.children[1].cardId, ids[2]);
-    await screenshot(page, 'dock');
+    await screenshot(page, scale === 1 ? 'dock' : `dock-${scale}`);
     // Dropped on the canvas, the first terminal returns there and the second takes the whole row.
     const header = await middle('.card-status', ids[0]);
     await page.mouse.move(header.x, header.y); await page.mouse.down();
@@ -255,3 +265,4 @@ test('native dock pins terminals beside the canvas in nested splits and unpins t
     assert.deepEqual([restored.x, restored.w], [before.x, before.w], 'the canvas gets its room back');
     assert.equal(await page.evaluate(() => 'dock' in workspaceSnapshot().canvases[0]), false);
 });
+}
