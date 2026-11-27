@@ -3,6 +3,9 @@
 //!
 //! - Browser shortcuts (F5, Ctrl+R, Ctrl+F, Ctrl+P, and the DevTools keys such as Ctrl+Shift+C) are
 //!   turned off, so they reach the canvas and the terminals.
+//! - WebView2's own context menu (Back, Refresh, Save as, Print, and Cut/Copy/Paste over text) is
+//!   turned off everywhere, as Electron shows none. Page script still gets `contextmenu` events, so
+//!   the canvas menu opens and xterm still reports right-clicks to programs.
 //! - Every permission request (camera, microphone, location, notifications, clipboard) is denied.
 //! - When the renderer process dies, the host saves what it knows and closes, as Electron's
 //!   `render-process-gone` handler did.
@@ -21,6 +24,12 @@ use windows::core::Interface;
 
 use crate::host::Host;
 
+/// Call this on the main thread right after the window is built, before the event loop runs again.
+/// WebView2 applies a settings change made after `NavigationStarting` only from the next top-level
+/// navigation, and the app has only its first one. `build()` starts that navigation, but its
+/// `NavigationStarting` cannot be raised until the event loop runs. On the main thread `with_webview`
+/// runs at once, so the settings below apply to the first page. A test that changed them after the
+/// page had loaded still got WebView2's menu.
 pub fn configure(window: &WebviewWindow, host: Arc<Host>) -> tauri::Result<()> {
     window.with_webview(move |webview| {
         // SAFETY: the controller and its interfaces are valid on the webview's thread, where
@@ -28,7 +37,9 @@ pub fn configure(window: &WebviewWindow, host: Arc<Host>) -> tauri::Result<()> {
         let result = unsafe {
             (|| -> windows::core::Result<()> {
                 let core = webview.controller().CoreWebView2()?;
-                core.Settings()?
+                let settings = core.Settings()?;
+                settings.SetAreDefaultContextMenusEnabled(false)?;
+                settings
                     .cast::<ICoreWebView2Settings3>()?
                     .SetAreBrowserAcceleratorKeysEnabled(false)?;
                 let mut token = Default::default();

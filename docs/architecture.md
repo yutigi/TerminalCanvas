@@ -154,8 +154,9 @@ Capabilities grant only app commands to the local main webview. Every command ch
 navigation and new windows are restricted, permissions denied, and CSP comes from `tauri.conf.json`
 without unsafe-eval. Links are validated HTTP(S) URLs without credentials at the OS boundary.
 Images use validated content-addressed names with nosniff/no-cache and an app-only allowed origin.
-The protocol accepts direct macOS/Linux URLs and Wry's rewritten Windows form. WebView2 zoom and
-browser accelerators are disabled; file drops reach the canvas. macOS keeps its native Edit menu.
+The protocol accepts direct macOS/Linux URLs and Wry's rewritten Windows form. WebView2 zoom,
+browser accelerators, and default context menus are disabled; file drops reach the canvas. macOS
+keeps its native Edit menu.
 
 ## Validation and distribution
 
