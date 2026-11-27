@@ -30,6 +30,18 @@ test('a program in a terminal opens a started terminal beside it, joined by an a
     assert.equal((await h.state()).host.running, 2);
     await screenshot(h.page, 'agent-launch');
 
+    await until(async () => !(await directory(h.page, helper)).warning, 'The helper did not return to its prompt.');
+    await input(h.page, parent.id, `& $env:TC_HOOK send-input --to ${psQuote(helper.id)} --text 'Write-Output BRIDGE_INPUT_OK' --enter\r`);
+    await until(async () => hasOutputLine(await h.output(helper.id), 'BRIDGE_INPUT_OK'), 'The bridge did not write to the running helper.');
+    await until(async () => !(await directory(h.page, helper)).warning, 'The helper did not finish processing input.');
+    await input(h.page, helper.id, '& $env:TC_HOOK send-message --parent --text "Helper finished"\r');
+    await until(async () => !(await directory(h.page, parent)).warning, 'The parent did not finish sending input.');
+    const mailbox = path.join(project, 'mailbox.json');
+    await input(h.page, parent.id, `& $env:TC_HOOK receive-messages --wait 10 --json | Set-Content -LiteralPath ${psQuote(mailbox)}\r`);
+    const received = await until(async () => JSON.parse(await fs.readFile(mailbox, 'utf8')), 'The parent could not receive the helper message.');
+    assert.equal(received.status, 'received');
+    assert.deepEqual(received.messages.map(({ from, text }) => ({ from, text })), [{ from: helper.id, text: 'Helper finished' }]);
+
     // A shell exit finalizes the log with the original exit code and leaves a fresh shell on the card.
     const report = path.join(project, 'report.json');
     await input(h.page, parent.id, `& $env:TC_HOOK new-terminal --title Logged --command 'Write-Output LOGGED_LINE; exit 5' --log --json | Set-Content -LiteralPath ${psQuote(report)}\r`);

@@ -266,6 +266,10 @@ without it; a program whose new terminal started that way is told so.
 & $env:TC_HOOK new-terminal --title "API tests" --cwd ..\api --command "npm test" --log --json
 ```
 
+Running cards can exchange messages with `tc-hook send-message` and `receive-messages`. A linked
+child can reply with `send-message --parent`. Use `send-input --to <card ID>` to type into the
+foreground program of a running terminal.
+
 Every terminal, including Command Prompt, has `TC_HOOK`, `TC_LAUNCH_DIR`, and `TC_CARD_ID` set,
 except that a terminal started without integration (see above) has only `TC_CARD_ID`. See
 [Opening terminals from agents and scripts](docs/agent-launch.md) for options, results, output logs,

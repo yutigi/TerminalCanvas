@@ -1104,6 +1104,112 @@ async fn programs_outside_the_canvas_open_terminals_and_hear_back_through_the_ap
     );
 }
 
+#[tokio::test]
+async fn linked_cards_exchange_messages_and_send_input_to_running_terminals() {
+    use std::path::Path;
+    use std::time::Duration;
+    use tc_core::bridge::{self, Request, Target};
+    use tc_core::launch;
+
+    async fn bridge_call(inbox: &Path, request: &Request) -> Value {
+        let (id, _) = bridge::write_request(inbox, request).unwrap();
+        let result = bridge::result_path(inbox, &id);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(bytes) = std::fs::read(&result) {
+                    return serde_json::from_slice(&bytes).unwrap();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the host answers bridge requests")
+    }
+
+    let h = Harness::with_hook(true);
+    let parent = h.start().await;
+    let parent_id = parent["id"].as_str().unwrap();
+    let (parent_key, parent_events, parent_process) = h.launches.lock().unwrap()[0].clone();
+    let parent_inbox = PathBuf::from(&parent_process.lock().unwrap().env[launch::ENV]);
+    let request = launch::validate_request(&json!({"cwd":h.folder}), tc_core::Platform::current()).unwrap();
+    let (launch, _) = launch::write_request(&parent_inbox, &request).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !h.events.lock().unwrap().iter().any(|event| event["request"] == launch) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the child launch reaches the renderer");
+
+    let child = json!(create_card(&json!({"cwd":h.folder})).unwrap());
+    h.host
+        .command("start", Some(&json!({"card":child,"launch":launch})))
+        .await
+        .unwrap();
+    let child_id = child["id"].as_str().unwrap();
+    let child_process = h.launches.lock().unwrap()[1].2.clone();
+    let child_inbox = PathBuf::from(&child_process.lock().unwrap().env[launch::ENV]);
+    let to_child = Request::SendMessage {
+        target: Target {
+            card: Some(child_id.into()),
+        },
+        text: "Review the test results.".into(),
+    };
+    assert_eq!(bridge_call(&parent_inbox, &to_child).await["card"], child_id);
+    let assignment = bridge_call(&child_inbox, &Request::ReceiveMessages).await;
+    assert_eq!(assignment["messages"][0]["from"], parent_id);
+    assert_eq!(assignment["messages"][0]["text"], "Review the test results.");
+
+    let before = parent_process.lock().unwrap().writes.clone();
+    let to_parent = Request::SendMessage {
+        target: Target { card: None },
+        text: "Review complete\nNo issues found.".into(),
+    };
+    let sent = bridge_call(&child_inbox, &to_parent).await;
+    assert_eq!(sent["status"], "delivered");
+    assert_eq!(sent["card"], parent_id);
+    assert_eq!(parent_process.lock().unwrap().writes, before, "messages are data");
+    assert_eq!(
+        bridge_call(&parent_inbox, &Request::ReceiveMessages).await,
+        json!({"status":"received","messages":[{"id":sent["message"],"from":child_id,"text":"Review complete\nNo issues found."}]})
+    );
+    assert_eq!(
+        bridge_call(&parent_inbox, &Request::ReceiveMessages).await["messages"],
+        json!([])
+    );
+
+    let app_inbox = launch::app_inbox(&h.folder);
+    let input = Request::SendInput {
+        target: Target {
+            card: Some(child_id.into()),
+        },
+        text: "hello 世界".into(),
+        enter: true,
+    };
+    assert_eq!(
+        bridge_call(&app_inbox, &input).await,
+        json!({"status":"sent","card":child_id})
+    );
+    assert_eq!(child_process.lock().unwrap().writes.last().unwrap(), "hello 世界\r");
+    assert_eq!(bridge_call(&app_inbox, &to_parent).await["status"], "refused");
+
+    // The host replaces the parent's exited shell; replies addressed to the old shell are refused.
+    parent_events(parent_key, SessionEvent::Exit(ExitStatus { code: 0, signal: None }));
+    assert_eq!(h.host.running().await, 2);
+    assert_eq!(h.launches.lock().unwrap().len(), 3);
+    assert!(
+        bridge_call(&child_inbox, &to_parent).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("restarted")
+    );
+    h.host.command("stop", Some(&json!({"id":child_id}))).await.unwrap();
+    assert_eq!(
+        bridge_call(&app_inbox, &input).await["error"],
+        "Target card is not running."
+    );
+}
+
 const POINTER_TOKEN: &str = "abcdef01-1234-4321-9876-123456789abc";
 const POINTER_SESSION: &str = "12345678-1234-4321-9876-123456789abc";
 

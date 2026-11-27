@@ -21,6 +21,7 @@
 //! output, and because anything printed to a terminal (a file being viewed, a remote server) must
 //! never be able to start a process.
 
+use std::collections::BinaryHeap;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -135,12 +136,7 @@ pub fn validate_request(raw: &Value, platform: Platform) -> Result<LaunchRequest
         Some(_) => Err(Error::Invalid(format!("Invalid terminal request {key}."))),
     };
     let (reply, log) = (flag("reply")?, flag("log")?);
-    let parent_ok = |id: &str| {
-        !id.is_empty()
-            && id.len() <= PARENT_LENGTH
-            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    };
-    if parent.as_deref().is_some_and(|id| !parent_ok(id)) {
+    if parent.as_deref().is_some_and(|id| !is_card_id(id)) {
         return invalid("Invalid terminal request parent.");
     }
     let Some(cwd) = cwd.filter(|cwd| !cwd.is_empty()) else {
@@ -165,6 +161,12 @@ pub fn validate_request(raw: &Value, platform: Platform) -> Result<LaunchRequest
         reply,
         log,
     })
+}
+
+pub(crate) fn is_card_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= PARENT_LENGTH
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// The app inbox inside the app data folder `data`.
@@ -203,10 +205,17 @@ pub fn discard_requests(inbox: &Path) {
 
 /// Writes `request` into `inbox` atomically and returns its ID and file.
 pub fn write_request(inbox: &Path, request: &LaunchRequest) -> io::Result<(String, PathBuf)> {
+    write_inbox_request(inbox, EXTENSION, request)
+}
+
+pub(crate) fn write_inbox_request(
+    inbox: &Path,
+    extension: &str,
+    request: &impl Serialize,
+) -> io::Result<(String, PathBuf)> {
     let id = uuid::Uuid::new_v4().to_string();
-    let file = inbox.join(format!("{id}.{EXTENSION}"));
-    let text = serde_json::to_string(request).expect("requests serialize");
-    atomic::write(&file, text.as_bytes(), Access::Private)?;
+    let file = inbox.join(format!("{id}.{extension}"));
+    atomic::write(&file, &serde_json::to_vec(request)?, Access::Private)?;
     Ok((id, file))
 }
 
@@ -231,7 +240,7 @@ pub fn take_finish(inbox: &Path) -> Option<i32> {
 /// Moves request `file` aside under a name ending in `suffix`, which no poll takes. A rename is
 /// atomic, so when the app takes a request while its sender withdraws it, exactly one succeeds.
 fn claim(file: &Path, suffix: &str) -> io::Result<PathBuf> {
-    let mut claimed = file.with_extension("").into_os_string();
+    let mut claimed = file.as_os_str().to_owned();
     claimed.push(suffix);
     let claimed = PathBuf::from(claimed);
     fs::rename(file, &claimed)?;
@@ -254,26 +263,40 @@ pub fn withdraw_request(file: &Path) -> bool {
 /// file. Each request is parsed, or carries the reason it was refused. A request is claimed before
 /// it is read, so one its sender withdrew at the same moment is skipped, never opened.
 pub fn take_requests(inbox: &Path, platform: Platform) -> Vec<Taken> {
-    let Ok(entries) = fs::read_dir(inbox) else {
-        return Vec::new();
-    };
-    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some(EXTENSION) {
-                return None;
-            }
-            let metadata = entry.metadata().ok()?;
-            metadata
-                .is_file()
-                .then(|| (metadata.modified().unwrap_or(std::time::UNIX_EPOCH), path))
+    take_inbox_requests(inbox, EXTENSION, read_request)
+        .map(|(id, request)| Taken {
+            id,
+            request: request.and_then(|raw| validate_request(&raw, platform)),
         })
-        .collect();
-    files.sort();
+        .collect()
+}
+
+pub(crate) fn take_inbox_requests<T>(
+    inbox: &Path,
+    extension: &str,
+    read_request: impl Fn(&Path) -> Result<T>,
+) -> impl Iterator<Item = (Option<String>, Result<T>)> {
+    let Ok(entries) = fs::read_dir(inbox) else {
+        return Vec::new().into_iter();
+    };
+    let mut files = BinaryHeap::with_capacity(REQUESTS_PER_POLL + 1);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some(extension)
+            || !entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            continue;
+        }
+        if let Ok(metadata) = entry.metadata() {
+            files.push((metadata.modified().unwrap_or(std::time::UNIX_EPOCH), path));
+            if files.len() > REQUESTS_PER_POLL {
+                files.pop();
+            }
+        }
+    }
     files
+        .into_sorted_vec()
         .into_iter()
-        .take(REQUESTS_PER_POLL)
         .filter_map(|(_, file)| {
             // Withdrawn by its sender since the folder was listed.
             let claimed = claim(&file, ".taken").ok()?;
@@ -286,12 +309,13 @@ pub fn take_requests(inbox: &Path, platform: Platform) -> Vec<Taken> {
                 .filter(|stem| is_request_id(stem))
                 .map(str::to_owned);
             let request = match &id {
-                Some(_) => read.and_then(|raw| validate_request(&raw, platform)),
+                Some(_) => read,
                 None => invalid("Invalid terminal request name."),
             };
-            Some(Taken { id, request })
+            Some((id, request))
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .into_iter()
 }
 
 fn read_request(file: &Path) -> Result<Value> {

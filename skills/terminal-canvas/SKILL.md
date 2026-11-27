@@ -2,12 +2,12 @@
 name: terminal-canvas
 description: >-
   Open terminals on the Terminal Canvas board, each joined by an arrow to the terminal you run in,
-  and hand work over between AI agents (Claude Code, Codex, Gemini, opencode, others) through those
-  linked terminals. Use when TERMINAL_CANVAS=1 and the user asks to open, launch, or spawn a
-  terminal; start a helper, worker, or dev server beside this one; run tasks in parallel; hand over
-  or hand off to a new session; continue in a fresh context; or pass the work to another agent
-  ("hand this to Codex", "let Claude review it"). Works from any harness that can run a shell
-  command.
+  and exchange messages, send input, or hand work over between AI agents (Claude Code, Codex,
+  Gemini, opencode, others) through those linked terminals. Use when TERMINAL_CANVAS=1 and the
+  user asks to open, launch, or spawn a
+  terminal, start a helper or dev server beside this one, run tasks in parallel, hand over work to
+  another session, or communicate with a running card.
+  Works from any harness that can run a shell command.
 ---
 
 # Terminal Canvas: linked terminals and agent handover
@@ -210,9 +210,41 @@ Launch it with `--log` and have it call the finish hook from section 2 when done
 ask the user anything and may be refused actions that need approval, so give them self-contained,
 low-risk work.
 
-Wait for each `.result.md` or the log's exit line, then read the results and give the user a short
+For interactive workers, include the reply command from section 5 in the task file and receive the
+replies from your card. Wait for each reply, `.result.md`, or log exit line, then give the user a short
 summary per worker. Workers editing the same files conflict: split by file or folder, or give each
 its own git worktree (`--cwd` into it).
+
+## 5. Communicate with a running card
+
+All integrated cards use the same bridge, regardless of agent provider. Address a worker with the
+`card` returned by `new-terminal`. A worker can use `--parent` to reach the original running parent,
+including Codex. Keep `TC_LAUNCH_DIR` available to the shell tool.
+
+```bash
+# Send to a worker by card ID, or reply to the terminal that opened yours.
+"$HOOK" send-message --to "$CHILD_CARD_ID" --text 'Check the failed test.' --json
+"$HOOK" send-message --parent --text 'The review is complete.' --json
+"$HOOK" receive-messages --wait 30 --json
+```
+
+```powershell
+& $HOOK send-message --to $childCardId --text 'Check the failed test.' --json
+& $HOOK send-message --parent --text 'The review is complete.' --json
+& $HOOK receive-messages --wait 30 --json
+```
+
+Status `delivered` means the message is in the receiving card's mailbox. Use `receive-messages`
+to read and drain it. The response contains a `messages` array with `id`, `from`, and `text` for
+each message. Reply with `--to <from>`. A receive with `--wait` returns when mail arrives or returns
+an empty array when the wait ends. Give the receiving agent the receive command in its task so it
+can check the mailbox during its workflow. Messages arrive as data without typing into the CLI.
+
+To type into the foreground program, use `"$HOOK" send-input --to "$CHILD_CARD_ID" --text '<text>' --enter --json`
+or `& $HOOK send-input --to $childCardId --text '<text>' --enter --json` in PowerShell.
+`--enter` appends Enter to the supplied text. Use terminal input only when you know what program is
+waiting for it. At a shell prompt, Enter can run a command. Both send commands accept UTF-8 on
+`--stdin` for multiline text. If a send returns `unconfirmed`, check the target before retrying.
 
 ## Guard rails
 

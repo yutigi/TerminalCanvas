@@ -617,6 +617,42 @@ mod windows {
 }
 
 #[test]
+fn send_message_preserves_multiline_utf8_from_stdin() {
+    use tc_core::bridge::{self, Request};
+
+    let folder = temp_folder("send-message");
+    let text = "Review complete.\nNo issues in 世界.\n";
+    let mut child = hook(&["send-message", "--parent", "--stdin", "--json"], &folder)
+        .env(tc_core::launch::ENV, &folder)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(text.as_bytes()).unwrap();
+    let (id, request) = (0..50)
+        .find_map(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            bridge::take_requests(&folder).next()
+        })
+        .expect("the CLI writes a bridge request");
+    match request.unwrap() {
+        Request::SendMessage { target, text: received } => {
+            assert!(target.card.is_none());
+            assert_eq!(received, text);
+        }
+        request => panic!("unexpected request: {request:?}"),
+    }
+    assert!(bridge::take_requests(&folder).next().is_none());
+    let answer = json!({"status":"delivered","card":"parent","message":id});
+    bridge::write_result(&folder, &id, &answer).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), answer);
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
 fn new_terminal_queues_a_validated_request_for_the_host() {
     use tc_core::launch::take_requests;
     let folder = temp_folder("new-terminal");

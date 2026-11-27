@@ -7,6 +7,9 @@
 //! tc-hook emit end <exit code>               report that it ended
 //! tc-hook new-terminal [options]             ask the app for a new terminal (see `new_terminal`)
 //! tc-hook finish [exit code]                ask the app to end this terminal
+//! tc-hook send-input [options]               write to a running terminal
+//! tc-hook send-message [options]             deliver a message to another card's mailbox
+//! tc-hook receive-messages [options]         receive messages for the current card
 //! tc-hook trigger [name]                     send an explicit hook pointer event
 //! tc-hook lifecycle <provider>               process an AI lifecycle hook for a pointer
 //! tc-hook launch-prompt <request id>         start an AI CLI with a prompt in the current terminal
@@ -28,6 +31,7 @@ use tc_core::atomic::{self, Access};
 use tc_core::js::{is_js_whitespace, utf16_len};
 use tc_core::session::{is_session_id, session_metadata};
 
+mod bridge;
 mod new_terminal;
 mod pointers;
 mod prompt_launch;
@@ -50,6 +54,9 @@ fn main() -> ExitCode {
         Some("launch-prompt") if args.len() == 2 => prompt_launch::run(&args[1]),
         Some("new-terminal") => new_terminal::run(&args[1..]),
         Some("finish") => finish(&args[1..]),
+        Some("send-input") => bridge::run(bridge::Command::Input, &args[1..]),
+        Some("send-message") => bridge::run(bridge::Command::Send, &args[1..]),
+        Some("receive-messages") => bridge::run(bridge::Command::Receive, &args[1..]),
         Some(tc_pty::daemon::COMMAND) if args.len() == 2 => match tc_pty::daemon::serve(Path::new(&args[1])) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -63,7 +70,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | finish [exit code] | trigger [name] | lifecycle <provider> | launch-prompt <request id> | terminal-daemon <state file>"
+                "usage: tc-hook record <provider> | emit launch <provider> <session> | emit end <exit code> | new-terminal [options] | finish [exit code] | send-input [options] | send-message [options] | receive-messages [options] | trigger [name] | lifecycle <provider> | launch-prompt <request id> | terminal-daemon <state file>"
             );
             ExitCode::from(2)
         }
