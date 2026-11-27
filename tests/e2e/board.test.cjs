@@ -151,9 +151,12 @@ test('snapping lines up native terminal moves and resizes with guides, and Alt p
         const toggle = document.querySelector('#snap-toggle').getBoundingClientRect();
         const before = document.querySelector('#minimap-toggle').getBoundingClientRect();
         return { toggle: { x: Math.round(toggle.x + toggle.width / 2), y: Math.round(toggle.y + toggle.height / 2) },
-            added: toggle.right - before.right, width: toggle.width, enabled: snapPreferences.enabled, history: boardHistory.undo.length };
+            added: toggle.right - before.right, width: toggle.width, menu: document.querySelector('#snap-grid').getBoundingClientRect().width,
+            enabled: snapPreferences.enabled, history: boardHistory.undo.length };
     });
-    assert.deepEqual([scene.added, scene.width, scene.enabled], [50, 31, false], 'the toolbar grows by a divider and one button; snapping starts off');
+    assert.deepEqual([scene.added, scene.width, scene.menu, scene.enabled], [50, 31, 64, true], 'a divider, the magnet, and its menu; snapping starts on');
+    await click(page, scene.toggle);
+    assert.equal(await page.evaluate(() => snapPreferences.enabled), false);
     await click(page, scene.toggle);
     assert.deepEqual(await page.evaluate(() => [snapPreferences.enabled, document.querySelector('#snap-grid').hidden,
         JSON.parse(localStorage.getItem('terminal-canvas.snapping.v1')).enabled]), [true, false, true]);

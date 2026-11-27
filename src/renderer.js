@@ -114,16 +114,16 @@ for (const name of Object.keys(sidebarSections)) {
     };
 }
 renderSidebar();
-// Snapping is also a preference of this webview profile. It starts off, so moves behave as before
-// until it is turned on. `grid` is the grid size in world pixels, or 0 to snap only to other elements.
+// Snapping is also a preference of this webview profile. It starts on, with the 24-pixel grid the
+// canvas dots already show. `grid` is the grid size in world pixels, or 0 to snap only to other elements.
 const SNAP_PREFERENCE_KEY = 'terminal-canvas.snapping.v1';
 const SNAP_GRIDS = Object.freeze([0, 8, 12, 16, 24, 32, 48, 64]);
-const snapPreferences = { enabled: false, grid: 24 };
+const snapPreferences = { enabled: true, grid: 24 };
 try {
     const saved = JSON.parse(window.localStorage.getItem(SNAP_PREFERENCE_KEY));
     if (typeof saved?.enabled === 'boolean') snapPreferences.enabled = saved.enabled;
     if (SNAP_GRIDS.includes(saved?.grid)) snapPreferences.grid = saved.grid;
-} catch { /* Missing, malformed, or unavailable storage keeps snapping off. */ }
+} catch { /* Missing, malformed, or unavailable storage keeps the defaults. */ }
 function setSnapPreferences(change) {
     Object.assign(snapPreferences, change);
     try { window.localStorage.setItem(SNAP_PREFERENCE_KEY, JSON.stringify(snapPreferences)); }
@@ -212,7 +212,6 @@ function renderCamera() {
 // would crowd them; otherwise they keep the canvas's usual 24-pixel pattern.
 function renderGrid() {
     const { x, y, z } = workspace.camera, grid = snapPreferences.enabled ? snapPreferences.grid : 0;
-    viewport.classList.toggle('grid-snapping', !!grid);
     if (!grid) {
         viewport.style.backgroundSize = `${24 * z}px ${24 * z}px`;
         viewport.style.backgroundPosition = `${x}px ${y}px`;

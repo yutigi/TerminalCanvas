@@ -427,7 +427,10 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
         querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener(type, fn) { documentListeners.set(type, fn); Element.prototype.addEventListener.call(this, type, fn); }
     });
     for (const element of elements.values()) element.ownerDocument = document;
-    const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
+    // Most tests drag by exact pointer distances, so they start with snapping off; snapping tests pass their own storage.
+    const stored = new Map([['terminal-canvas.snapping.v1', JSON.stringify({ enabled: false, grid: 24 })]]);
+    const localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+    const window = Object.assign(new Element(), { terminalCanvas: bridge, localStorage }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
     const frames = [];
     const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame: callback => frames.push(callback) });
     // Load renderer scripts in the same order as index.html.
@@ -4111,36 +4114,35 @@ const resizeHandle = (context, id) => vm.runInContext(`itemViews.get(${JSON.stri
 const guideClasses = elements => elements.get('#snap-guides').children.map(guide => guide.className);
 const snapBoard = (...items) => { const board = createWorkspace(); board.camera = { x: 0, y: 0, z: 1 }; board.items.push(...items); return board; };
 
-test('snapping starts off, is remembered on this device, and ignores stored values it does not offer', async () => {
+test('snapping starts on, is remembered on this device, and ignores stored values it does not offer', async () => {
     const storage = snapStorage();
     const { elements, context, calls } = await boot(snapBoard(), { localStorage: storage });
-    const toggle = elements.get('#snap-toggle'), grid = elements.get('#snap-grid'), viewport = elements.get('#viewport');
-    assert.deepEqual(json(context, 'snapPreferences'), { enabled: false, grid: 24 });
-    assert.equal(toggle.attributes.get('aria-pressed'), 'false');
-    assert.equal(grid.hidden, true, 'the grid size shows only while snapping is on');
-    assert.equal(viewport.classList.contains('grid-snapping'), false);
-    toggle.click();
+    const toggle = elements.get('#snap-toggle'), grid = elements.get('#snap-grid');
+    assert.deepEqual(json(context, 'snapPreferences'), { enabled: true, grid: 24 });
     assert.equal(toggle.attributes.get('aria-pressed'), 'true');
     assert.equal(grid.hidden, false);
     assert.equal(grid.value, '24');
-    assert.equal(viewport.classList.contains('grid-snapping'), true);
-    assert.deepEqual(JSON.parse(storage.values.get('terminal-canvas.snapping.v1')), { enabled: true, grid: 24 });
+    toggle.click();
+    assert.equal(toggle.attributes.get('aria-pressed'), 'false');
+    assert.equal(grid.hidden, true, 'the grid size shows only while snapping is on');
+    assert.deepEqual(JSON.parse(storage.values.get('terminal-canvas.snapping.v1')), { enabled: false, grid: 24 });
+    toggle.click();
     grid.value = '48'; grid.onchange();
     assert.deepEqual(JSON.parse(storage.values.get('terminal-canvas.snapping.v1')), { enabled: true, grid: 48 });
     grid.value = '7'; grid.onchange();
     assert.equal(grid.value, '48', 'a size the menu does not offer is refused');
     grid.value = '0'; grid.onchange();
-    assert.equal(viewport.classList.contains('grid-snapping'), false, 'No grid still snaps to items, without grid dots');
+    assert.deepEqual(json(context, 'snapPreferences'), { enabled: true, grid: 0 }, 'No grid still snaps to items');
     assert.deepEqual(calls.map(call => call.action), ['initialize'], 'a preference never saves the workspace');
     assert.equal(json(context, 'boardHistory.undo.length'), 0);
     assert.equal(json(context, '"snapping" in workspaceSnapshot()'), false);
     for (const saved of [{ enabled: true, grid: 48 }, { enabled: 'yes', grid: 7 }, 'not json']) {
         const reopened = await boot(snapBoard(), { localStorage: snapStorage(saved) });
-        assert.deepEqual(json(reopened.context, 'snapPreferences'), typeof saved === 'object' && saved.enabled === true ? saved : { enabled: false, grid: 24 });
+        assert.deepEqual(json(reopened.context, 'snapPreferences'), typeof saved === 'object' && saved.enabled === true ? saved : { enabled: true, grid: 24 });
     }
     const blocked = await boot(snapBoard(), { localStorage: { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } } });
     blocked.elements.get('#snap-toggle').click();
-    assert.equal(json(blocked.context, 'snapPreferences.enabled'), true, 'blocked storage still lets snapping turn on');
+    assert.equal(json(blocked.context, 'snapPreferences.enabled'), false, 'blocked storage still lets snapping turn off');
     elements.get('#help').onclick();
     assert.match(elements.get('#info-content').innerHTML, /Snap to the grid and items.*hold Alt/);
 });

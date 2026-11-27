@@ -6,7 +6,7 @@
     "engineTolerance": 0.5,
     "intended": {
         "common": {
-            "reason": "The 76px canvas manager follows Your canvas and moves the remaining sidebar controls down. Canvas actions and the workspace theme selector are new controls, measured identically in current Chromium and WebKit. Find terminal adds an independent sidebar action without moving existing controls. The snapping toggle adds a 1px divider with 5px margins and a 31px button, each after a 4px gap, to the centered canvas toolbar: it widens by 50px, and it and its other buttons move 25px left. Its grid size menu shows only while snapping is on, which it is not by default.",
+            "reason": "The 76px canvas manager follows Your canvas and moves the remaining sidebar controls down. Canvas actions and the workspace theme selector are new controls, measured identically in current Chromium and WebKit. Find terminal adds an independent sidebar action without moving existing controls. The snapping toggle adds a 1px divider with 5px margins, a 31px button, and its 64px grid size menu, each after a 4px gap, to the centered canvas toolbar: it widens by 118px, and it and its other buttons move 59px left. Snapping starts on, so the menu shows.",
             "added": [".canvas-manager[0]", "#canvas-list[0]", "#canvas-add[0]", "#canvas-rename[0]", "#canvas-earlier[0]", "#canvas-later[0]", "#canvas-delete[0]", "#workspace-theme[0]", "#find-terminal[0]", ".canvas-toolbar button[8]"],
             "resized": {
                 ".section-label[1]": [0, 76, 0, 0],
@@ -28,15 +28,15 @@
                 ".sidebar-bottom[0]": [0, 76, 0, 0],
                 ".plugin-card[0]": [0, 76, 0, 0],
                 ".local-label[0]": [0, 76, 0, 0],
-                ".canvas-toolbar[0]": [-25, 0, 50, 0],
-                ".canvas-toolbar button[0]": [-25, 0, 0, 0],
-                ".canvas-toolbar button[1]": [-25, 0, 0, 0],
-                ".canvas-toolbar button[2]": [-25, 0, 0, 0],
-                ".canvas-toolbar button[3]": [-25, 0, 0, 0],
-                ".canvas-toolbar button[4]": [-25, 0, 0, 0],
-                ".canvas-toolbar button[5]": [-25, 0, 0, 0],
-                ".canvas-toolbar button[6]": [-25, 0, 0, 0],
-                ".canvas-toolbar button[7]": [-25, 0, 0, 0]
+                ".canvas-toolbar[0]": [-59, 0, 118, 0],
+                ".canvas-toolbar button[0]": [-59, 0, 0, 0],
+                ".canvas-toolbar button[1]": [-59, 0, 0, 0],
+                ".canvas-toolbar button[2]": [-59, 0, 0, 0],
+                ".canvas-toolbar button[3]": [-59, 0, 0, 0],
+                ".canvas-toolbar button[4]": [-59, 0, 0, 0],
+                ".canvas-toolbar button[5]": [-59, 0, 0, 0],
+                ".canvas-toolbar button[6]": [-59, 0, 0, 0],
+                ".canvas-toolbar button[7]": [-59, 0, 0, 0]
             }
         },
         "card": {

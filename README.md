@@ -41,7 +41,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
 - Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** opens the searchable terminal switcher; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior.
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan.
-- Turn on **snapping** with the magnet in the canvas toolbar to line up moves and resizes. See [Snapping](#snapping).
+- Moves and resizes **snap** to the grid and to other elements; the magnet in the canvas toolbar turns this off. See [Snapping](#snapping).
 - Scroll or two-finger scroll over empty space to zoom the canvas at the pointer. Plain scrolling over terminals, board items, the minimap, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A gesture stays with its starting area until you pause, so crossing a terminal does not change zooming into terminal scrolling. Ctrl + scroll (Command on macOS) also zooms the canvas elsewhere; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
@@ -166,8 +166,8 @@ Line styles and fonts other than the size choices are not configurable.
 
 ### Snapping
 
-The magnet in the canvas toolbar turns snapping on or off. It starts off, and the choice is remembered on
-this device, separately from workspace files.
+The magnet in the canvas toolbar turns snapping on or off. It starts on, with a 24-pixel grid, and your choice
+is remembered on this device, separately from workspace files.
 
 - While snapping is on, moving a terminal or board item lines its edges or middle up with those of any other
   element in view that is within six screen pixels, at every zoom. Each axis snaps on its own; where nothing is
