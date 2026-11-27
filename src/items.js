@@ -67,6 +67,48 @@ function viewportCenterWorld() {
     const { x, y, z } = workspace.camera;
     return { x: (viewport.clientWidth / 2 - x) / z, y: (viewport.clientHeight / 2 - y) / z };
 }
+// Snapping. Moves and resizes line up with the grid and with the other elements in view. The snap
+// distance and the guide markers' offset stay the same on screen at every zoom.
+const SNAP_DISTANCE = 6, SNAP_MARKER_GAP = 10;
+// What a drag of the elements `ids` snaps to: every other element in view, except lines.
+function snapTargets(ids) {
+    const moving = new Set(ids), view = visibleWorld();
+    return [...workspace.cards, ...workspace.items].filter(e => e.type !== 'line' && !moving.has(e.id))
+        .map(boundsOf).filter(b => Geometry.intersects(view, b));
+}
+// How a drag snaps at this moment, or null while snapping is off or Alt is held.
+function snapOptions(event) {
+    if (!snapPreferences.enabled || event?.altKey) return null;
+    const z = workspace.camera.z;
+    return { threshold: SNAP_DISTANCE / z, grid: snapPreferences.grid, gap: SNAP_MARKER_GAP / z };
+}
+// The world offset that snaps a moved selection, whose bounds would otherwise be `rect`.
+function snapMoveOffset(rect, targets, event) {
+    const options = snapOptions(event);
+    if (!options) { renderSnapGuides([]); return { x: 0, y: 0 }; }
+    const snapped = Geometry.snapMove(rect, targets, options);
+    renderSnapGuides(snapped.guides);
+    return { x: snapped.x - rect.x, y: snapped.y - rect.y };
+}
+// The size a resize snaps to. `limits` holds `axes`, `min`, and `max` for Geometry.snapResize.
+function snapResizeTo(rect, targets, event, limits) {
+    const options = snapOptions(event);
+    if (!options) { renderSnapGuides([]); return { w: rect.w, h: rect.h }; }
+    const snapped = Geometry.snapResize(rect, targets, { ...options, ...limits });
+    renderSnapGuides(snapped.guides);
+    return { w: snapped.w, h: snapped.h };
+}
+// Guides are world-space segments; their thickness follows the zoom in CSS, so they stay one pixel wide.
+function renderSnapGuides(guides) {
+    const layer = $('#snap-guides');
+    if (!guides.length && !layer.children.length) return;
+    layer.replaceChildren(...guides.map(guide => {
+        const el = document.createElement('div'), vertical = guide.x1 === guide.x2;
+        el.className = `snap-guide ${vertical ? 'vertical' : 'horizontal'}${guide.size ? ' size' : ''}`;
+        Object.assign(el.style, { left: `${guide.x1}px`, top: `${guide.y1}px`, width: `${guide.x2 - guide.x1}px`, height: `${guide.y2 - guide.y1}px` });
+        return el;
+    }));
+}
 function svgNode(tag, className) {
     const node = document.createElementNS(SVG_NS, tag);
     node.setAttribute('class', className);
@@ -250,9 +292,13 @@ function resizeItem(event, item, handle) {
     if (event.button !== 0 || focused) return;
     if (!selection.has(item.id)) select(item.id);
     const { min } = ITEM_DEFAULTS[itemKind(item)], start = { w: item.w, h: item.h }, ratio = item.w / item.h, z = workspace.camera.z;
-    beginDrag(handle, event, (dx, dy) => {
-        item.w = clampSize(start.w + dx / z, min[0]);
-        item.h = item.type === 'image' ? clampSize(item.w / ratio, min[1]) : clampSize(start.h + dy / z, min[1]);
+    const image = item.type === 'image', targets = snapTargets([item.id]);
+    beginDrag(handle, event, (dx, dy, e) => {
+        const raw = { x: item.x, y: item.y, w: clampSize(start.w + dx / z, min[0]), h: clampSize(start.h + dy / z, min[1]) };
+        // An image keeps its proportions, so only its width snaps.
+        const size = snapResizeTo(raw, targets, e, { axes: image ? ['x'] : ['x', 'y'], min: { w: min[0], h: min[1] }, max: { w: 8000, h: 8000 } });
+        item.w = clampSize(size.w, min[0]);
+        item.h = image ? clampSize(item.w / ratio, min[1]) : clampSize(size.h, min[1]);
         renderItem(item); renderLines(); renderSelectionBox();
     }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
 }

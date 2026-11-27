@@ -329,10 +329,196 @@
         const width = dock?.width, layout = typeof width === 'number' && width >= .05 && width <= .95 ? node(dock.layout, 0) : null;
         return layout ? { width, layout } : null;
     }
+    // Arrange. `cards` are the elements to arrange, `{ id, x, y, w, h }` in board order (terminal cards, or a selection
+    // that may include board items), and `links` are `{ from, to }` IDs. Cards joined
+    // by links form left-to-right flows: a card's column is its longest path from a card with no incoming link,
+    // and each branch stacks below the first one, so a chain stays on one row. A link that closes a cycle and a
+    // self-link are ignored. Each set of linked cards gets its own section, in order of its first card, and the
+    // unconnected cards follow in a grid. Sizes never change. The result is `[{ id, x, y }]` in card order and
+    // depends only on card order, sizes, links, and the cards' top-left corner, which it keeps, so arranging
+    // its own output changes nothing. The whole layout then moves down until no card overlaps an `obstacles`
+    // rectangle.
+    const ARRANGE_GAP = { column: 120, branch: 60, section: 120, grid: 60, clear: 40 };
+    function arrangeCards(cards, links = [], obstacles = []) {
+        if (!cards.length) return [];
+        const gap = ARRANGE_GAP, count = cards.length;
+        const index = new Map(cards.map((card, i) => [card.id, i]));
+        const out = cards.map(() => new Set()), into = cards.map(() => new Set());
+        for (const { from, to } of links) {
+            const a = index.get(from), b = index.get(to);
+            if (a === undefined || b === undefined || a === b) continue;
+            out[a].add(b); into[b].add(a);
+        }
+        const linked = v => out[v].size > 0 || into[v].size > 0;
+        // Depth-first from cards without incoming links, then from any card left on a cycle. A link back to
+        // a card still being visited closes a cycle; dropping those leaves an acyclic flow. The first visit
+        // to each card defines the tree that places branches.
+        const visiting = 1, done = 2, state = new Array(count).fill(0);
+        const kept = cards.map(() => []), branches = cards.map(() => []), roots = [], finished = [];
+        const visit = v => {
+            state[v] = visiting;
+            for (const w of [...out[v]].sort((a, b) => a - b)) {
+                if (state[w] === visiting) continue;
+                kept[v].push(w);
+                if (!state[w]) { branches[v].push(w); visit(w); }
+            }
+            state[v] = done; finished.push(v);
+        };
+        for (let v = 0; v < count; v++) if (linked(v) && !into[v].size && !state[v]) { roots.push(v); visit(v); }
+        for (let v = 0; v < count; v++) if (linked(v) && !state[v]) { roots.push(v); visit(v); }
+        // Reverse finishing order is a topological order of the kept links.
+        const column = new Array(count).fill(0);
+        for (const v of finished.reverse()) for (const w of kept[v]) column[w] = Math.max(column[w], column[v] + 1);
+        const band = new Array(count).fill(0);
+        const measure = v => {
+            const stacked = branches[v].reduce((sum, w, i) => sum + measure(w) + (i ? gap.branch : 0), 0);
+            return (band[v] = Math.max(cards[v].h, stacked));
+        };
+        // Sets of linked cards, found from links in either direction, in order of their first card.
+        const parent = cards.map((_, i) => i);
+        const find = v => (parent[v] === v ? v : (parent[v] = find(parent[v])));
+        out.forEach((targets, a) => targets.forEach(b => { parent[find(a)] = find(b); }));
+        const sections = new Map();
+        for (const root of roots) {
+            const key = find(root);
+            if (!sections.has(key)) sections.set(key, { first: count, roots: [], members: [] });
+            sections.get(key).roots.push(root);
+        }
+        for (let v = 0; v < count; v++) if (linked(v)) {
+            const section = sections.get(find(v));
+            section.members.push(v); section.first = Math.min(section.first, v);
+        }
+        const position = new Array(count);
+        const offsets = (sizes, spacing) => sizes.reduce((list, size, i) => [...list, i ? list[i - 1] + sizes[i - 1] + spacing : 0], []);
+        let top = 0;
+        for (const section of [...sections.values()].sort((a, b) => a.first - b.first)) {
+            const widths = [];
+            for (const v of section.members) widths[column[v]] = Math.max(widths[column[v]] || 0, cards[v].w);
+            const left = offsets(Array.from(widths, w => w || 0), gap.column);
+            const place = (v, y) => {
+                position[v] = { x: left[column[v]], y };
+                for (const w of branches[v]) { place(w, y); y += band[w] + gap.branch; }
+            };
+            for (const root of section.roots) { const height = measure(root); place(root, top); top += height + gap.branch; }
+            top += gap.section - gap.branch;
+        }
+        const loose = cards.map((_, v) => v).filter(v => !linked(v));
+        if (loose.length) {
+            const across = Math.ceil(Math.sqrt(loose.length)), widths = [], heights = [];
+            loose.forEach((v, i) => {
+                const c = i % across, r = Math.floor(i / across);
+                widths[c] = Math.max(widths[c] || 0, cards[v].w); heights[r] = Math.max(heights[r] || 0, cards[v].h);
+            });
+            const xs = offsets(widths, gap.grid), ys = offsets(heights, gap.grid);
+            loose.forEach((v, i) => { position[v] = { x: xs[i % across], y: top + ys[Math.floor(i / across)] }; });
+        }
+        const origin = { x: Math.round(Math.min(...cards.map(c => c.x))), y: Math.round(Math.min(...cards.map(c => c.y))) };
+        const rect = (v, shift) => ({ x: origin.x + position[v].x, y: origin.y + position[v].y + shift, w: cards[v].w, h: cards[v].h });
+        const padded = b => ({ x: b.x - gap.clear, y: b.y - gap.clear, w: b.w + gap.clear * 2, h: b.h + gap.clear * 2 });
+        let shift = 0;
+        for (let moved = true; moved;) {
+            moved = false;
+            for (let v = 0; v < count && !moved; v++) {
+                const card = rect(v, shift), hit = obstacles.find(b => intersects(padded(b), card));
+                // Whole pixels keep the moved layout's corner where the next Arrange reads it.
+                if (hit) { shift = Math.ceil(hit.y + hit.h + gap.clear - origin.y - position[v].y); moved = true; }
+            }
+        }
+        return cards.map((card, v) => ({ id: card.id, x: origin.x + position[v].x, y: origin.y + position[v].y + shift }));
+    }
+    // Snapping. Rectangles, `threshold` (a fixed screen distance divided by the zoom), and `grid`
+    // (0 for none) are in world units. Each axis snaps on its own: to the nearest target line within
+    // `threshold`, otherwise to the grid. A rectangle's lines on an axis are its two edges and its
+    // middle; edges snap to edges and middles to middles. A tie goes to the smaller move, then the
+    // move toward lower coordinates, so the order of `targets` never matters.
+    const SNAP_AXES = { x: { start: 'x', size: 'w', across: 'y', depth: 'h' }, y: { start: 'y', size: 'h', across: 'x', depth: 'w' } };
+    const SNAP_EPSILON = 1e-6;
+    const snapLines = (r, axis) => { const { start, size } = SNAP_AXES[axis]; return [r[start], r[start] + r[size] / 2, r[start] + r[size]]; };
+    const closer = (offset, best) => !best || Math.abs(offset) < Math.abs(best.offset) || (Math.abs(offset) === Math.abs(best.offset) && offset < best.offset);
+    // Adding zero turns a rounded -0 into 0.
+    const toGrid = (value, grid) => Math.round(value / grid) * grid + 0;
+    // Where a moved rectangle lands: `{ x, y, guides }`.
+    function snapMove(rect, targets, { threshold = 0, grid = 0 } = {}) {
+        const result = { ...rect };
+        for (const axis of ['x', 'y']) {
+            const { start, size } = SNAP_AXES[axis], own = snapLines(rect, axis);
+            let best = null;
+            for (const target of targets) {
+                snapLines(target, axis).forEach((line, j) => own.forEach((mine, i) => {
+                    const offset = line - mine;
+                    if ((i === 1) === (j === 1) && Math.abs(offset) <= threshold && closer(offset, best)) best = { offset, line, i };
+                }));
+            }
+            if (best) result[start] = best.line - best.i * rect[size] / 2;
+            else if (grid > 0) result[start] = toGrid(rect[start], grid);
+        }
+        return { x: result.x, y: result.y, guides: snapGuides(result, targets) };
+    }
+    // The size a rectangle resized from its bottom-right corner snaps to: `{ w, h, guides }`. Its right
+    // and bottom edges snap to target edges, and its width and height to target sizes, on the listed
+    // `axes`. A size outside `min`..`max` is never chosen; the caller still clamps the result.
+    // `gap` places the markers that show a matched size, beside the two rectangles' edges.
+    function snapResize(rect, targets, { threshold = 0, grid = 0, axes = ['x', 'y'], min = {}, max = {}, gap = 0 } = {}) {
+        const result = { ...rect };
+        for (const axis of axes) {
+            const { start, size } = SNAP_AXES[axis];
+            const fits = value => value >= (min[size] ?? 0) && value <= (max[size] ?? Infinity);
+            let best = null;
+            const consider = value => {
+                const offset = value - rect[size];
+                if (fits(value) && Math.abs(offset) <= threshold && closer(offset, best)) best = { offset, value };
+            };
+            for (const target of targets) {
+                consider(target[start] - rect[start]);
+                consider(target[start] + target[size] - rect[start]);
+                consider(target[size]);
+            }
+            if (best) result[size] = best.value;
+            else if (grid > 0) {
+                const end = rect[start] + rect[size];
+                const sizes = [toGrid(end, grid), Math.floor(end / grid) * grid, Math.ceil(end / grid) * grid].map(line => line - rect[start]).filter(fits);
+                if (sizes.length) result[size] = sizes.reduce((a, b) => (Math.abs(b - rect[size]) < Math.abs(a - rect[size]) ? b : a));
+            }
+        }
+        return { w: result.w, h: result.h, guides: snapGuides(result, targets, { sizes: axes, gap }) };
+    }
+    // The guides for `rect` where it now lies: `{ x1, y1, x2, y2 }` segments, one along each line it
+    // shares with a target, spanning both. For each axis in `sizes`, the nearest target of the same
+    // width (x) or height (y) gets a marker beside its top or left edge, and so does `rect`; markers
+    // carry `size: true`.
+    function snapGuides(rect, targets, { sizes = [], gap = 0 } = {}) {
+        const guides = [];
+        for (const axis of ['x', 'y']) {
+            const { across, depth } = SNAP_AXES[axis], own = snapLines(rect, axis), spans = new Map();
+            for (const target of targets) {
+                snapLines(target, axis).forEach((line, j) => own.forEach((mine, i) => {
+                    if ((i === 1) !== (j === 1) || Math.abs(line - mine) > SNAP_EPSILON) return;
+                    const [from, to] = spans.get(mine) || [rect[across], rect[across] + rect[depth]];
+                    spans.set(mine, [Math.min(from, target[across]), Math.max(to, target[across] + target[depth])]);
+                }));
+            }
+            for (const [at, [from, to]] of [...spans].sort((a, b) => a[0] - b[0])) {
+                guides.push(axis === 'x' ? { x1: at, y1: from, x2: at, y2: to } : { x1: from, y1: at, x2: to, y2: at });
+            }
+        }
+        const c = center(rect), distance = b => Math.hypot(center(b).x - c.x, center(b).y - c.y);
+        const nearer = (a, b) => distance(b) < distance(a) || (distance(b) === distance(a) && (b.y - a.y || b.x - a.x) < 0);
+        for (const axis of sizes) {
+            const { size } = SNAP_AXES[axis];
+            const same = targets.filter(target => Math.abs(target[size] - rect[size]) <= SNAP_EPSILON);
+            if (!same.length) continue;
+            for (const r of [rect, same.reduce((a, b) => (nearer(a, b) ? b : a))]) {
+                guides.push(axis === 'x' ? { x1: r.x, y1: r.y - gap, x2: r.x + r.w, y2: r.y - gap, size: true }
+                    : { x1: r.x - gap, y1: r.y, x2: r.x - gap, y2: r.y + r.h, size: true });
+            }
+        }
+        return guides;
+    }
     const geometry = {
         center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
         outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt,
-        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, splitLayout, moveSplitDivider,
+        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, snapMove, snapResize, snapGuides, arrangeCards, ARRANGE_GAP,
+        splitLayout, moveSplitDivider,
         DOCK_DEPTH, dockLeaves, dockDepth, dockFlatten, dockLayout, dockInsert, dockRemove, dockResize, dropSide, validDock
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;

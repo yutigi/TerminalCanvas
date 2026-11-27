@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { launch, until, sendInput, click, key, screenshot, root } = require('./harness.cjs');
+const { launch, until, sendInput, click, key, screenshot, root, ensureFocus } = require('./harness.cjs');
 const { withSavedClipboard, fixtureScene, clipboardRead, choose } = require('./support.cjs');
 const windows = { skip: process.platform !== 'win32', timeout: 120000 };
 const { image } = require('./fixtures.cjs');
@@ -66,6 +66,45 @@ test('minimap native navigation preserves zoom and Focus mode hides the overview
     await h.page.evaluate(() => { setFocus(null); fitCanvas(); });
     assert.equal(await h.page.locator('#minimap').isVisible(), true);
     await screenshot(h.page, 'minimap');
+});
+
+test('Arrange lays out a branched terminal workflow left to right in one undo step', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    // Mixed sizes in scattered places: plan -> build -> test, plan -> docs, and build -> review -> plan closes a cycle.
+    const sizes = { plan: [660, 430], build: [520, 360], docs: [700, 300], test: [600, 480], review: [480, 330], notes: [560, 340] };
+    await fixtureScene(h.page, Object.keys(sizes).map((title, index) => ({
+        profile: ['shell', 'claude', 'codex', 'gemini'][index % 4], title, x: (5 - index) * 410, y: (index % 3) * 520
+    })));
+    const before = await h.page.evaluate(({ sizes, pairs }) => {
+        const byTitle = Object.fromEntries(workspace.cards.map(card => [card.title, card]));
+        for (const [title, [w, h]] of Object.entries(sizes)) Object.assign(byTitle[title], { w, h });
+        workspace.cards.forEach(renderCardGeometry);
+        for (const [from, to] of pairs) {
+            const line = { id: crypto.randomUUID(), type: 'line', start: { id: byTitle[from].id }, end: { id: byTitle[to].id }, arrow: true };
+            workspace.items.push(line); mountItem(line);
+        }
+        renderLines(); clearHistory();
+        return workspace.cards.map(({ id, title, x, y, w, h }) => ({ id, title, x, y, w, h }));
+    }, { sizes, pairs: [['plan', 'build'], ['plan', 'docs'], ['build', 'test'], ['build', 'review'], ['review', 'plan']] });
+    const layout = () => h.page.evaluate(() => ({
+        cards: Object.fromEntries(workspace.cards.map(({ title, x, y, w, h }) => [title, { x, y, w, h }])),
+        steps: boardHistory.undo.length
+    }));
+    await h.page.locator('#arrange').click();
+    const { cards, steps } = await layout();
+    assert.equal(steps, 1);
+    for (const card of before) assert.deepEqual([cards[card.title].w, cards[card.title].h], [card.w, card.h], `${card.title} keeps its size`);
+    for (const [from, to] of [['plan', 'build'], ['plan', 'docs'], ['build', 'test'], ['build', 'review']]) {
+        assert.ok(cards[to].x > cards[from].x + cards[from].w, `${to} sits right of ${from}`);
+    }
+    assert.equal(cards.build.y, cards.plan.y, 'the first branch continues the row');
+    assert.ok(cards.docs.y > cards.build.y, 'the second branch sits below the first');
+    assert.ok(cards.notes.y > Math.max(...['plan', 'build', 'docs', 'test', 'review'].map(t => cards[t].y + cards[t].h)), 'unconnected terminals follow the flow');
+    await screenshot(h.page, 'arrange-branched');
+    await h.page.locator('#arrange').click();
+    assert.deepEqual(await layout(), { cards, steps: 1 }, 'a second Arrange changes nothing and adds no undo step');
+    await h.page.locator('#undo').click();
+    assert.deepEqual(await h.page.evaluate(() => workspace.cards.map(({ id, title, x, y, w, h }) => ({ id, title, x, y, w, h }))), before);
 });
 
 test('board connectors, native clipboard, file drops, cleanup, and portable workspace images roundtrip', windows, async t => {
@@ -138,4 +177,65 @@ test('board connectors, native clipboard, file drops, cleanup, and portable work
         assert.equal((await h.state()).host.running, 0);
         await screenshot(h.page, 'board-roundtrip');
     });
+});
+
+test('snapping lines up native terminal moves and resizes with guides, and Alt places freely', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const page = h.page;
+    await fixtureScene(page, [{ profile: 'shell', title: 'Anchor', x: 800, y: 40 }, { profile: 'shell', title: 'Moving', x: 0, y: 0 }]);
+    const scene = await page.evaluate(async () => {
+        Object.assign(workspace.cards[0], { w: 500, h: 300 }); renderGeometry(workspace.cards[0]);
+        workspace.camera = { x: 30, y: 90, z: .5 }; renderCamera();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const toggle = document.querySelector('#snap-toggle').getBoundingClientRect();
+        const before = document.querySelector('#minimap-toggle').getBoundingClientRect();
+        return { toggle: { x: Math.round(toggle.x + toggle.width / 2), y: Math.round(toggle.y + toggle.height / 2) },
+            added: toggle.right - before.right, width: toggle.width, menu: document.querySelector('#snap-grid').getBoundingClientRect().width,
+            enabled: snapPreferences.enabled, history: boardHistory.undo.length };
+    });
+    assert.deepEqual([scene.added, scene.width, scene.menu, scene.enabled], [50, 31, 64, true], 'a divider, the magnet, and its menu; snapping starts on');
+    await click(page, scene.toggle);
+    assert.equal(await page.evaluate(() => snapPreferences.enabled), false);
+    // The menu hides while snapping is off, so the centered toolbar and its magnet move.
+    await click(page, await page.evaluate(() => {
+        const toggle = document.querySelector('#snap-toggle').getBoundingClientRect();
+        return { x: Math.round(toggle.x + toggle.width / 2), y: Math.round(toggle.y + toggle.height / 2) };
+    }));
+    assert.deepEqual(await page.evaluate(() => [snapPreferences.enabled, document.querySelector('#snap-grid').hidden,
+        JSON.parse(localStorage.getItem('terminal-canvas.snapping.v1')).enabled]), [true, false, true]);
+    const box = selector => page.evaluate(selector => {
+        const r = sessions.get(workspace.cards[1].id).element.querySelector(selector).getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+    }, selector);
+    const moving = () => page.evaluate(() => {
+        const { x, y, w, h } = workspace.cards[1];
+        return { x, y, w, h, guides: [...document.querySelectorAll('.snap-guide')].map(guide => guide.className) };
+    });
+    // Moved 50 world pixels right and 44 down: x goes to the grid at 48, and the top edge, 2 screen
+    // pixels below the anchor's, snaps to it.
+    const status = await box('.card-status'), grab = { x: Math.round(status.x + status.w / 2), y: Math.round(status.y + status.h / 2) };
+    await ensureFocus(page);
+    await page.mouse.move(grab.x, grab.y); await page.mouse.down();
+    await page.mouse.move(grab.x + 25, grab.y + 22, { steps: 5 });
+    assert.deepEqual(await moving(), { x: 48, y: 40, w: 660, h: 430, guides: ['snap-guide horizontal'] });
+    await screenshot(page, 'snapping-move');
+    await page.keyboard.down('Alt');
+    assert.deepEqual(await moving(), { x: 50, y: 44, w: 660, h: 430, guides: [] }, 'Alt places freely without moving the pointer');
+    await page.keyboard.up('Alt');
+    assert.equal((await moving()).y, 40);
+    await sendInput(page, () => page.mouse.up(), { point: { x: grab.x + 25, y: grab.y + 22 } });
+    assert.deepEqual(await moving(), { x: 48, y: 40, w: 660, h: 430, guides: [] });
+    // Resized to within 2 screen pixels of the anchor's size, it takes the anchor's size and bottom edge.
+    const card = await box('.card-resize');
+    const corner = { x: Math.round(card.x + card.w / 2), y: Math.round(card.y + card.h / 2) };
+    await page.mouse.move(corner.x, corner.y); await page.mouse.down();
+    await page.mouse.move(corner.x - 78, corner.y - 64, { steps: 5 });
+    const resized = await moving();
+    assert.deepEqual([resized.w, resized.h], [500, 300]);
+    assert.equal(resized.guides.filter(name => name.endsWith(' size')).length, 4, 'both sizes are marked on both terminals');
+    await screenshot(page, 'snapping-resize');
+    await sendInput(page, () => page.mouse.up(), { point: { x: corner.x - 78, y: corner.y - 64 } });
+    assert.equal(await page.evaluate(() => boardHistory.undo.length), scene.history + 2, 'one undo step for each drag');
+    await page.evaluate(() => undo());
+    assert.deepEqual(await moving(), { x: 48, y: 40, w: 660, h: 430, guides: [] });
 });
