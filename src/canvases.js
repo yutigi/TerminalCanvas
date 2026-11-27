@@ -2,17 +2,22 @@
    every board for host recovery, portable assets, and the existing renderer/host API. */
 'use strict';
 let canvasStates = [], activeCanvas = null, canvasExtended = false, canvasMutation = false;
-function canvasState({ id = newId(), name = 'Canvas 1', camera = { x: 48, y: 48, z: 1 }, cards = [], items = [], selected, focused, split = null } = {}) {
-    // A split view needs its Focus terminal to be one of its panes.
+function canvasState({ id = newId(), name = 'Canvas 1', camera = { x: 48, y: 48, z: 1 }, cards = [], items = [], selected, focused, split = null, dock = null } = {}) {
+    // Pinned terminals stay in the dock, out of Focus and the split view, which needs its Focus
+    // terminal to be one of its panes.
+    dock = canvasDock(dock, cards);
+    const pinned = new Set(Geometry.dockLeaves(dock?.layout));
     split = validSplit(split, cards);
+    if (split?.cardIds.some(card => pinned.has(card))) split = null;
+    if (pinned.has(focused)) focused = undefined;
     if (split && !split.cardIds.includes(focused)) focused = split.cardIds[0];
-    return { id, name, board: { version: 3, name: '', camera, cards, items }, selected, focused, split,
+    return { id, name, board: { version: 3, name: '', camera, cards, items }, selected, focused, split, dock,
         selection: new Set(selected ? [selected] : []), history: { undo: [], redo: [] },
         clearedRedo: { step: null, redo: [] }, sharedItemJson: new Map(), activity: '', typing: false, focusSidebarRevealed: false };
 }
 function rememberCanvas() {
     if (!activeCanvas) return;
-    Object.assign(activeCanvas, { selected, focused, split, selection, keyboardCurrent, revealOnReturn, focusSidebarRevealed,
+    Object.assign(activeCanvas, { selected, focused, split, dock, selection, keyboardCurrent, revealOnReturn, focusSidebarRevealed,
         history: { undo: boardHistory.undo, redo: boardHistory.redo }, clearedRedo, sharedItemJson,
         typing: document.activeElement?.closest?.('.canvas-manager') ? activeCanvas.typing : !!document.activeElement?.closest?.('.xterm') });
 }
@@ -27,7 +32,8 @@ function workspaceSnapshot() {
             cardIds: canvas.board.cards.map(card => card.id), itemIds: canvas.board.items.map(item => item.id),
             ...(canvas.selected && [...canvas.board.cards, ...canvas.board.items].some(item => item.id === canvas.selected) ? { selected: canvas.selected } : {}),
             ...(canvas.focused && canvas.board.cards.some(card => card.id === canvas.focused) ? { focused: canvas.focused } : {}),
-            ...(canvas.focused && validSplit(canvas.split, canvas.board.cards) ? { split: validSplit(canvas.split, canvas.board.cards) } : {}) }));
+            ...(canvas.focused && validSplit(canvas.split, canvas.board.cards) ? { split: validSplit(canvas.split, canvas.board.cards) } : {}),
+            ...(canvasDock(canvas.dock, canvas.board.cards) ? { dock: canvasDock(canvas.dock, canvas.board.cards) } : {}) }));
         snapshot.activeCanvas = activeCanvas.id;
     }
     return snapshot;
@@ -77,9 +83,9 @@ function revealCanvas(canvas, { restoreKeyboard = true } = {}) {
     for (const s of sessions.values()) s.element.hidden = s.canvas !== canvas;
     const visibleItems = new Set(workspace.items.map(item => item.id));
     for (const [id, view] of itemViews) view.element.style.display = visibleItems.has(id) ? '' : 'none';
-    focused = canvas.focused || null; split = focused ? canvas.split || null : null;
+    focused = canvas.focused || null; split = focused ? canvas.split || null : null; dock = canvas.dock || null;
     focusSidebarRevealed = canvas.focusSidebarRevealed;
-    renderFocus();
+    renderDock(); renderFocus();
     // The saved camera already belongs to this canvas's Focus/sidebar state. Reapplying
     // the chrome must not compensate it again on every trip between canvases.
     renderSidebar({ preserveCenter: false });

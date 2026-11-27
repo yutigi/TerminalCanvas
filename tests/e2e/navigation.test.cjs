@@ -183,3 +183,75 @@ test('native split view lays out, refits, saves, and restores selected terminals
     assert.deepEqual(restored.map(box => box.h), canvas.map(box => box.h));
     assert.equal(await page.evaluate(() => 'split' in workspaceSnapshot().canvases[0]), false);
 });
+
+// Terminals pinned beside a live canvas: native pin buttons and header drags build nested splits in the
+// dock, terminals refit, the host saves the dock, and dropping one on the canvas unpins it there.
+test('native dock pins terminals beside the canvas in nested splits and unpins them onto it', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    const page = h.page;
+    await fixtureScene(page, [0, 700, 1400].map(x => ({ profile: 'shell', title: `Dock ${x}`, x, y: 0 })));
+    await page.evaluate(() => { workspace.camera = { x: 40, y: 60, z: .5 }; renderCamera(); });
+    const ids = await page.evaluate(() => workspace.cards.map(card => card.id));
+    const middle = (selector, id) => page.evaluate(({ selector, id }) => {
+        const box = sessions.get(id).element.querySelector(selector).getBoundingClientRect();
+        return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    }, { selector, id });
+    const box = id => page.evaluate(id => {
+        const s = sessions.get(id), r = s.element.getBoundingClientRect();
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), cols: s.terminal.cols, parent: s.element.parentElement.id };
+    }, id);
+    const area = () => page.evaluate(() => [document.querySelector('#dock'), viewport].map(element => {
+        const r = element.getBoundingClientRect();
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), hidden: element.hidden };
+    }));
+    const [, before] = await area();
+    const canvas = await box(ids[0]);
+    await click(page, await middle('[data-action="pin"]', ids[0]));
+    const [dockBox, view] = await area();
+    const pinned = await until(async () => {
+        const b = await box(ids[0]);
+        return b.parent === 'dock' && Math.abs(b.w - (dockBox.w - 16)) <= 1 && b.cols !== canvas.cols && b;
+    }, 'The terminal was not pinned and refitted.');
+    assert.equal(dockBox.hidden, false);
+    assert.ok(view.x >= dockBox.x + dockBox.w && view.w < before.w, 'the canvas sits beside the dock');
+    // Pinned below it, then dragged onto its right edge, the second terminal shares the dock side by side.
+    await click(page, await middle('[data-action="pin"]', ids[1]));
+    // Narrow pinned terminals keep their status dot and profile mark as handles beside the title.
+    const grab = await middle('.card-status', ids[1]), first = await box(ids[0]);
+    await page.mouse.move(grab.x, grab.y); await page.mouse.down();
+    await page.mouse.move(first.x + first.w - 20, first.y + Math.round(first.h / 2), { steps: 5 });
+    assert.equal(await page.evaluate(() => document.querySelector('#dock-drop').hidden), false, 'the drop target is shown');
+    await page.mouse.up();
+    const pair = await until(async () => {
+        const [a, b] = [await box(ids[0]), await box(ids[1])];
+        return Math.abs(a.y - b.y) <= 1 && a.x < b.x && a.cols < pinned.cols && [a, b];
+    }, 'The pinned terminals did not share the dock side by side.');
+    assert.ok(Math.abs(pair[0].w - pair[1].w) <= 1);
+    // The third terminal, dragged from the canvas to the bottom of the dock, goes below both.
+    const third = await middle('.card-status', ids[2]), canvasPlace = await page.evaluate(id => ({ ...findCard(id) }), ids[2]);
+    await page.mouse.move(third.x, third.y); await page.mouse.down();
+    await page.mouse.move(Math.round(dockBox.x + dockBox.w / 2), dockBox.y + dockBox.h - 30, { steps: 6 });
+    await page.mouse.up();
+    await until(async () => (await box(ids[2])).parent === 'dock', 'The canvas terminal was not pinned by dragging.');
+    assert.deepEqual(await page.evaluate(() => dock.layout), { orientation: 'column', sizes: [.5, .5], children: [
+        { orientation: 'row', children: [{ cardId: ids[0] }, { cardId: ids[1] }], sizes: [.5, .5] }, { cardId: ids[2] }] });
+    const placed = await page.evaluate(id => ({ ...findCard(id) }), ids[2]);
+    assert.deepEqual([placed.x, placed.y], [canvasPlace.x, canvasPlace.y], 'it keeps its canvas place');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.pinned-ghost').length), 3);
+    // The host validates and saves the dock with its canvas.
+    const saved = await page.evaluate(async () => { await invoke('autosave', workspace); return workspaceSnapshot().canvases[0].dock; });
+    assert.equal(saved.layout.children[1].cardId, ids[2]);
+    await screenshot(page, 'dock');
+    // Dropped on the canvas, the first terminal returns there and the second takes the whole row.
+    const header = await middle('.card-status', ids[0]);
+    await page.mouse.move(header.x, header.y); await page.mouse.down();
+    await page.mouse.move(view.x + Math.round(view.w / 2), view.y + Math.round(view.h / 2), { steps: 5 });
+    await page.mouse.up();
+    await until(async () => (await box(ids[0])).parent === 'world', 'Dropping on the canvas did not unpin the terminal.');
+    assert.deepEqual(await page.evaluate(() => dock.layout), { orientation: 'column', sizes: [.5, .5], children: [{ cardId: ids[1] }, { cardId: ids[2] }] });
+    for (const id of ids.slice(1)) await click(page, await middle('[data-action="pin"]', id));
+    const [closed, restored] = await area();
+    assert.equal(closed.hidden, true);
+    assert.deepEqual([restored.x, restored.w], [before.x, before.w], 'the canvas gets its room back');
+    assert.equal(await page.evaluate(() => 'dock' in workspaceSnapshot().canvases[0]), false);
+});

@@ -232,7 +232,37 @@ pub struct Canvas {
     pub focused: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split: Option<Split>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dock: Option<Dock>,
 }
+
+/// Terminals pinned beside the canvas in nested splits. `width` is the dock's share of the room it
+/// shares with the canvas, from 0.05 to 0.95. Like `focused`, it is optional view state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Dock {
+    #[serde(serialize_with = "serialize_number")]
+    pub width: f64,
+    pub layout: DockNode,
+}
+
+/// A pinned terminal, or two or more nodes sharing a split's room in proportion to `sizes`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum DockNode {
+    Terminal {
+        #[serde(rename = "cardId")]
+        card_id: String,
+    },
+    Split {
+        orientation: SplitOrientation,
+        children: Vec<DockNode>,
+        #[serde(serialize_with = "serialize_numbers")]
+        sizes: Vec<f64>,
+    },
+}
+
+/// Dock splits nest at most this deep.
+pub const DOCK_DEPTH: usize = 32;
 
 /// Focus on several terminals of a canvas at once, side by side (`row`) or stacked (`column`).
 /// Like `focused`, it is optional view state: older readers ignore it.
@@ -907,6 +937,52 @@ fn split(raw: &Value, card_ids: &[String]) -> Result<Split> {
     })
 }
 
+/// A canvas's dock: a width and a layout pinning each terminal of `card_ids` at most once.
+fn canvas_dock(raw: &Value, card_ids: &[String]) -> Result<Dock> {
+    let width = finite(raw.get("width"), 0.05, 0.95);
+    let mut pinned = HashSet::new();
+    match (width, dock_node(raw.get("layout"), card_ids, &mut pinned, 0)) {
+        (Some(width), Some(layout)) => Ok(Dock { width, layout }),
+        _ => invalid("Invalid canvas dock."),
+    }
+}
+
+/// `depth` splits enclose `raw`. Shares are positive and at most 1; the renderer scales them.
+fn dock_node(raw: Option<&Value>, card_ids: &[String], pinned: &mut HashSet<String>, depth: usize) -> Option<DockNode> {
+    let raw = raw?.as_object()?;
+    if let Some(id) = raw.get("cardId") {
+        let id = id.as_str()?;
+        let known = card_ids.iter().any(|card| card == id);
+        return (known && pinned.insert(id.to_owned())).then(|| DockNode::Terminal { card_id: id.to_owned() });
+    }
+    if depth >= DOCK_DEPTH {
+        return None;
+    }
+    let orientation = match raw.get("orientation")?.as_str()? {
+        "row" => SplitOrientation::Row,
+        "column" => SplitOrientation::Column,
+        _ => return None,
+    };
+    let children = raw.get("children")?.as_array()?;
+    let sizes = raw.get("sizes")?.as_array()?;
+    if children.len() < 2 || sizes.len() != children.len() {
+        return None;
+    }
+    let sizes = sizes
+        .iter()
+        .map(|size| size.as_f64().filter(|share| *share > 0.0 && *share <= 1.0))
+        .collect::<Option<Vec<_>>>()?;
+    let children = children
+        .iter()
+        .map(|child| dock_node(Some(child), card_ids, pinned, depth + 1))
+        .collect::<Option<Vec<_>>>()?;
+    Some(DockNode::Split {
+        orientation,
+        children,
+        sizes,
+    })
+}
+
 fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec<Canvas>, Option<String>)> {
     let Some(list) = raw.get("canvases") else {
         if raw.get("activeCanvas").is_some() {
@@ -971,6 +1047,10 @@ fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec
             None | Some(Value::Null) => None,
             Some(value) => Some(split(value, &card_ids)?),
         };
+        let dock = match canvas.get("dock") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(canvas_dock(value, &card_ids)?),
+        };
         canvases.push(Canvas {
             id,
             name,
@@ -980,6 +1060,7 @@ fn validate_canvases(raw: &Value, cards: &[Card], items: &[Item]) -> Result<(Vec
             selected,
             focused,
             split,
+            dock,
         });
     }
     if owners.len() != cards.len() + items.len() {

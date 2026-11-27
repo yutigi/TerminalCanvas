@@ -4271,3 +4271,161 @@ test('a browser controller\'s layout keeps the desktop\'s own split view', async
     const sent = JSON.parse(JSON.stringify(calls.find(call => call.action === 'remote-layout-save').payload.workspace));
     assert.deepEqual([sent.canvases[0].split, sent.canvases[0].focused], [desktop, json(context, 'focused')]);
 });
+
+// The 1100px board area beside a 385px dock: the dock and the canvas measure as laid out.
+function dockRects(elements) {
+    elements.get('#dock').getBoundingClientRect = () => ({ left: 0, top: 0, right: 385, bottom: 720, width: 385, height: 720 });
+    elements.get('#viewport').getBoundingClientRect = () => ({ left: 393, top: 0, right: 1100, bottom: 720, width: 707, height: 720 });
+}
+const parentOf = (context, id) => vm.runInContext(`sessions.get(${JSON.stringify(id)}).element.parentElement`, context);
+
+test('pinning docks terminals beside the canvas with an outline left behind, and unpinning returns them', async () => {
+    const board = splitBoard(0, 700, 1400, 2100), [a, b, c, d] = board.cards.map(card => card.id);
+    board.camera = { x: 50, y: 40, z: 1 };
+    const { elements, context } = await boot(board);
+    context.ids = [a, b, c, d];
+    vm.runInContext('pinTerminal(ids[0])', context);
+    assert.deepEqual(json(context, 'dock'), { width: .35, layout: { cardId: a } });
+    assert.equal(parentOf(context, a), elements.get('#dock'));
+    assert.equal(vm.runInContext('sessions.get(ids[0]).element.classList.contains("pinned")', context), true);
+    assert.deepEqual([elements.get('#dock').hidden, elements.get('#dock-resize').hidden, elements.get('#dock').style.width], [false, false, '385px']);
+    assert.equal(json(context, 'workspace.camera.x'), 50 - 385, 'the canvas content stays where it was on screen');
+    const ghost = elements.get('#world').children.find(child => child.className === 'pinned-ghost');
+    assert.deepEqual([ghost.textContent, ghost.style.left, ghost.style.width], ['at 0 · pinned', '0px', '660px']);
+    assert.equal(vm.runInContext('sessions.get(ids[0]).element.querySelector(\'[data-action="pin"]\')', context).attributes.get('aria-pressed'), 'true');
+    vm.runInContext('pinTerminal(ids[1], ids[0], "right"); pinTerminal(ids[2])', context);
+    assert.deepEqual(json(context, 'dock.layout'), { orientation: 'column', sizes: [.5, .5], children: [{ orientation: 'row', children: [{ cardId: a }, { cardId: b }], sizes: [.5, .5] }, { cardId: c }] });
+    assert.deepEqual(json(context, 'workspaceSnapshot().canvases[0].dock'), json(context, 'dock'), 'saved with its canvas');
+    // Pinned terminals stay out of Focus, the split view, and keyboard navigation.
+    vm.runInContext('setSelection([ids[0], ids[3]]); toggleFocus()', context);
+    assert.deepEqual([json(context, 'focused'), json(context, 'split')], [d, null]);
+    vm.runInContext('setFocus(null); select(ids[3]); navigateTerminals("left")', context);
+    assert.equal(json(context, 'selected'), d, 'nothing but pinned terminals lies that way');
+    const camera = json(context, 'workspace.camera');
+    vm.runInContext('showTerminal(ids[2])', context);
+    assert.deepEqual([json(context, 'selected'), json(context, 'workspace.camera')], [c, camera], 'a pinned terminal is shown where it is');
+    assert.equal(json(context, 'boardHistory.undo.length'), 0, 'pinning is not an undo step');
+    vm.runInContext('unpinTerminal(ids[0])', context);
+    assert.deepEqual(json(context, 'dock.layout'), { orientation: 'column', sizes: [.5, .5], children: [{ cardId: b }, { cardId: c }] });
+    assert.equal(parentOf(context, a), elements.get('#world'));
+    assert.equal(elements.get('#world').children.filter(child => child.className === 'pinned-ghost' && child.isConnected).length, 2);
+    // Unpinned onto a point of the canvas, it moves there as an undoable step.
+    vm.runInContext('unpinTerminal(ids[1], { x: 1000, y: 500 })', context);
+    assert.deepEqual(json(context, '[findCard(ids[1]).x, findCard(ids[1]).y]'), [1000 - 330, 480]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+    const shown = json(context, 'workspace.camera.x');
+    vm.runInContext('unpinTerminal(ids[2])', context);
+    assert.deepEqual([json(context, 'dock'), elements.get('#dock').hidden, json(context, 'workspace.camera.x')], [null, true, shown + 385], 'closing the dock gives its room back to the canvas');
+    assert.equal(json(context, '"dock" in workspaceSnapshot().canvases[0]'), false);
+});
+
+test('pinned terminals are dragged into place, onto the canvas, and resized by dividers', async () => {
+    const board = splitBoard(0, 700, 1400), [a, b, c] = board.cards.map(card => card.id);
+    board.camera = { x: 0, y: 0, z: 1 };
+    const { elements, context } = await boot(board);
+    dockRects(elements);
+    context.ids = [a, b, c];
+    vm.runInContext('pinTerminal(ids[0]); pinTerminal(ids[1])', context);
+    const header = id => vm.runInContext(`sessions.get(${JSON.stringify(id)}).element.querySelector('.card-header')`, context);
+    // a fills the top half of the dock, 8..356; dropping b near its right edge puts b on a's right.
+    header(b).dispatch('pointerdown', { clientX: 100, clientY: 500 });
+    header(b).dispatch('pointermove', { clientX: 300, clientY: 180 });
+    assert.equal(elements.get('#dock-drop').hidden, false);
+    assert.deepEqual([elements.get('#dock-drop').style.left, elements.get('#dock-drop').style.width], ['192.5px', '184.5px']);
+    header(b).dispatch('pointerup', { clientX: 300, clientY: 180 });
+    assert.equal(elements.get('#dock-drop').hidden, true);
+    assert.deepEqual(json(context, 'dock.layout'), { orientation: 'row', children: [{ cardId: a }, { cardId: b }], sizes: [.5, .5] });
+    // Dropped on the canvas, a terminal leaves the dock and lands under the pointer.
+    header(a).dispatch('pointerdown', { clientX: 100, clientY: 100 });
+    header(a).dispatch('pointermove', { clientX: 793, clientY: 400 });
+    assert.equal(elements.get('#viewport').classList.contains('dock-unpin'), true);
+    header(a).dispatch('pointerup', { clientX: 793, clientY: 400 });
+    // Pinning moved the camera 385px so the canvas stayed put on screen: the drop point is 793 - 393 + 385.
+    assert.deepEqual([json(context, 'dock.layout'), json(context, '[findCard(ids[0]).x, findCard(ids[0]).y]')], [{ cardId: b }, [785 - 330, 380]]);
+    assert.equal(elements.get('#viewport').classList.contains('dock-unpin'), false);
+    // A lone canvas terminal dropped on the dock is pinned there, and keeps its canvas place.
+    const before = json(context, 'findCard(ids[2])');
+    header(c).dispatch('pointerdown', { clientX: 900, clientY: 300 });
+    header(c).dispatch('pointermove', { clientX: 200, clientY: 600 });
+    assert.equal(elements.get('#dock-drop').hidden, false);
+    header(c).dispatch('pointerup', { clientX: 200, clientY: 600 });
+    assert.deepEqual(json(context, 'dock.layout'), { orientation: 'column', children: [{ cardId: b }, { cardId: c }], sizes: [.5, .5] });
+    assert.deepEqual(json(context, '[findCard(ids[2]).x, findCard(ids[2]).y]'), [before.x, before.y]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1, 'only the unpin onto the canvas is an undo step');
+    // The divider between b and c, and the dock's own edge.
+    const divider = elements.get('#dock-dividers').children[0];
+    assert.deepEqual([divider.attributes.get('role'), divider.attributes.get('aria-orientation')], ['separator', 'horizontal']);
+    drag(divider, [100, 360], [100, 430.4]);
+    assert.deepEqual(json(context, 'dock.layout.sizes').map(size => Math.round(size * 100) / 100), [.6, .4]);
+    divider.dispatch('keydown', { key: 'ArrowUp' });
+    assert.deepEqual(json(context, 'dock.layout.sizes').map(size => Math.round(size * 100) / 100), [.55, .45]);
+    drag(elements.get('#dock-resize'), [389, 300], [499, 300]);
+    assert.equal(json(context, 'dock.width'), .45);
+    elements.get('#dock-resize').dispatch('keydown', { key: 'ArrowLeft', shiftKey: true });
+    assert.equal(Math.round(json(context, 'dock.width') * 100) / 100, .35);
+    drag(elements.get('#dock-resize'), [389, 300], [5000, 300]);
+    assert.equal(json(context, 'dock.width'), (1100 - 240) / 1100, 'the canvas keeps 240px');
+});
+
+test('docks are saved per canvas, restored, cleaned up when invalid, and lose closed terminals', async () => {
+    const board = splitBoard(0, 700, 1400), [a, b, c] = board.cards.map(card => card.id);
+    const layout = { orientation: 'row', children: [{ cardId: a }, { orientation: 'column', children: [{ cardId: b }, { cardId: c }], sizes: [.3, .7] }], sizes: [.4, .6] };
+    board.canvases = [
+        { id: 'one', name: 'One', camera: board.camera, cardIds: [a, b, c], itemIds: ['note'], dock: { width: .5, layout } },
+        { id: 'two', name: 'Two', camera: board.camera, cardIds: [], itemIds: [] }
+    ];
+    board.activeCanvas = 'one';
+    const { elements, context } = await boot(board);
+    context.ids = [a, b, c];
+    assert.deepEqual(json(context, 'dock'), { width: .5, layout });
+    assert.equal(parentOf(context, c), elements.get('#dock'));
+    assert.deepEqual(json(context, 'workspaceSnapshot()'), board, 'a dock saves exactly as it was read');
+    vm.runInContext('switchCanvas("two")', context);
+    assert.deepEqual([json(context, 'dock'), elements.get('#dock').hidden], [null, true]);
+    assert.equal(vm.runInContext('sessions.get(ids[0]).element.hidden', context), true, 'the other canvas keeps its pinned terminals out of view');
+    vm.runInContext('removeCard(anyCard(ids[1]))', context);
+    assert.deepEqual(json(context, 'canvasStates[0].dock.layout'), { orientation: 'row', children: [{ cardId: a }, { cardId: c }], sizes: [.4, .6] });
+    vm.runInContext('switchCanvas("one")', context);
+    assert.equal(elements.get('#dock').hidden, false);
+    vm.runInContext('removeCard(findCard(ids[0])); removeCard(findCard(ids[2]))', context);
+    assert.deepEqual([json(context, 'dock'), elements.get('#dock').hidden], [null, true]);
+    // A dock that does not fit its canvas is dropped; a pinned terminal leaves Focus and the split view.
+    const fresh = splitBoard(0, 700, 1400), [x, y, z] = fresh.cards.map(card => card.id);
+    for (const dock of [{ width: 2, layout: { cardId: x } }, { width: .3, layout: { cardId: 'gone' } }]) {
+        context.broken = { ...structuredClone(fresh), canvases: [{ id: 'one', name: 'One', camera: fresh.camera, cardIds: [x, y, z], itemIds: ['note'], dock }], activeCanvas: 'one' };
+        vm.runInContext('loadWorkspace(broken)', context);
+        assert.equal(json(context, 'dock'), null);
+    }
+    context.mixed = { ...structuredClone(fresh), activeCanvas: 'one', canvases: [{ id: 'one', name: 'One', camera: fresh.camera, cardIds: [x, y, z], itemIds: ['note'],
+        focused: x, split: { cardIds: [x, y], orientation: 'row', sizes: [.5, .5] }, dock: { width: .3, layout: { cardId: y } } }] };
+    vm.runInContext('loadWorkspace(mixed)', context);
+    assert.deepEqual([json(context, 'split'), json(context, 'focused'), json(context, 'dock.layout')], [null, x, { cardId: y }]);
+});
+
+test('a browser controller\'s layout keeps the desktop\'s own dock', async () => {
+    const board = splitBoard(0, 700), [a, b] = board.cards.map(card => card.id);
+    const { context, calls } = await boot(board, { respond: (action, payload) => action === 'remote-layout-save' ? { workspace: payload.workspace } : null });
+    context.ids = [a, b];
+    vm.runInContext('pinTerminal(ids[0]); layoutDigest = async () => "digest"', context);
+    const browser = json(context, 'workspaceSnapshot()');
+    browser.canvases[0].dock = { width: .8, layout: { cardId: b } };
+    context.command = { action: 'layout', base: 'digest', workspace: browser };
+    await vm.runInContext('applyBrowserLayout(command, titleEpoch)', context);
+    const sent = JSON.parse(JSON.stringify(calls.find(call => call.action === 'remote-layout-save').payload.workspace));
+    assert.deepEqual(sent.canvases[0].dock, { width: .35, layout: { cardId: a } });
+});
+
+test('Ctrl + scroll over the dock sizes a pinned terminal\'s text and never zooms', async () => {
+    const board = splitBoard(0, 700), [a] = board.cards.map(card => card.id);
+    const { elements, context } = await boot(board, { terminals: true });
+    context.ids = [a];
+    vm.runInContext('pinTerminal(ids[0]); sessions.get(ids[0]).placeholder.hidden = true', context);
+    const camera = json(context, 'workspace.camera');
+    let prevented = false;
+    const over = { closest: selector => (selector === '.terminal-card' ? { dataset: { id: a } } : null) };
+    elements.get('#dock').dispatch('wheel', { ctrlKey: true, deltaY: -200, deltaMode: 0, target: over, preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(json(context, 'findCard(ids[0]).fontSize'), 14);
+    assert.deepEqual(json(context, 'workspace.camera'), camera);
+    elements.get('#dock').dispatch('wheel', { ctrlKey: false, deltaY: -200, target: over, preventDefault() { throw new Error('plain scrolling stays with the terminal'); } });
+});

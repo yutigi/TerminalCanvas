@@ -38,7 +38,8 @@ const paths = {
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
     spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>',
     columns: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
-    rows: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>'
+    rows: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>',
+    pin: '<path d="M9 3h6l-1 6 4 3v2H6v-2l4-3-1-6Z"/><path d="M12 14v7"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -101,8 +102,7 @@ function renderSidebar({ preserveCenter = true } = {}) {
         workspace.camera.x = Math.max(-100000, Math.min(100000, workspace.camera.x + (viewport.clientWidth - width) / 2));
         workspace.camera.y = Math.max(-100000, Math.min(100000, workspace.camera.y + (viewport.clientHeight - height) / 2));
     }
-    renderCamera(); renderFocus();
-    requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
+    renderDock();
 }
 function setSidebarCollapsed(collapsed) {
     sidebarPreferences.collapsed = collapsed;
@@ -396,11 +396,26 @@ function startMove(event, id, handle) {
     const origins = rects.map(e => ({ e, x: e.x, y: e.y }));
     const ends = lines.map(line => ({ line, start: line.start.id ? null : { ...line.start }, end: line.end.id ? null : { ...line.end } }));
     const shift = (point, dx, dy) => ({ x: clampCoordinate(point.x + dx / z), y: clampCoordinate(point.y + dy / z) });
-    beginDrag(handle, event, (dx, dy) => {
+    // A lone terminal dropped on the dock is pinned there instead of moved.
+    const docking = rects.length === 1 && rects[0].type === 'terminal' && !lines.length ? rects[0].id : null;
+    let drop = null;
+    beginDrag(handle, event, (dx, dy, e) => {
         for (const o of origins) { Object.assign(o.e, shift(o, dx, dy)); placeElement(o.e); }
         for (const o of ends) { if (o.start) o.line.start = shift(o.start, dx, dy); if (o.end) o.line.end = shift(o.end, dx, dy); }
         renderLines(); renderSelectionBox();
-    }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
+        if (docking) { drop = dockDropTarget(e, docking); if (drop?.canvas) drop = null; showDockDrop(drop); }
+    }, moved => {
+        showDockDrop(null);
+        if (moved && drop) {
+            // The drag's undo step only moved the terminal: put it back, drop the step, and pin it.
+            for (const o of origins) { Object.assign(o.e, { x: o.x, y: o.y }); placeElement(o.e); }
+            discardHistory(boardHistory.undo.at(-1));
+            renderLines(); renderSelectionBox();
+            pinTerminal(docking, drop.target, drop.side);
+            return;
+        }
+        if (moved) { renderMinimap(); changed(); }
+    }, { history: true });
 }
 // Grouping wraps whole groups in a new outer group; ungrouping removes only the outermost level.
 function groupSelection() {
@@ -477,10 +492,14 @@ function showTerminal(id) {
     const card = findCard(id);
     if (!card) return false;
     keyboardCurrent = id;
-    if (focused && focused !== id) setFocus(id, { type: false });
+    // A pinned terminal is already in view in the dock.
+    if (isPinned(id)) select(id, { type: false });
+    else if (focused && focused !== id) setFocus(id, { type: false });
     else select(id, { type: false });
-    if (focused) revealOnReturn = id;
-    else revealCard(card);
+    if (!isPinned(id)) {
+        if (focused) revealOnReturn = id;
+        else revealCard(card);
+    }
     viewport.focus({ preventScroll: true });
     return true;
 }
@@ -577,7 +596,7 @@ function navigateTerminals(direction) {
     // In a split view, the keys move between its panes as they are laid out on screen.
     const panes = focused && split ? splitPanes().panes : null;
     const where = e => (panes && e.type === 'terminal' ? panes[split.cardIds.indexOf(e.id)] : boundsOf(e));
-    const candidates = (panes ? split.cardIds.map(findCard) : workspace.cards).map(card => ({ id: card.id, bounds: where(card) }));
+    const candidates = (panes ? split.cardIds.map(findCard) : workspace.cards.filter(card => !isPinned(card.id))).map(card => ({ id: card.id, bounds: where(card) }));
     if (!candidates.length) return toast('There are no terminals on this canvas yet.');
     const origin = findElement(focused || selected);
     const id = origin
@@ -649,8 +668,9 @@ const SPLIT_LIMIT = 4;
 function toggleFocus() {
     if (!ready) return;
     if (focused) return setFocus(null);
-    const terminals = [...selection].map(findCard).filter(Boolean);
-    if (terminals.length < 2) { if (findCard(selected)) setFocus(selected); return; }
+    // Pinned terminals stay in the dock; Focus and the split view show canvas terminals.
+    const terminals = [...selection].map(findCard).filter(card => card && !isPinned(card.id));
+    if (terminals.length < 2) { if (findCard(selected) && !isPinned(selected)) setFocus(selected); return; }
     if (terminals.length > SPLIT_LIMIT) return toast('A split view shows up to four terminals. Select fewer, then try again.');
     terminals.sort((a, b) => a.x - b.x || a.y - b.y);
     setFocus(findCard(selected) ? selected : terminals[0].id, { panes: terminals.map(card => card.id) });
@@ -754,6 +774,199 @@ function validSplit(state, cards) {
         && state.sizes.every(size => typeof size === 'number' && size >= .01 && size <= 1);
     return valid ? { cardIds: [...cardIds], orientation: state.orientation, sizes: [...state.sizes] } : null;
 }
+/* ---------- Dock ---------- */
+// Terminals pinned beside the canvas, in nested splits that any pinned terminal can be dragged into:
+// `{ width, layout }`, with `width` the dock's share of the board area. Saved with its canvas.
+let dock = null;
+const DOCK_WIDTH = .35, DOCK_PAD = 8, DOCK_GAP = 8, DOCK_PANE_MIN = 120, DOCK_MIN_WIDTH = 200, CANVAS_MIN_WIDTH = 240;
+let dockDividers = [], dockGhosts = new Map(), dockShown = 0;
+const isPinned = id => !!id && Geometry.dockLeaves(dock?.layout).includes(id);
+const pinnedIn = s => Geometry.dockLeaves((s.canvas === activeCanvas ? dock : s.canvas.dock)?.layout).includes(s.card.id);
+// The dock's width in pixels: its share of the board area, leaving room for both the dock and the canvas.
+function dockPixels() {
+    if (!dock) return 0;
+    const total = $('#board-area').clientWidth;
+    return Math.round(Math.max(Math.min(DOCK_MIN_WIDTH, total / 2), Math.min(total - CANVAS_MIN_WIDTH, dock.width * total)));
+}
+const dockArea = width => ({ x: DOCK_PAD, y: DOCK_PAD, w: Math.max(0, width - 2 * DOCK_PAD), h: Math.max(0, $('#board-area').clientHeight - 2 * DOCK_PAD) });
+// Places pinned terminals in the dock and everything else on the canvas, with an outline where each
+// pinned terminal sits on the canvas, so connectors still lead somewhere. With `keep`, the canvas
+// content stays where it was on screen as the dock opens, closes, or changes width.
+function renderDock({ keep = false } = {}) {
+    const panel = $('#dock'), width = dockPixels(), focusInside = document.activeElement?.closest?.('.terminal-card');
+    panel.hidden = !dock; $('#dock-resize').hidden = !dock;
+    panel.style.width = `${width}px`;
+    for (const s of sessions.values()) {
+        const home = pinnedIn(s) ? panel : world;
+        if (s.element.parentElement === home) continue;
+        home.append(s.element);
+        s.element.classList.toggle('pinned', home === panel);
+        // Moving an element blurs it; typing continues in the terminal it was in.
+        if (focusInside === s.element && s.status === 'running') s.terminal?.focus();
+    }
+    const layout = dock ? Geometry.dockLayout(dock.layout, dockArea(width), DOCK_GAP) : null;
+    for (const s of sessions.values()) {
+        const pinned = !!layout?.panes.has(s.card.id) && s.canvas === activeCanvas, pin = s.element.querySelector('[data-action="pin"]');
+        pin.setAttribute('aria-pressed', String(pinned));
+        pin.title = pinned ? 'Unpin from the dock' : 'Pin beside the canvas';
+        pin.setAttribute('aria-label', pin.title);
+        if (!pinned) continue;
+        const pane = layout.panes.get(s.card.id);
+        for (const [key, value] of Object.entries(pane)) s.element.style.setProperty(`--pane-${key}`, `${value}px`);
+    }
+    // Dividers are replaced only when their number changes, so one being dragged stays in place.
+    const wanted = layout ? layout.dividers.length : 0;
+    if (dockDividers.length !== wanted) {
+        dockDividers = Array.from({ length: wanted }, (_, index) => dockDividers[index] || dockDivider());
+        $('#dock-dividers').replaceChildren(...dockDividers);
+    }
+    layout?.dividers.forEach((info, index) => {
+        const divider = dockDividers[index], row = info.orientation === 'row';
+        divider.dock = info;
+        Object.assign(divider.style, { left: `${info.rect.x}px`, top: `${info.rect.y}px`, width: `${info.rect.w}px`, height: `${info.rect.h}px` });
+        divider.className = `split-divider dock-divider ${row ? 'vertical' : 'horizontal'}`;
+        divider.setAttribute('aria-orientation', row ? 'vertical' : 'horizontal');
+    });
+    renderDockGhosts();
+    if (keep && ready && width !== dockShown) { workspace.camera.x = clampCoordinate(workspace.camera.x - (width - dockShown)); }
+    dockShown = width;
+    if (ready) { renderCamera(); renderFocus(); }
+    requestAnimationFrame(() => { for (const s of sessions.values()) fitTerminal(s); });
+}
+// The outline a pinned terminal leaves at its place on the canvas.
+function renderDockGhosts() {
+    const pinned = new Set(Geometry.dockLeaves(dock?.layout));
+    for (const [id, ghost] of dockGhosts) if (!pinned.has(id) || !findCard(id)) { ghost.remove(); dockGhosts.delete(id); }
+    for (const id of pinned) {
+        const card = findCard(id);
+        if (!card) continue;
+        if (!dockGhosts.has(id)) {
+            const ghost = document.createElement('div');
+            ghost.className = 'pinned-ghost';
+            world.append(ghost); dockGhosts.set(id, ghost);
+        }
+        const ghost = dockGhosts.get(id);
+        ghost.textContent = `${card.title} · pinned`;
+        Object.assign(ghost.style, { left: `${card.x}px`, top: `${card.y}px`, width: `${card.w}px`, height: `${card.h}px` });
+    }
+}
+function dockDivider() {
+    const divider = document.createElement('div');
+    divider.tabIndex = 0;
+    divider.setAttribute('role', 'separator');
+    divider.setAttribute('aria-label', 'Resize pinned terminals');
+    const resize = (delta, info) => {
+        dock = { ...dock, layout: Geometry.dockResize(dock.layout, info.path, info.index, delta, info.room, DOCK_PANE_MIN) };
+        renderDock();
+    };
+    divider.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || !dock || !divider.dock) return;
+        const info = divider.dock, start = dock.layout;
+        beginDrag(divider, event, (dx, dy) => {
+            dock = { ...dock, layout: start };
+            resize(info.orientation === 'row' ? dx : dy, info);
+        }, moved => { if (moved) changed(); });
+    });
+    divider.addEventListener('keydown', event => {
+        const info = divider.dock, row = info?.orientation === 'row';
+        const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -1, ArrowDown: 1 }[event.key];
+        if (!dock || !info || !step || ['ArrowUp', 'ArrowDown'].includes(event.key) === row || event.altKey || event.ctrlKey || event.metaKey) return;
+        event.preventDefault(); event.stopPropagation();
+        resize(step * info.room * (event.shiftKey ? .2 : .05), info);
+        changed();
+    });
+    return divider;
+}
+// Pins terminal `id` on `side` of pinned terminal `target`, or below the whole dock. A terminal in
+// Focus or the split view leaves it first, since those views show only canvas terminals.
+function pinTerminal(id, target = null, side = 'bottom') {
+    if (!ready || boardBusy() || !findCard(id)) return false;
+    const layout = Geometry.dockInsert(dock?.layout || null, id, target, side);
+    if (Geometry.dockDepth(layout) > Geometry.DOCK_DEPTH) { toast('The dock cannot be split any further there.'); return false; }
+    if (focused === id || split?.cardIds.includes(id)) setFocus(null);
+    dock = { width: dock?.width ?? DOCK_WIDTH, layout };
+    canvasExtended = true;
+    renderDock({ keep: true }); changed();
+    return true;
+}
+// Returns a pinned terminal to the canvas: to where it was, or centred on `point` when dropped there.
+function unpinTerminal(id, point = null) {
+    if (!isPinned(id) || boardBusy()) return;
+    const layout = Geometry.dockRemove(dock.layout, id), card = findCard(id);
+    dock = layout ? { ...dock, layout } : null;
+    if (point && card) recordChange(() => Object.assign(card, { x: clampCoordinate(point.x - card.w / 2), y: clampCoordinate(point.y - 20) }));
+    renderDock({ keep: true });
+    if (card) renderGeometry(card);
+    changed();
+}
+// Where a dragged terminal would land: a pinned terminal's side, or the canvas to unpin it.
+function dockDropTarget(event, dragged) {
+    const point = window.TerminalCanvasPointer?.clientPoint(event) ?? { x: event.clientX, y: event.clientY };
+    const panel = $('#dock'), box = panel.getBoundingClientRect();
+    if (dock && !panel.hidden && point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom) {
+        const local = { x: point.x - box.left, y: point.y - box.top };
+        for (const [id, rect] of Geometry.dockLayout(dock.layout, dockArea(dockPixels()), DOCK_GAP).panes) {
+            if (id === dragged || !Geometry.containsPoint(rect, local)) continue;
+            return { target: id, side: Geometry.dropSide(rect, local), rect };
+        }
+        // Over the dock but not over another terminal: below everything.
+        return { target: null, side: 'bottom', rect: { x: 0, y: 0, w: box.width, h: box.height } };
+    }
+    const area = viewport.getBoundingClientRect();
+    if (point.x >= area.left && point.x <= area.right && point.y >= area.top && point.y <= area.bottom) return { canvas: toWorld({ clientX: point.x, clientY: point.y }) };
+    return null;
+}
+// Shows where a drop would put the terminal: half of a pinned terminal, or the bottom of the dock.
+function showDockDrop(drop) {
+    const indicator = $('#dock-drop');
+    indicator.hidden = !drop || !!drop.canvas;
+    viewport.classList.toggle('dock-unpin', !!drop?.canvas);
+    if (indicator.hidden) return;
+    const { rect, side, target } = drop, half = { ...rect };
+    if (target === null) Object.assign(half, { y: rect.h - Math.min(rect.h / 3, 160), h: Math.min(rect.h / 3, 160) });
+    else if (side === 'left' || side === 'right') { half.w = rect.w / 2; if (side === 'right') half.x += rect.w / 2; }
+    else { half.h = rect.h / 2; if (side === 'bottom') half.y += rect.h / 2; }
+    Object.assign(indicator.style, { left: `${half.x}px`, top: `${half.y}px`, width: `${half.w}px`, height: `${half.h}px` });
+}
+// Dragging a pinned terminal by its header moves it within the dock, or onto the canvas to unpin it.
+function dragPinned(event, id, handle) {
+    if (event.button !== 0 || boardBusy()) return;
+    if (!selection.has(id)) select(id);
+    let drop = null;
+    beginDrag(handle, event, (_dx, _dy, e) => { drop = dockDropTarget(e, id); showDockDrop(drop); }, moved => {
+        showDockDrop(null);
+        if (!moved || !drop) return;
+        if (drop.canvas) unpinTerminal(id, drop.canvas);
+        else if (drop.target !== id) {
+            const layout = Geometry.dockInsert(dock.layout, id, drop.target, drop.side);
+            if (Geometry.dockDepth(layout) > Geometry.DOCK_DEPTH) return toast('The dock cannot be split any further there.');
+            dock = { ...dock, layout };
+            renderDock(); changed();
+        }
+    });
+}
+// The divider between the dock and the canvas sets the dock's width.
+function resizeDock(delta) {
+    const total = $('#board-area').clientWidth;
+    if (!dock || !total) return;
+    const width = Math.max(DOCK_MIN_WIDTH, Math.min(total - CANVAS_MIN_WIDTH, dockShown + delta));
+    dock = { ...dock, width: Math.max(.05, Math.min(.95, width / total)) };
+    renderDock({ keep: true });
+}
+$('#dock-resize').addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !dock) return;
+    const start = dockShown;
+    beginDrag($('#dock-resize'), event, dx => resizeDock(start + dx - dockShown), moved => { if (moved) changed(); });
+});
+$('#dock-resize').addEventListener('keydown', event => {
+    const step = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+    if (!step || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault(); event.stopPropagation();
+    resizeDock(step * $('#board-area').clientWidth * (event.shiftKey ? .1 : .02));
+    changed();
+});
+// A dock as loaded from a file or another client, or null when it is not valid for `cards`.
+const canvasDock = (state, cards) => Geometry.validDock(state, cards.map(card => card.id));
 function fitTerminal(s) {
     if (bridge?.remote) return;
     if (!s?.fit || s.canvas !== activeCanvas || !s.element.offsetWidth || !s.element.offsetHeight) return;
@@ -849,7 +1062,7 @@ function mount(card, canvas = activeCanvas) {
     const profile = profiles.find(p => p.id === card.profile);
     const el = document.createElement('article'); el.className = 'terminal-card'; el.dataset.id = card.id;
     el.style.zIndex = String(++topCardZIndex);
-    el.innerHTML = `<div class="card-header"><button type="button" class="card-title" title="Rename terminal"></button><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
+    el.innerHTML = `<div class="card-header"><button type="button" class="card-title" title="Rename terminal"></button><span class="card-status"><i></i><span class="status-text">Ready</span></span><div class="card-actions"><button class="card-account-icon" data-action="account" title="Claude account: Default" aria-label="Claude account: Default">${icon('user')}</button><button class="icon-button" data-action="duplicate" title="Duplicate: new shell in current directory (Ctrl+Shift+D)" aria-label="Duplicate terminal (Ctrl+Shift+D)">${icon('copy')}</button><button class="icon-button" data-action="toggle" title="Start terminal" aria-label="Start terminal">${icon('play')}</button><button class="icon-button" data-action="fresh-shell" title="Start fresh shell" aria-label="Start fresh shell">${icon('terminal')}</button><button class="icon-button" data-action="pin" title="Pin beside the canvas" aria-label="Pin beside the canvas" aria-pressed="false">${icon('pin')}</button><button class="icon-button" data-action="focus" title="Focus terminal" aria-label="Focus terminal">${icon('maximize')}</button><button class="icon-button" data-action="close" title="Close terminal" aria-label="Close terminal">${icon('x')}</button></div></div><div class="card-directory">${icon('folder')}<span></span><button class="card-account" data-action="account"></button></div><div class="terminal-body"><div class="terminal-placeholder"><span class="placeholder-icon">${icon('terminal')}</span><p class="placeholder-copy"></p><button class="button" data-action="start">${icon('play')}Start terminal</button><button class="button" data-action="fresh">Start fresh shell</button></div></div><div class="card-resize" title="Drag to resize"></div>`;
     el.querySelector('.card-header').prepend(mark(profile));
     el.querySelector('.card-title').textContent = terminalDisplayTitle(card);
     el.querySelector('.card-title').setAttribute('aria-label', 'Rename terminal: ' + terminalDisplayTitle(card));
@@ -971,6 +1184,7 @@ function mount(card, canvas = activeCanvas) {
         if (action === 'duplicate') await duplicateTerminal(card);
         if (action === 'account') await openAccountDialog(card);
         // In a split view, a pane's Focus button narrows the view to that terminal alone.
+        if (action === 'pin') { if (isPinned(card.id)) unpinTerminal(card.id); else pinTerminal(card.id); }
         if (action === 'focus') setFocus(split && focused ? card.id : focused ? null : card.id, { panes: split && focused ? [card.id] : null });
         if (action === 'start') await start(card);
         if (action === 'fresh' || action === 'fresh-shell') await start(card, 'fresh');
@@ -985,7 +1199,11 @@ function mount(card, canvas = activeCanvas) {
         }
     }));
     const header = el.querySelector('.card-header');
-    header.addEventListener('pointerdown', event => { if (!event.target.closest('button')) startMove(event, card.id, header); });
+    header.addEventListener('pointerdown', event => {
+        if (event.target.closest('button')) return;
+        if (isPinned(card.id)) dragPinned(event, card.id, header);
+        else startMove(event, card.id, header);
+    });
     drag(el.querySelector('.card-resize'), () => !focused && !boardBusy(), (dx, dy, initial) => {
         card.w = Math.max(400, Math.min(2400, initial.w + dx / workspace.camera.z));
         card.h = Math.max(280, Math.min(1800, initial.h + dy / workspace.camera.z));
@@ -1013,6 +1231,12 @@ function removeCard(card) {
             if (canvas.focused === card.id) canvas.focused = rest[0];
         } else if (canvas.focused === card.id) canvas.focused = null;
     }
+    // A closed pinned terminal leaves the dock, and its neighbours share the room.
+    const pins = visible ? dock : canvas.dock, rest = pins && Geometry.dockRemove(pins.layout, card.id);
+    if (pins && Geometry.dockLeaves(pins.layout).includes(card.id)) {
+        if (visible) dock = rest ? { ...pins, layout: rest } : null;
+        else canvas.dock = rest ? { ...pins, layout: rest } : null;
+    }
     const arrows = attachedArrows([card.id], board);
     const removed = new Set([card.id, ...arrows]);
     detachConnectors([...removed], board);
@@ -1024,7 +1248,7 @@ function removeCard(card) {
     for (const id of removed) picked.delete(id);
     if (visible && removed.has(selected)) selected = [...picked].at(-1) ?? null;
     if (!visible && removed.has(canvas.selected)) canvas.selected = [...picked].at(-1) ?? null;
-    renderLines(); applySelection(false); changed();
+    renderLines(); applySelection(false); if (visible) renderDock({ keep: true }); changed();
 }
 async function stopTerminal(card) {
     if (bridge.remote) return controlTerminal({ action: 'stop', id: card.id });
@@ -1367,12 +1591,23 @@ viewport.addEventListener('wheel', event => {
     const card = findCard(id), s = sessions.get(id);
     if (!card || !s?.terminal || !s.placeholder.hidden || (!focused && id !== selected)) return;
     event.preventDefault(); event.stopPropagation();
-    // A wheel notch is one pixel. Trackpads send small deltas, so the remainder carries over until the direction changes.
+    wheelTextSize(event, card, s);
+}, { capture: true, passive: false });
+// A wheel notch is one pixel. Trackpads send small deltas, so the remainder carries over until the direction changes.
+function wheelTextSize(event, card, s) {
     const delta = event.deltaY * (event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 800 : 1);
     const carried = Math.sign(s.fontWheel || 0) === -Math.sign(delta) ? 0 : s.fontWheel || 0;
     const steps = Math.trunc((carried + delta) / WHEEL_NOTCH);
     s.fontWheel = carried + delta - steps * WHEEL_NOTCH;
     if (steps) setTerminalFontSize(card, terminalFontSize(card) - steps);
+}
+// Over the dock, Ctrl + scroll sizes the text of the pinned terminal under the pointer, as in Focus,
+// and never zooms the page.
+$('#dock').addEventListener('wheel', event => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault(); event.stopPropagation();
+    const id = event.target?.closest?.('.terminal-card')?.dataset.id, card = findCard(id), s = sessions.get(id);
+    if (ready && card && s?.terminal && s.placeholder.hidden) wheelTextSize(event, card, s);
 }, { capture: true, passive: false });
 viewport.addEventListener('wheel', event => {
     if (!event.ctrlKey && !event.metaKey) return;
@@ -1951,6 +2186,7 @@ async function applyBrowserLayout(command, epoch) {
             canvas.selected = canvas.cardIds?.includes(previous?.selected) || canvas.itemIds?.includes(previous?.selected) ? previous.selected : undefined;
             canvas.focused = canvas.cardIds?.includes(previous?.focused) ? previous.focused : undefined;
             canvas.split = previous?.split && previous.split.cardIds.every(id => canvas.cardIds?.includes(id)) ? previous.split : undefined;
+            canvas.dock = previous?.dock && Geometry.dockLeaves(previous.dock.layout).every(id => canvas.cardIds?.includes(id)) ? previous.dock : undefined;
         }
         board.activeCanvas = board.canvases.some(canvas => canvas.id === current.activeCanvas) ? current.activeCanvas : board.canvases[0].id;
     }
@@ -2039,6 +2275,7 @@ function remoteWorkspace(board, epoch) {
         if (!ids.has(canvas.selected)) canvas.selected = null;
         if (!canvas.board.cards.some(card => card.id === canvas.focused)) canvas.focused = null;
         canvas.split = canvas.focused ? validSplit(canvas.split, canvas.board.cards) : null;
+        canvas.dock = canvasDock(canvas.dock, canvas.board.cards);
         return canvas;
     });
     setWorkspaceTerminalTheme(board.terminalTheme);
@@ -2222,7 +2459,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Split view of 2 to 4 selected terminals / resize panes</span><kbd>Ctrl Shift F / drag or arrow keys on a divider</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Split view of 2 to 4 selected terminals / resize panes</span><kbd>Ctrl Shift F / drag or arrow keys on a divider</kbd><span>Pin a terminal beside the canvas / arrange the dock</span><kbd>Pin button / drag a header onto a pane edge</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
@@ -2319,7 +2556,7 @@ $('#update').onclick = () => run(async () => {
     try { await invoke('update-install'); } catch (error) { $('#update').disabled = false; throw error; }
     clearTimeout(autosaveTimer); await invoke('close', workspace);
 });
-window.addEventListener('resize', () => { if (ready) { renderCamera(); renderFocus(); } });
+window.addEventListener('resize', () => { if (ready) renderDock(); });
 installPointerControls();
 
 // Output is acknowledged once xterm has parsed it, which paces the program writing it. xterm parses
