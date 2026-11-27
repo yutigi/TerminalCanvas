@@ -98,24 +98,36 @@ test('native right-clicks never open the WebView2 menu, and the canvas menu and 
             xterm: !!event.target.closest('.xterm'), prevented: event.defaultPrevented
         }));
     });
-    const targets = await h.page.evaluate(id => {
+    // Zoomed out, the terminal leaves empty canvas beside it even on a small CI screen.
+    await h.page.evaluate(() => { setFocus(null); workspace.camera = { x: 24, y: 24, z: .5 }; renderCamera(); });
+    // Each point is found just before its click: selecting the terminal can show a toolbar over the canvas.
+    const pointFor = name => h.page.evaluate(({ id, name }) => {
         const center = element => {
             const r = element.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
         };
-        const screen = sessions.get(id).element.querySelector('.xterm-screen').getBoundingClientRect(), area = viewport.getBoundingClientRect();
-        const points = {
-            terminal: { x: Math.round(screen.x + 60), y: Math.round(screen.y + 40) }, field: center($('#search')),
-            text: center($('.canvas-caption')), canvas: { x: Math.round(area.right - 300), y: Math.round(area.top + 120) }
-        };
         // A title shows a native tooltip, which the popup check would also find.
-        for (const [name, point] of Object.entries(points)) {
-            if (document.elementFromPoint(point.x, point.y).closest('[title]')) throw new Error(`The ${name} point has a tooltip.`);
+        const plain = point => !document.elementFromPoint(point.x, point.y).closest('[title]');
+        let point = null;
+        if (name === 'terminal') {
+            const screen = sessions.get(id).element.querySelector('.xterm-screen').getBoundingClientRect();
+            point = { x: Math.round(screen.x + 40), y: Math.round(screen.y + 30) };
+        } else if (name === 'field') point = center($('#search'));
+        else if (name === 'text') point = center($('.canvas-caption'));
+        else {
+            const area = viewport.getBoundingClientRect(), card = sessions.get(id).element.getBoundingClientRect();
+            for (let y = Math.round(area.top + 40); !point && y < area.bottom - 40; y += 20) {
+                for (let x = Math.round(card.right + 40); !point && x < area.right - 40; x += 20) {
+                    if (emptyCanvasTarget(document.elementFromPoint(x, y)) && plain({ x, y })) point = { x, y };
+                }
+            }
+            if (!point) throw new Error('No empty canvas beside the terminal.');
         }
-        if (!emptyCanvasTarget(document.elementFromPoint(points.canvas.x, points.canvas.y))) throw new Error('The canvas point is not empty.');
-        return points;
-    }, card.id);
+        if (!plain(point)) throw new Error(`The ${name} point has a tooltip.`);
+        return point;
+    }, { id: card.id, name });
     const menu = h.page.locator('#canvas-menu');
-    for (const [name, point] of Object.entries(targets)) {
+    for (const name of ['terminal', 'field', 'text', 'canvas']) {
+        const point = await pointFor(name);
         await sendInput(h.page, () => h.page.mouse.click(point.x, point.y, { button: 'right' }), { type: 'contextmenu' });
         assert.deepEqual(await nativePopups(h), [], `Right-clicking the ${name} opened a WebView2 window.`);
         assert.equal(await menu.isVisible(), name === 'canvas', `Only the empty canvas opens the canvas menu (${name}).`);
