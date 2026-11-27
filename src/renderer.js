@@ -451,9 +451,10 @@ function canvasOverlays() {
 }
 // The terminal chosen from the keyboard in Focus mode, revealed once the canvas and its toolbars return.
 let revealOnReturn = null;
-function revealCard(card) {
+function revealCard(card) { revealBounds(boundsOf(card)); }
+function revealBounds(bounds) {
     const view = { width: viewport.clientWidth, height: viewport.clientHeight };
-    const camera = Geometry.revealCamera(workspace.camera, boundsOf(card), view, REVEAL_INSET, canvasOverlays());
+    const camera = Geometry.revealCamera(workspace.camera, bounds, view, REVEAL_INSET, canvasOverlays());
     if (camera.x === workspace.camera.x && camera.y === workspace.camera.y) return;
     workspace.camera = camera; renderCamera(); changed();
 }
@@ -1993,22 +1994,32 @@ $('#canvas-form').onsubmit = event => {
 $('#search').oninput = () => { if (ready) refresh(); };
 $('#canvas-nav').onclick = () => { if (ready) fitCanvas(); };
 $('#add-terminal').onclick = $('#empty-add').onclick = () => openLaunch();
-$('#arrange').onclick = () => {
+// Arrange lays out every terminal on this canvas (the Arrange button), or only the selected terminals,
+// notes, text, shapes, and images (F). Connectors between two arranged elements set the flow. Lines and
+// frames never move. The arranged elements move below any other note, shape, text, image, or (for a
+// selection) terminal they would cover; frames may sit behind them.
+const ARRANGED_ITEMS = new Set(['note', 'text', 'shape', 'image']);
+function arrange(only = null) {
     if (!ready || boardBusy()) return; setFocus(null);
-    // Connectors between two terminals on this canvas set the flow; other board items keep their place,
-    // and the terminals move below any note, shape, text, or image they would cover. Frames may sit behind them.
-    const cards = new Set(workspace.cards.map(card => card.id));
-    const links = workspace.items.filter(item => item.type === 'line' && cards.has(item.start.id) && cards.has(item.end.id))
+    const moving = only ? [...workspace.cards, ...workspace.items].filter(e => only.has(e.id) && (findCard(e.id) || ARRANGED_ITEMS.has(e.type)))
+        : workspace.cards;
+    if (!moving.length) return;
+    const ids = new Set(moving.map(e => e.id));
+    const links = workspace.items.filter(item => item.type === 'line' && ids.has(item.start.id) && ids.has(item.end.id))
         .map(line => ({ from: line.start.id, to: line.end.id }));
-    const obstacles = workspace.items.filter(item => item.type !== 'line' && item.type !== 'frame').map(boundsOf);
-    const placed = Geometry.arrangeCards(workspace.cards, links, obstacles);
+    const obstacles = [...workspace.cards, ...workspace.items]
+        .filter(e => !ids.has(e.id) && (findCard(e.id) || ARRANGED_ITEMS.has(e.type))).map(boundsOf);
+    const placed = Geometry.arrangeCards(moving, links, obstacles);
     recordChange(() => placed.forEach(({ id, x, y }) => {
-        const card = findCard(id);
-        card.x = clampCoordinate(x); card.y = clampCoordinate(y); renderCardGeometry(card);
+        const element = findElement(id);
+        element.x = clampCoordinate(x); element.y = clampCoordinate(y);
+        if (findCard(id)) renderCardGeometry(element); else renderItem(element);
     }));
     renderLines(); renderSelectionBox(); renderMinimap();
-    fitCanvas();
-};
+    if (only) revealBounds(Geometry.unionBounds(moving.map(boundsOf)));
+    else fitCanvas();
+}
+$('#arrange').onclick = () => arrange();
 $('#focus-toggle').onclick = () => { if (ready) setFocus(focused ? null : selected); };
 $('#exit-focus').onclick = () => setFocus(null);
 $('#fit').onclick = () => { if (ready) fitCanvas(); };
@@ -2089,7 +2100,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / Shift F</kbd><span>Arrange the selection</span><kbd>F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
@@ -2160,7 +2171,14 @@ document.addEventListener('keydown', event => {
     if (focused) return;
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); return; }
     if (event.key === 'Escape') { if (activeTool !== 'select') setTool('select'); else setSelection([]); return; }
-    const shortcut = { v: 'select', h: 'hand', t: 'text', n: 'note', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow', f: 'frame' }[event.key.toLowerCase()];
+    // F arranges the selection, like Blueprint Assist's Format Node; with nothing selected it does nothing.
+    if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        if (event.shiftKey) setTool('frame');
+        else if (!event.repeat && selection.size) arrange(selection);
+        return;
+    }
+    const shortcut = { v: 'select', h: 'hand', t: 'text', n: 'note', r: 'rect', o: 'ellipse', l: 'line', a: 'arrow' }[event.key.toLowerCase()];
     if (shortcut && !event.shiftKey) { event.preventDefault(); setTool(shortcut); }
 });
 // The Rust host reports its version and any update it found in the GitHub releases; Electron sends none.

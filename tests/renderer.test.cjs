@@ -1808,6 +1808,49 @@ test('Arrange follows terminal connectors, keeps sizes and attachments, and is o
     assert.deepEqual(json(context, 'workspace.cards'), arranged);
 });
 
+test('F arranges only the selection, clear of everything else, and Shift+F picks the Frame tool', async () => {
+    const board = createWorkspace();
+    const [a, c] = [createCard({ x: 1000, y: 1000 }), createCard({ x: 0, y: 0 })];
+    board.cards.push(c, a);
+    board.items.push(
+        note('n', 500, 3000),
+        // An unselected note where n would land, so the selection moves down to clear it.
+        note('m', 1300, 1100),
+        { id: 'a-n', type: 'line', start: { id: a.id }, end: { id: 'n' }, arrow: true },
+        { id: 'frame', type: 'frame', x: 0, y: 0, w: 4000, h: 4000, title: 'Selected but never moved' }
+    );
+    const { context, elements } = await boot(board);
+    context.viewport = elements.get('#viewport');
+    const steps = () => json(context, 'boardHistory.undo.length');
+    const where = () => json(context, '[...workspace.cards, ...workspace.items].filter(e => e.type !== "line").map(({ id, x, y, w, h }) => [id, x, y, w, h])');
+    const before = where();
+    assert.equal(navigationKey(context, 'f').prevented, true);
+    assert.deepEqual(where(), before, 'F with nothing selected does nothing');
+    assert.equal(steps(), 0);
+    vm.runInContext(`setSelection(${JSON.stringify([a.id, 'n', 'a-n', 'frame'])})`, context);
+    navigationKey(context, 'f');
+    assert.equal(steps(), 1);
+    const gap = json(context, 'Geometry.ARRANGE_GAP'), top = 1100 + 200 + gap.clear;
+    assert.deepEqual(where(), [
+        [c.id, 0, 0, 660, 430],
+        [a.id, 500, top, 660, 430],
+        ['n', 500 + 660 + gap.column, top, 200, 200],
+        ['m', 1300, 1100, 200, 200],
+        ['frame', 0, 0, 4000, 4000]
+    ], 'a and n follow their arrow from the selection corner; c, m, and the frame stay put');
+    assert.deepEqual(json(context, 'workspace.items.find(i => i.id === "a-n")'), board.items[2], 'the connector stays attached');
+    assert.equal(json(context, 'activeTool'), 'select', 'F no longer picks the Frame tool');
+    const arranged = where();
+    navigationKey(context, 'f');
+    navigationKey(context, 'f', { repeat: true });
+    assert.deepEqual(where(), arranged, 'pressing F again changes nothing');
+    assert.equal(steps(), 1, 'and adds no undo step');
+    vm.runInContext('undo()', context);
+    assert.deepEqual(where(), before, 'one undo restores the selection');
+    assert.equal(navigationKey(context, 'F', { shiftKey: true }).prevented, true);
+    assert.equal(json(context, 'activeTool'), 'frame');
+});
+
 test('deleting the other part of an outer group leaves only the inner group', async () => {
     const workspace = createWorkspace();
     workspace.items.push(note('a', 0, 0), note('b', 300, 0), note('c', 600, 0));

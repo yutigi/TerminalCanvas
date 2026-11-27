@@ -209,7 +209,8 @@
         search(inset, 0);
         return found || place(inset);
     }
-    // Arrange. `cards` are `{ id, x, y, w, h }` in card order and `links` are `{ from, to }` card IDs. Cards joined
+    // Arrange. `cards` are the elements to arrange, `{ id, x, y, w, h }` in board order (terminal cards, or a selection
+    // that may include board items), and `links` are `{ from, to }` IDs. Cards joined
     // by links form left-to-right flows: a card's column is its longest path from a card with no incoming link,
     // and each branch stacks below the first one, so a chain stays on one row. A link that closes a cycle and a
     // self-link are ignored. Each set of linked cards gets its own section, in order of its first card, and the
