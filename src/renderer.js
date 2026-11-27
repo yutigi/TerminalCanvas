@@ -755,8 +755,18 @@ function mount(card, canvas = activeCanvas) {
             theme: { ...terminalTheme(card) }
         });
         s.fit = new window.FitAddon.FitAddon(); s.terminal.loadAddon(s.fit); s.terminal.open(el.querySelector('.terminal-body'));
+        let browserUserInput = false;
+        if (bridge?.remote) {
+            // xterm emits onUserInput immediately before onData for typing and paste.
+            // A DOM event can overlap output parsing and accidentally admit a query reply.
+            s.terminal._core.coreService.onUserInput(() => { browserUserInput = true; });
+        }
         s.terminal.onData(data => {
-            if (bridge?.remote && (bridge.role !== 'control' || s.replaying || !s.userInput)) return;
+            if (bridge?.remote) {
+                const fromUser = browserUserInput;
+                browserUserInput = false;
+                if (bridge.role !== 'control' || s.replaying || !fromUser) return;
+            }
             // A kept (tmux) terminal is not told when the whole app loses focus, so a program that
             // dims while unfocused (Claude Code does) stays active while you use another app.
             // Moving to another card or control in the app still reports focus out. The check waits a
@@ -772,20 +782,6 @@ function mount(card, canvas = activeCanvas) {
             if (startupReply) s.startupCursorQueries--;
             if (s.status === 'running' || startupReply) bridge.input(card.id, data);
         });
-        if (bridge?.remote) {
-            // Only user input reaches the shared PTY. Terminal query responses come from desktop.
-            const userInput = event => {
-                if (!event.isTrusted) return;
-                s.userInput = true;
-                // Native dispatch runs a microtask checkpoint between DOM listeners. Keep the
-                // flag through xterm's target listener, then clear it in the next task.
-                clearTimeout(s.userInputTimer);
-                s.userInputTimer = setTimeout(() => { s.userInput = false; }, 0);
-            };
-            el.addEventListener('keydown', userInput, true);
-            el.addEventListener('paste', userInput, true);
-            el.addEventListener('input', userInput, true);
-        }
         s.terminal.onResize(({ cols, rows }) => { if (['running', 'starting'].includes(s.status)) bridge.resize(card.id, cols, rows); });
         s.terminal.onBell?.(() => markCanvasActivity(s, 'Bell'));
         s.terminal.attachCustomKeyEventHandler(event => {
@@ -818,8 +814,7 @@ function mount(card, canvas = activeCanvas) {
                     run(async () => {
                         const { text } = await invoke('clipboard-read');
                         if (sessions.get(card.id) === s && s.status === 'running' && s.generation === generation) {
-                            s.userInput = true;
-                            try { s.terminal.paste(text); } finally { s.userInput = false; }
+                            s.terminal.paste(text);
                         }
                     });
                 }

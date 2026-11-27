@@ -78,9 +78,11 @@ class Element {
 }
 class KeyboardTerminal {
     constructor(options = {}) { this.selection = ''; this.pasted = []; this.options = { ...options }; this.cols = 80; this.rows = 24; }
+    _core = { coreService: { onUserInput: handler => { this.userInputHandler = handler; } } };
     loadAddon(addon) { addon.activate?.(this); }
     open() {}
     onData(handler) { this.dataHandler = handler; }
+    input(data) { this.userInputHandler?.(); this.dataHandler?.(data); }
     onResize(handler) { this.resizeHandler = handler; }
     resize(cols, rows) {
         if (cols === this.cols && rows === this.rows) return;
@@ -806,10 +808,10 @@ test('browser layout updates preserve terminal emulators, local camera, and desk
     const sent = []; bridge.input = (id, data) => sent.push([id, data]);
     terminal.dataHandler('automatic-query-response');
     assert.equal(sent.length, 0);
-    vm.runInContext('sessions.get(workspace.cards[0].id).userInput = true', context);
-    terminal.dataHandler('typed');
+    terminal.input('typed');
+    terminal.dataHandler('another-query-response');
     assert.deepEqual(sent, [[card.id, 'typed']]);
-    bridge.role = 'view'; terminal.dataHandler('blocked');
+    bridge.role = 'view'; terminal.input('blocked');
     assert.equal(sent.length, 1);
     board.canvases = [
         { id: 'desktop-original', name: 'Original', camera: board.camera, cardIds: [card.id], itemIds: [] },

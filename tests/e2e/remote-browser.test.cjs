@@ -69,6 +69,13 @@ test('loopback controller manages and types in shared terminals while the viewer
     t.after(() => browser.close());
     const controllerContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const controller = await controllerContext.newPage(), browserErrors = [], browserConsole = [];
+    const browserInput = [];
+    controller.on('websocket', socket => {
+        socket.on('framesent', ({ payload }) => {
+            const message = JSON.parse(payload);
+            if (message.action === 'input') browserInput.push(message.data);
+        });
+    });
     controller.on('pageerror', error => browserErrors.push(error.message));
     controller.on('console', message => {
         if (message.type() === 'error') browserConsole.push(message.text());
@@ -108,30 +115,29 @@ test('loopback controller manages and types in shared terminals while the viewer
     assert.deepEqual(await controller.evaluate(id => {
         const s = sessions.get(id); return { cols: s.terminal.cols, rows: s.terminal.rows };
     }, card.id), desktopSize);
-    await controller.evaluate(id => {
-        window.__remoteInputProbe = [];
-        const s = sessions.get(id);
-        s.terminal.onData(() => window.__remoteInputProbe.push({ phase: 'data', userInput: s.userInput }));
-        s.element.addEventListener('keydown', () => window.__remoteInputProbe.push({ phase: 'keydown', userInput: s.userInput }), true);
-    }, card.id);
     const controllerScreen = controller.locator(`.terminal-card[data-id="${card.id}"] .xterm-screen`);
     await controllerScreen.click();
     assert.equal(await controller.locator('.xterm-helper-textarea').evaluate(el => el === document.activeElement), true,
         'Clicking a browser terminal should focus its input.');
     assert.equal(await controller.locator('.xterm-cursor').count(), 0,
         'Focusing the browser mirror drew a cursor over the TUI’s hidden cursor cell.');
+    // Let a DA2 query finish during a trusted keydown. Only the desktop should reply to it.
+    await controller.evaluate(id => {
+        const s = sessions.get(id);
+        s.element.addEventListener('keydown', () => s.terminal._core._inputHandler.parse('\x1b[>c'),
+            { capture: true, once: true });
+    }, card.id);
+    await controller.keyboard.press('Shift');
+    assert.ok(!browserInput.some(data => data.startsWith('\x1b[>')),
+        'The browser forwarded its device-attributes reply to the shared PTY.');
     await controller.keyboard.type("Write-Output 'REMOTE_BROWSER_INPUT'");
     await controller.keyboard.press('Enter');
-    try {
-        await until(async () => hasOutputLine(await h.output(card.id), 'REMOTE_BROWSER_INPUT'),
-            'Browser keyboard input did not reach the desktop PTY.');
-    } catch (error) {
-        t.diagnostic(JSON.stringify(await controller.evaluate(() => window.__remoteInputProbe.slice(-8))));
-        throw error;
-    }
+    await until(async () => hasOutputLine(await h.output(card.id), 'REMOTE_BROWSER_INPUT'),
+        'Browser keyboard input did not reach the desktop PTY.');
 
     await until(() => visibleTerminalLine(controller, card.id, 'REMOTE_BROWSER_INPUT'),
         'The controller did not render the result of browser typing.');
+    assert.ok(browserInput.length > 0, 'The browser did not send any keyboard input.');
 
     const viewerContext = await browser.newContext({ viewport: { width: 1200, height: 800 } });
     const viewer = await viewerContext.newPage();
