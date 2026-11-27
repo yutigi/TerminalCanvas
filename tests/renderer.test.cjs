@@ -427,7 +427,10 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
         querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener(type, fn) { documentListeners.set(type, fn); Element.prototype.addEventListener.call(this, type, fn); }
     });
     for (const element of elements.values()) element.ownerDocument = document;
-    const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
+    // Most tests drag by exact pointer distances, so they start with snapping off; snapping tests pass their own storage.
+    const stored = new Map([['terminal-canvas.snapping.v1', JSON.stringify({ enabled: false, grid: 24 })]]);
+    const localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+    const window = Object.assign(new Element(), { terminalCanvas: bridge, localStorage }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
     const frames = [];
     const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame: callback => frames.push(callback) });
     // Load renderer scripts in the same order as index.html.
@@ -4144,4 +4147,165 @@ test('a refused Keep running switch keeps the shown state and reports why', asyn
     assert.equal(elements.get('#keep-toggle').attributes.get('aria-pressed'), 'false');
     assert.equal(elements.get('#keep-toggle').disabled, false);
     assert.match(elements.get('#toast').textContent, /needs tmux, which was not found/);
+});
+
+function snapStorage(saved) {
+    const values = new Map(saved === undefined ? [] : [['terminal-canvas.snapping.v1', typeof saved === 'string' ? saved : JSON.stringify(saved)]]);
+    return { values, getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+}
+const resizeHandle = (context, id) => vm.runInContext(`itemViews.get(${JSON.stringify(id)}).element.children.find(child => child.className === 'item-resize')`, context);
+const guideClasses = elements => elements.get('#snap-guides').children.map(guide => guide.className);
+const snapBoard = (...items) => { const board = createWorkspace(); board.camera = { x: 0, y: 0, z: 1 }; board.items.push(...items); return board; };
+
+test('snapping starts on, is remembered on this device, and ignores stored values it does not offer', async () => {
+    const storage = snapStorage();
+    const { elements, context, calls } = await boot(snapBoard(), { localStorage: storage });
+    const toggle = elements.get('#snap-toggle'), grid = elements.get('#snap-grid');
+    assert.deepEqual(json(context, 'snapPreferences'), { enabled: true, grid: 24 });
+    assert.equal(toggle.attributes.get('aria-pressed'), 'true');
+    assert.equal(grid.hidden, false);
+    assert.equal(grid.value, '24');
+    toggle.click();
+    assert.equal(toggle.attributes.get('aria-pressed'), 'false');
+    assert.equal(grid.hidden, true, 'the grid size shows only while snapping is on');
+    assert.deepEqual(JSON.parse(storage.values.get('terminal-canvas.snapping.v1')), { enabled: false, grid: 24 });
+    toggle.click();
+    grid.value = '48'; grid.onchange();
+    assert.deepEqual(JSON.parse(storage.values.get('terminal-canvas.snapping.v1')), { enabled: true, grid: 48 });
+    grid.value = '7'; grid.onchange();
+    assert.equal(grid.value, '48', 'a size the menu does not offer is refused');
+    grid.value = '0'; grid.onchange();
+    assert.deepEqual(json(context, 'snapPreferences'), { enabled: true, grid: 0 }, 'No grid still snaps to items');
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'a preference never saves the workspace');
+    assert.equal(json(context, 'boardHistory.undo.length'), 0);
+    assert.equal(json(context, '"snapping" in workspaceSnapshot()'), false);
+    for (const saved of [{ enabled: true, grid: 48 }, { enabled: 'yes', grid: 7 }, 'not json']) {
+        const reopened = await boot(snapBoard(), { localStorage: snapStorage(saved) });
+        assert.deepEqual(json(reopened.context, 'snapPreferences'), typeof saved === 'object' && saved.enabled === true ? saved : { enabled: true, grid: 24 });
+    }
+    const blocked = await boot(snapBoard(), { localStorage: { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } } });
+    blocked.elements.get('#snap-toggle').click();
+    assert.equal(json(blocked.context, 'snapPreferences.enabled'), false, 'blocked storage still lets snapping turn off');
+    elements.get('#help').onclick();
+    assert.match(elements.get('#info-content').innerHTML, /Snap to the grid and items.*hold Alt/);
+});
+
+test('a snapped move is one undo step, and holding Alt places freely at once', async () => {
+    const { elements, context, window } = await boot(snapBoard(note('a', 0, 0), note('far', 5000, 5000)), { localStorage: snapStorage({ enabled: true, grid: 24 }) });
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    const position = () => json(context, '[workspace.items[0].x, workspace.items[0].y]');
+    drag(element, [0, 0], [100, 50]);
+    assert.deepEqual(position(), [96, 48]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 110, clientY: 70, altKey: true });
+    assert.deepEqual(position(), [206, 118]);
+    let prevented = 0;
+    window.dispatch('keyup', { key: 'Alt', preventDefault() { prevented++; } });
+    assert.deepEqual(position(), [216, 120], 'releasing Alt snaps without moving the pointer');
+    window.dispatch('keydown', { key: 'Alt', preventDefault() { prevented++; } });
+    assert.deepEqual(position(), [206, 118]);
+    assert.equal(prevented, 2, 'Alt does not reach the window during a drag');
+    element.dispatch('pointerup', { clientX: 110, clientY: 70 });
+    assert.deepEqual(position(), [206, 118]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 2);
+    window.dispatch('keyup', { key: 'Alt', preventDefault() { prevented++; } });
+    assert.deepEqual(position(), [206, 118], 'Alt does nothing once the drag ends');
+    assert.equal(prevented, 2);
+    vm.runInContext('undo()', context);
+    assert.deepEqual(position(), [96, 48]);
+    // Turned off, moves follow the pointer exactly.
+    elements.get('#snap-toggle').click();
+    drag(element, [0, 0], [5, 7]);
+    assert.deepEqual(position(), [101, 55]);
+});
+
+test('moves snap to the edges of elements in view, guided, at a constant screen distance', async () => {
+    const board = snapBoard(note('a', 0, 0), note('b', 300, 0), note('hidden', 197, 2000), { id: 'wire', type: 'line', start: { id: 'a' }, end: { id: 'b' } });
+    const { elements, context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 0 }) });
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    const a = () => json(context, '[workspace.items[0].x, workspace.items[0].y]');
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 97, clientY: 3 });
+    assert.deepEqual(a(), [100, 0], 'the right edge meets b, and the top edges align');
+    assert.deepEqual(guideClasses(elements), ['snap-guide vertical', 'snap-guide horizontal', 'snap-guide horizontal', 'snap-guide horizontal']);
+    assert.deepEqual(elements.get('#snap-guides').children.map(guide => [guide.style.left, guide.style.top, guide.style.width, guide.style.height]),
+        [['300px', '0px', '0px', '200px'], ['100px', '0px', '400px', '0px'], ['100px', '100px', '400px', '0px'], ['100px', '200px', '400px', '0px']]);
+    assert.equal(vm.runInContext('itemViews.get("wire").stroke.attributes.get("d")', context), 'M300 100L300 100', 'the connector follows');
+    element.dispatch('pointerup', { clientX: 97, clientY: 3 });
+    assert.deepEqual(guideClasses(elements), [], 'guides leave with the drag');
+    // An element out of view is not a target, even where it would line up.
+    drag(element, [0, 0], [99, 30]);
+    assert.deepEqual(a(), [199, 30]);
+    // The reach is 6 screen pixels: 3 world pixels at 200%, 12 at 50%.
+    for (const [z, dx, x] of [[2, 194, 100], [2, 192, 96], [.5, 44, 100], [.5, 43, 86]]) {
+        vm.runInContext(`Object.assign(workspace.items[0], { x: 0, y: 30 }); renderItem(workspace.items[0]); workspace.camera.z = ${z}`, context);
+        drag(element, [0, 0], [dx, 0]);
+        assert.deepEqual(a(), [x, 30], `zoom ${z}, ${dx} screen pixels`);
+    }
+});
+
+test('frames, their contents, and free line ends snap as one selection', async () => {
+    const board = snapBoard(
+        { id: 'frame', type: 'frame', x: 5, y: 5, w: 700, h: 400, title: 'Frame' }, note('inside', 50, 50),
+        { id: 'free', type: 'line', start: { x: 100, y: 300 }, end: { x: 200, y: 300 } });
+    const { context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 24 }) });
+    drag(vm.runInContext('itemViews.get("frame").title', context), [0, 0], [10, 20]);
+    const items = Object.fromEntries(json(context, 'workspace.items').map(item => [item.id, item]));
+    assert.deepEqual([items.frame.x, items.frame.y, items.inside.x, items.inside.y], [24, 24, 69, 69]);
+    assert.deepEqual([items.free.start, items.free.end], [{ x: 119, y: 319 }, { x: 219, y: 319 }]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+});
+
+test('terminal and item resizes snap to the grid and to matching sizes, within their limits', async () => {
+    const board = snapBoard(note('note', 0, 984), { id: 'photo', type: 'image', asset: 'a.png', x: 480, y: 1000, w: 320, h: 240 });
+    board.cards.push(createCard({ x: 0, y: 0, w: 660, h: 430 }), createCard({ x: 800, y: 0, w: 500, h: 300 }));
+    const { elements, context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 24 }) });
+    const handle = vm.runInContext('sessions.get(workspace.cards[0].id).element.querySelector(".card-resize")', context);
+    const card = () => json(context, '[workspace.cards[0].w, workspace.cards[0].h]');
+    handle.dispatch('pointerdown', { clientX: 660, clientY: 430 });
+    handle.dispatch('pointermove', { clientX: 505, clientY: 302 });
+    assert.deepEqual(card(), [500, 300], 'the other terminal sets the width and the bottom edge');
+    assert.equal(guideClasses(elements).filter(name => name.endsWith(' size')).length, 4, 'size markers for both terminals, on both axes');
+    handle.dispatch('pointerup', { clientX: 505, clientY: 302 });
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+    drag(handle, [500, 300], [0, 0]);
+    assert.deepEqual(card(), [408, 288], 'the smallest terminal size whose edges lie on the grid');
+    vm.runInContext('workspace.camera.y = -1000; renderCamera()', context);
+    drag(resizeHandle(context, 'note'), [0, 0], [13, 30]);
+    assert.deepEqual(json(context, '[workspace.items[0].w, workspace.items[0].h]'), [216, 240]);
+    drag(resizeHandle(context, 'photo'), [0, 0], [10, 50]);
+    assert.deepEqual(json(context, '[workspace.items[1].w, workspace.items[1].h]'), [336, 252], 'an image keeps its proportions');
+    assert.equal(json(context, 'boardHistory.undo.length'), 4);
+});
+
+test('the background dots mark the snapping grid without crowding at low zoom', async () => {
+    const board = snapBoard(); board.camera = { x: 40, y: 10, z: .5 };
+    const { elements, context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 8 }) });
+    const style = elements.get('#viewport').style;
+    assert.deepEqual([style.backgroundSize, style.backgroundPosition], ['16px 16px', '32px 2px']);
+    vm.runInContext('zoom(3)', context);
+    assert.equal(style.backgroundSize, '12px 12px');
+    elements.get('#snap-toggle').click();
+    assert.equal(style.backgroundSize, `${24 * 1.5}px ${24 * 1.5}px`, 'off, the usual 24-pixel dots return');
+    assert.equal(style.backgroundPosition, json(context, '`${workspace.camera.x}px ${workspace.camera.y}px`'));
+});
+
+test('a browser controller saves the snapped layout only after the drag ends', async () => {
+    const board = snapBoard(note('a', 0, 0));
+    const { context, calls } = await boot(board, { remote: true, localStorage: snapStorage({ enabled: true, grid: 24 }),
+        respond: (action, payload) => action === 'remote-terminal' ? { workspace: payload.command.workspace } : null });
+    vm.runInContext('layoutDigest = async () => "digest"', context);
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 100, clientY: 50 });
+    await vm.runInContext('saveRemoteLayout()', context);
+    assert.equal(calls.some(call => call.action === 'remote-terminal'), false, 'nothing is sent mid-drag');
+    element.dispatch('pointerup', { clientX: 100, clientY: 50 });
+    await vm.runInContext('saveRemoteLayout()', context);
+    const sent = calls.filter(call => call.action === 'remote-terminal');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].payload.command.action, 'layout');
+    assert.deepEqual(JSON.parse(JSON.stringify(sent[0].payload.command.workspace.items.map(item => [item.x, item.y]))), [[96, 48]]);
+    assert.deepEqual(json(context, '[workspace.items[0].x, workspace.items[0].y]'), [96, 48]);
 });

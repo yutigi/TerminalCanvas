@@ -10,8 +10,10 @@ test('E2E output checks ignore OSC reports and echoed command mentions', () => {
 });
 
 test('E2E polling tolerates transient observation errors and fails immediately after a terminal process error', async () => {
+    // The deadline only bounds a stalled runner; the poll returns as soon as the second check succeeds.
     let calls = 0;
-    assert.equal(await until(() => { if (++calls === 1) throw new Error('not ready'); return 'ready'; }, 'missing', 200), 'ready');
+    assert.equal(await until(() => { if (++calls === 1) throw new Error('not ready'); return 'ready'; }, 'missing', 5000), 'ready');
+    assert.equal(calls, 2);
     const failure = Object.assign(new Error('Host exited'), { terminal: true });
     await assert.rejects(until(() => { throw failure; }, 'timeout', 200), error => error === failure);
 });
