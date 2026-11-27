@@ -62,7 +62,8 @@ On macOS, Command + C/V also copy/paste; Ctrl + C still interrupts when no text 
 
 View and control Terminal Canvas in a browser on this computer or another device on a private network.
 
-1. Open **Browser access · Off** in the desktop sidebar. Choose **This computer** for local access.
+1. Open **Browser access** in the desktop sidebar. It shows **Off**, **On** with no browsers connected,
+   or **On** with the number of connected browsers. Choose **This computer** for local access.
    To reach the app from another device, choose **Private network (HTTPS)** and enter this computer’s
    private IPv4 address. A fixed port makes it easier to allow inbound connections on the private network.
    Leave it at `0` to choose an available port automatically.
@@ -70,7 +71,7 @@ View and control Terminal Canvas in a browser on this computer or another device
    each device, and install and trust it as a root certificate. The certificate lasts until the desktop
    app restarts. On iPhone and iPad, enable full trust for the installed root in **Certificate Trust Settings**.
 3. Open the exact address shown and enter one of the displayed tokens. The sidebar shows how many
-   clients are connected.
+   browsers are connected.
 4. Use the controller token to create a terminal on the current canvas, run a launch command, or
    type into a running shell, including paste and terminal interrupts. You can also start, resume,
    stop, and close terminals from their cards. Enter project folders as paths on the desktop computer.

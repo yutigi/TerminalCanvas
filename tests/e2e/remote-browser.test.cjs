@@ -27,6 +27,15 @@ async function visibleTerminalLine(page, id, text) {
     }, { id, text });
 }
 
+/* The sidebar button's state as text, so each assertion proves the state is readable without color. */
+async function accessButton(page) {
+    return page.evaluate(() => {
+        const button = document.querySelector('#remote-settings');
+        return { state: button.dataset.state, status: document.querySelector('#remote-access-status').textContent,
+            chip: document.querySelector('#remote-access-chip').textContent, name: button.getAttribute('aria-label') };
+    });
+}
+
 test('loopback controller manages and types in shared terminals while the viewer follows output', {
     skip: process.platform !== 'win32', timeout: 120000
 }, async t => {
@@ -56,6 +65,7 @@ test('loopback controller manages and types in shared terminals while the viewer
         sessions.get(id).terminal.write('\x1b[?25l', resolve);
     }), card.id);
     if (!await h.page.locator('#remote-settings').isVisible()) await h.page.locator('#sidebar-toggle').click();
+    assert.deepEqual(await accessButton(h.page), { state: 'off', status: 'Not sharing', chip: 'Off', name: 'Browser access: off' });
     await h.page.locator('#remote-settings').click();
     await h.page.locator('#remote-start-stop').click();
     const access = await until(async () => {
@@ -63,6 +73,9 @@ test('loopback controller manages and types in shared terminals while the viewer
         return status.running && status;
     }, 'Browser access did not start.');
     await h.page.locator('#remote-done').click();
+    assert.deepEqual(await accessButton(h.page), { state: 'waiting', status: 'No browsers connected', chip: 'On',
+        name: 'Browser access: on, no browsers connected' });
+    await h.page.screenshot({ path: path.join(root, '.cache', 'tauri-remote-sidebar-waiting.png') });
 
     const browser = await chromium.launch({ channel: 'msedge', headless: true,
         args: ['--disable-background-networking', '--disable-component-update', '--no-first-run'] });
@@ -268,6 +281,10 @@ test('loopback controller manages and types in shared terminals while the viewer
     await controller.locator('#remote-limitations button').click();
     await until(async () => (await h.page.evaluate(() => invoke('remote-status'))).clients === 2,
         'Desktop did not report both clients.');
+    await until(async () => (await accessButton(h.page)).status === '2 browsers connected',
+        'The desktop sidebar did not show both connected browsers.');
+    assert.deepEqual(await accessButton(h.page), { state: 'connected', status: '2 browsers connected', chip: 'On',
+        name: 'Browser access: on, 2 browsers connected' });
     await controller.screenshot({ path: path.join(root, '.cache', 'tauri-remote-browser-controller.png') });
     await h.page.screenshot({ path: path.join(root, '.cache', 'tauri-remote-browser-desktop.png') });
     assert.ok((await controller.evaluate(() => window.terminalCanvas.invoke('close', {}))).error);
@@ -284,6 +301,8 @@ test('loopback controller manages and types in shared terminals while the viewer
     await viewer.waitForFunction(() => document.querySelector('#remote-banner').textContent.includes('closed'));
     await h.page.evaluate(() => invoke('remote-stop'));
     assert.equal((await h.page.evaluate(() => invoke('remote-status'))).running, false);
+    await until(async () => (await accessButton(h.page)).state === 'off', 'The desktop sidebar did not return to Off.');
+    assert.deepEqual(await accessButton(h.page), { state: 'off', status: 'Not sharing', chip: 'Off', name: 'Browser access: off' });
     assert.deepEqual(browserErrors, []);
 });
 

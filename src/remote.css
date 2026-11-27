@@ -1,5 +1,26 @@
 /* Browser access styling is isolated from the established desktop layout. */
-.remote-running { color: #c8ecb5; background: #303b2b; }
+/* Sidebar button: label and state on separate lines, plus an Off/On chip. Each state is spelled out,
+   so the color and fill only reinforce it. Text truncates rather than wraps in the narrow sidebar. */
+.remote-access-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.remote-access-label, .remote-access-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-access-label { font-size: 11px; }
+.remote-access-status { font-size: 9px; color: var(--muted); }
+.remote-access-chip { flex-shrink: 0; min-width: 28px; padding: 3px 6px; border: 1px solid #3a404a; border-radius: 4px;
+    text-align: center; font-size: 8px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: #8f9aab; }
+.remote-access[data-state="off"] .remote-access-chip { border-style: dashed; }
+.remote-access.remote-running { background: #1e251d; }
+.remote-access.remote-running:hover { background: #263024; }
+.remote-access.remote-running > [data-icon] { color: var(--accent); }
+.remote-access.remote-running .remote-access-status { color: #a7bb9b; }
+.remote-access[data-state="waiting"] .remote-access-chip { border-color: #5b6b50; background: #222b20; color: #b9d79e; }
+.remote-access[data-state="connected"] .remote-access-chip { border-color: var(--accent); background: var(--accent); color: #283623; }
+.remote-access[data-state="connected"] .remote-access-status { color: #c8ecb5; }
+#remote-settings:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (forced-colors: active) {
+    .remote-access-chip { border-color: ButtonText; color: ButtonText; }
+    .remote-access[data-state="connected"] .remote-access-chip { border-color: Highlight; background: Highlight; color: HighlightText; forced-color-adjust: none; }
+    #remote-settings:focus-visible { outline-color: Highlight; }
+}
 #remote-address { display: block; padding: 0 10px 8px; color: #a7bb9b; font: 10px/1.5 Consolas, monospace; overflow-wrap: anywhere; }
 #remote-dialog, #remote-limitations { width: 580px; }
 #remote-control-token, #remote-view-token { font-family: Consolas, monospace; }

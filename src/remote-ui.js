@@ -4,6 +4,9 @@
     const bridge = root.terminalCanvas;
     if (!bridge) return;
     const button = document.querySelector('#remote-settings');
+    const label = document.querySelector('#remote-access-label');
+    const status = document.querySelector('#remote-access-status');
+    const chip = document.querySelector('#remote-access-chip');
     if (bridge.remote) {
         const limits = document.createElement('dialog');
         limits.id = 'remote-limitations';
@@ -17,7 +20,10 @@
             <form method="dialog" class="dialog-footer"><button class="button primary">Done</button></form>`;
         document.body.append(limits);
         button.hidden = false;
-        button.textContent = 'Browser access features';
+        button.dataset.state = 'features';
+        label.textContent = 'Browser access features';
+        status.hidden = true; chip.hidden = true;
+        button.removeAttribute('aria-label');
         button.onclick = () => limits.showModal();
         return;
     }
@@ -56,8 +62,15 @@
     let state = { running: false, clients: 0 }, busy = false;
     const render = update => {
         state = { ...state, ...update };
-        button.textContent = state.running ? `Browser access · ${state.clients} connected` : 'Browser access · Off';
-        button.classList.toggle('remote-running', state.running);
+        // Three states, each named in text so color only reinforces them: off, on with no browsers, on with N.
+        const clients = state.running ? Math.max(0, Number(state.clients) || 0) : 0;
+        const detail = !state.running ? 'Not sharing'
+            : clients ? `${clients} ${clients === 1 ? 'browser' : 'browsers'} connected` : 'No browsers connected';
+        button.dataset.state = !state.running ? 'off' : clients ? 'connected' : 'waiting';
+        button.setAttribute('aria-label', state.running ? `Browser access: on, ${detail.toLowerCase()}` : 'Browser access: off');
+        status.textContent = detail;
+        chip.textContent = state.running ? 'On' : 'Off';
+        button.classList.toggle('remote-running', !!state.running);
         document.querySelector('#remote-address').hidden = !state.running;
         document.querySelector('#remote-address').textContent = state.running ? state.url : '';
         find('#remote-state').textContent = state.running ? `${state.url} · ${state.clients} connected` : 'Off · no browser server listening';
