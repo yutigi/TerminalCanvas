@@ -36,7 +36,8 @@ const paths = {
     trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
-    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>'
+    spark: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15v4m-2-2h4"/>',
+    magnet: '<path d="M6 3v9a6 6 0 0 0 12 0V3h-4v9a2 2 0 0 1-4 0V3H6Z"/><path d="M6 8h4m4 0h4"/>'
 };
 function icon(name) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.terminal}</svg>`; }
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -113,6 +114,37 @@ for (const name of Object.keys(sidebarSections)) {
     };
 }
 renderSidebar();
+// Snapping is also a preference of this webview profile. It starts on, with the 24-pixel grid the
+// canvas dots already show. `grid` is the grid size in world pixels, or 0 to snap only to other elements.
+const SNAP_PREFERENCE_KEY = 'terminal-canvas.snapping.v1';
+const SNAP_GRIDS = Object.freeze([0, 8, 12, 16, 24, 32, 48, 64]);
+const snapPreferences = { enabled: true, grid: 24 };
+try {
+    const saved = JSON.parse(window.localStorage.getItem(SNAP_PREFERENCE_KEY));
+    if (typeof saved?.enabled === 'boolean') snapPreferences.enabled = saved.enabled;
+    if (SNAP_GRIDS.includes(saved?.grid)) snapPreferences.grid = saved.grid;
+} catch { /* Missing, malformed, or unavailable storage keeps the defaults. */ }
+function setSnapPreferences(change) {
+    Object.assign(snapPreferences, change);
+    try { window.localStorage.setItem(SNAP_PREFERENCE_KEY, JSON.stringify(snapPreferences)); }
+    catch { /* A blocked or full store must not prevent snapping. */ }
+    renderSnapControls();
+    if (ready) renderGrid();
+}
+function renderSnapControls() {
+    const toggle = $('#snap-toggle'), grid = $('#snap-grid');
+    toggle.setAttribute('aria-pressed', String(snapPreferences.enabled));
+    toggle.title = `Snapping ${snapPreferences.enabled ? 'on' : 'off'}: align moves and resizes with the grid and other items. Hold Alt while dragging to place freely.`;
+    grid.value = String(snapPreferences.grid);
+    grid.hidden = !snapPreferences.enabled;
+}
+$('#snap-toggle').onclick = () => setSnapPreferences({ enabled: !snapPreferences.enabled });
+$('#snap-grid').onchange = () => {
+    const grid = Number($('#snap-grid').value);
+    if (SNAP_GRIDS.includes(grid)) setSnapPreferences({ grid });
+    else renderSnapControls();
+};
+renderSnapControls();
 // `selection` holds every selected terminal and item; `selected` is the primary one.
 let selection = new Set(), activeTool = 'select', editing = null;
 // The terminal reached with the keyboard, highlighted while the keyboard is on the board rather than in it.
@@ -169,13 +201,27 @@ function renderCamera() {
     closeCanvasMenu();
     const { x, y, z } = workspace.camera;
     world.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
-    viewport.style.backgroundSize = `${24 * z}px ${24 * z}px`;
-    viewport.style.backgroundPosition = `${x}px ${y}px`;
+    renderGrid();
     viewport.style.setProperty('--viewport-width', `${viewport.clientWidth}px`);
     viewport.style.setProperty('--viewport-height', `${viewport.clientHeight}px`);
     viewport.style.setProperty('--camera-zoom', String(z));
     $('#zoom-reset').textContent = `${Math.round(z * 100)}%`;
     renderMinimap();
+}
+// The background dots. While snapping to a grid they mark its lines, skipping lines when the zoom
+// would crowd them; otherwise they keep the canvas's usual 24-pixel pattern.
+function renderGrid() {
+    const { x, y, z } = workspace.camera, grid = snapPreferences.enabled ? snapPreferences.grid : 0;
+    if (!grid) {
+        viewport.style.backgroundSize = `${24 * z}px ${24 * z}px`;
+        viewport.style.backgroundPosition = `${x}px ${y}px`;
+        return;
+    }
+    let tile = grid * z;
+    while (tile < 12) tile *= 2;
+    // Each dot is drawn in the middle of its tile.
+    viewport.style.backgroundSize = `${tile}px ${tile}px`;
+    viewport.style.backgroundPosition = `${x - tile / 2}px ${y - tile / 2}px`;
 }
 function positionMinimapElement(element, rect) {
     Object.assign(element.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
@@ -249,7 +295,7 @@ minimapMap.addEventListener('pointerdown', event => {
     move(event);
 });
 minimapMap.addEventListener('keydown', event => {
-    if (!ready || minimap.hidden || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    if (!ready || minimap.hidden || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) || navigationDirection(event)) return;
     event.preventDefault(); event.stopPropagation();
     const amount = event.shiftKey ? .5 : .1;
     const dx = event.key === 'ArrowLeft' ? 1 : event.key === 'ArrowRight' ? -1 : 0;
@@ -389,10 +435,13 @@ function startMove(event, id, handle) {
     const { rects, lines } = movingElements(), z = workspace.camera.z;
     const origins = rects.map(e => ({ e, x: e.x, y: e.y }));
     const ends = lines.map(line => ({ line, start: line.start.id ? null : { ...line.start }, end: line.end.id ? null : { ...line.end } }));
-    const shift = (point, dx, dy) => ({ x: clampCoordinate(point.x + dx / z), y: clampCoordinate(point.y + dy / z) });
-    beginDrag(handle, event, (dx, dy) => {
-        for (const o of origins) { Object.assign(o.e, shift(o, dx, dy)); placeElement(o.e); }
-        for (const o of ends) { if (o.start) o.line.start = shift(o.start, dx, dy); if (o.end) o.line.end = shift(o.end, dx, dy); }
+    // The selection snaps as one rectangle; lines alone do not snap.
+    const bounds = Geometry.unionBounds(rects.map(boundsOf)), targets = bounds ? snapTargets([...rects, ...lines].map(e => e.id)) : [];
+    beginDrag(handle, event, (dx, dy, e) => {
+        const snap = bounds ? snapMoveOffset({ ...bounds, x: bounds.x + dx / z, y: bounds.y + dy / z }, targets, e) : { x: 0, y: 0 };
+        const shift = point => ({ x: clampCoordinate(point.x + dx / z + snap.x), y: clampCoordinate(point.y + dy / z + snap.y) });
+        for (const o of origins) { Object.assign(o.e, shift(o)); placeElement(o.e); }
+        for (const o of ends) { if (o.start) o.line.start = shift(o.start); if (o.end) o.line.end = shift(o.end); }
         renderLines(); renderSelectionBox();
     }, moved => { if (moved) { renderMinimap(); changed(); } }, { history: true });
 }
@@ -430,11 +479,20 @@ function centerCard(card) {
     workspace.camera.y = Math.max(-100000, Math.min(100000, (viewport.clientHeight - card.h * z) / 2 - card.y * z));
     renderCamera(); changed();
 }
-// Keyboard navigation. The keyboard is either on the board, where Alt+Arrow moves the selection between
-// terminals, or typing in one terminal, where everything except the app's Ctrl+Shift shortcuts reaches
-// the program, Alt+Arrow included. Enter moves the keyboard into the selected terminal; Ctrl+Shift+E
-// moves it back out to the board. Both work in Focus mode, where Alt+Arrow changes the focused terminal.
+// Keyboard navigation. The keyboard is either on the board or typing in one terminal, where every key
+// except the app's Ctrl+Shift shortcuts reaches the program, Alt+Arrow included. Ctrl+Alt+Shift+Arrow
+// (Command in place of Ctrl on macOS) moves to the nearest terminal that way from either place: on the
+// board it selects that terminal without typing in it, and from a terminal it types in that one, as Enter
+// does. Enter moves the keyboard into the selected terminal; Ctrl+Shift+E moves it back out to the board.
+// All of them work in Focus mode, where moving changes the focused terminal.
 const NAV_DIRECTIONS = Object.freeze({ ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' });
+// The direction of a Ctrl+Alt+Shift+Arrow press, or null. Shells and editors leave this chord unbound,
+// unlike Ctrl+Shift+Arrow (word selection) and Ctrl+Alt+Arrow (AltGr+Arrow, and display rotation on
+// some Intel drivers), and it sits beside Ctrl+Alt+Shift+PageUp/PageDown.
+function navigationDirection(event) {
+    if (!(event.ctrlKey || event.metaKey) || !event.altKey || !event.shiftKey) return null;
+    return NAV_DIRECTIONS[event.key] || null;
+}
 // A revealed terminal keeps this far from the view's edges, and this far from the toolbars and minimap.
 const REVEAL_INSET = Object.freeze({ left: 24, top: 24, right: 24, bottom: 24 });
 const REVEAL_GAP = 16;
@@ -564,18 +622,25 @@ terminalSwitcher.addEventListener('keydown', event => {
 switcherQuery.oninput = renderTerminalSwitcher;
 $('#find-terminal').onclick = openTerminalSwitcher;
 $('#switcher-close').onclick = () => terminalSwitcher.close();
-// From the selected element, or with nothing selected from the middle of the view, to the nearest
-// terminal that way. When none lies that way the selection stays, and a selected terminal is shown again.
-function navigateTerminals(direction) {
+// From `from` (the terminal the keyboard is in), the selected element, or with nothing selected the
+// middle of the view, to the nearest terminal that way. When none lies that way the selection stays,
+// and a selected terminal is shown again. With `type`, the keyboard then types in it, as Enter does.
+function navigateTerminals(direction, { from = null, type = false } = {}) {
     if (boardBusy()) return;
     if (editing) document.activeElement?.blur();
     const candidates = workspace.cards.map(card => ({ id: card.id, bounds: boundsOf(card) }));
     if (!candidates.length) return toast('There are no terminals on this canvas yet.');
-    const origin = findElement(focused || selected);
+    const origin = findElement(from || focused || selected);
     const id = origin
         ? Geometry.nearestInDirection(boundsOf(origin), direction, candidates.filter(candidate => candidate.id !== origin.id), origin.id)
         : Geometry.nearestToPoint(viewportCenterWorld(), candidates);
-    showTerminal(id || (origin?.type === 'terminal' ? origin.id : null));
+    // Typing with no terminal that way: stay in this one rather than blur and refocus it.
+    if (type && !id && origin?.id === from) {
+        if (!focused) revealCard(origin);
+        return;
+    }
+    const target = id || (origin?.type === 'terminal' ? origin.id : null);
+    if (showTerminal(target) && type) enterTerminal(target);
 }
 // Enter: type in the selected terminal. One that is not running gets its Start or Resume button instead,
 // so the keyboard never starts a command by itself.
@@ -791,7 +856,7 @@ function mount(card, canvas = activeCanvas) {
         s.terminal.onBell?.(() => markCanvasActivity(s, 'Bell'));
         s.terminal.attachCustomKeyEventHandler(event => {
             const key = event.key.toLowerCase();
-            if (canvasShortcut(event, { detect: true })) return false;
+            if (canvasShortcut(event, { detect: true }) || navigationDirection(event)) return false;
             if (event.altKey || event.isComposing) return true;
             if ((event.ctrlKey || event.metaKey) && ((!event.shiftKey && ['s', 'o'].includes(key)) || (event.shiftKey && ['n', 'f', 'd', 'e', 'p', 'b'].includes(key)))) return false;
             const modified = event.ctrlKey || event.metaKey;
@@ -857,11 +922,14 @@ function mount(card, canvas = activeCanvas) {
     }));
     const header = el.querySelector('.card-header');
     header.addEventListener('pointerdown', event => { if (!event.target.closest('button')) startMove(event, card.id, header); });
-    drag(el.querySelector('.card-resize'), () => !focused && !boardBusy(), (dx, dy, initial) => {
-        card.w = Math.max(400, Math.min(2400, initial.w + dx / workspace.camera.z));
-        card.h = Math.max(280, Math.min(1800, initial.h + dy / workspace.camera.z));
+    const limits = { min: { w: 400, h: 280 }, max: { w: 2400, h: 1800 } };
+    const clampCard = (value, size) => Math.max(limits.min[size], Math.min(limits.max[size], value));
+    drag(el.querySelector('.card-resize'), () => !focused && !boardBusy(), (dx, dy, initial, e) => {
+        const raw = { x: card.x, y: card.y, w: clampCard(initial.w + dx / workspace.camera.z, 'w'), h: clampCard(initial.h + dy / workspace.camera.z, 'h') };
+        const size = snapResizeTo(raw, initial.targets, e, limits);
+        card.w = clampCard(size.w, 'w'); card.h = clampCard(size.h, 'h');
         renderGeometry(card);
-    }, () => ({ w: card.w, h: card.h }));
+    }, () => ({ w: card.w, h: card.h, targets: snapTargets([card.id]) }));
 }
 // Closing a terminal is not undoable. Arrows attached to it are removed with it; other connectors,
 // and those in undo steps that refer to it, are left with free ends.
@@ -1051,6 +1119,13 @@ function beginDrag(element, event, move, end, { history = false } = {}) {
         if (history && !step) { step = snapshotBoard(); commitHistory(step); }
         move(dx, dy, e);
     };
+    // Holding Alt places freely instead of snapping. Pressing or releasing it applies at once, without
+    // waiting for the pointer to move, and does not reach the window, where it could open a menu.
+    const modifier = e => {
+        if (e.key !== 'Alt' || done) return;
+        e.preventDefault();
+        update({ type: 'pointermove', pointerId: event.pointerId, clientX: last.clientX, clientY: last.clientY, altKey: e.type === 'keydown' });
+    };
     // If the captured element is removed mid-drag, the release goes elsewhere; the window still sees it.
     const finish = e => {
         if (done || e.pointerId !== event.pointerId) return;
@@ -1058,6 +1133,8 @@ function beginDrag(element, event, move, end, { history = false } = {}) {
         openDrags.delete(stop);
         for (const type of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) element.removeEventListener(type, type === 'pointermove' ? update : finish);
         window.removeEventListener('pointerup', finish, true); window.removeEventListener('pointercancel', finish, true);
+        window.removeEventListener('keydown', modifier, true); window.removeEventListener('keyup', modifier, true);
+        renderSnapGuides([]);
         activeDrags--;
         if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId);
         const cancelled = e.type === 'pointercancel';
@@ -1068,6 +1145,7 @@ function beginDrag(element, event, move, end, { history = false } = {}) {
     element.addEventListener('pointermove', update);
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) element.addEventListener(type, finish);
     window.addEventListener('pointerup', finish, true); window.addEventListener('pointercancel', finish, true);
+    window.addEventListener('keydown', modifier, true); window.addEventListener('keyup', modifier, true);
 }
 const openDrags = new Set();
 window.addEventListener('blur', () => { for (const stop of [...openDrags]) stop(); });
@@ -1075,7 +1153,7 @@ function drag(element, allowed, move, initial) {
     element.addEventListener('pointerdown', event => {
         if (event.button !== 0 || !allowed(event)) return;
         const data = initial();
-        beginDrag(element, event, (dx, dy) => move(dx, dy, data), moved => { if (moved) changed(); }, { history: true });
+        beginDrag(element, event, (dx, dy, e) => move(dx, dy, data, e), moved => { if (moved) changed(); }, { history: true });
     });
 }
 const onCanvasChrome = target => !!target.closest('.canvas-toolbar, .create-toolbar, .style-toolbar, .minimap, .exit-focus, .canvas-menu');
@@ -2100,7 +2178,7 @@ viewport.addEventListener('drop', event => {
 });
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => button.closest('dialog').close());
 function info(title, body) { $('#info-title').textContent = title; $('#info-content').innerHTML = body; $('#info-dialog').showModal(); }
-$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Select the nearest terminal in a direction</span><kbd>Alt + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / Shift F</kbd><span>Arrange the selection</span><kbd>F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Alt + arrow keys apply to the current canvas. Alt + arrow keys select a terminal without typing in it, so they work while the canvas has the keyboard; inside a terminal they reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Alt + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
+$('#help').onclick = () => info('A workspace that moves with you.', '<p class="info-copy">Launch a terminal for each task or AI agent. Drag its header to move it, pull the bottom-right corner to resize, and use Focus for uninterrupted work.</p><div class="help-grid"><span>New terminal</span><kbd>Ctrl Shift N</kbd><span>New / rename / delete canvas</span><kbd>Ctrl Shift K / R / Delete</kbd><span>Previous / next canvas</span><kbd>Ctrl Shift PageUp / PageDown</kbd><span>Reorder current canvas</span><kbd>Ctrl Alt Shift PageUp / PageDown</kbd><span>Duplicate selected terminal (fresh shell)</span><kbd>Ctrl Shift D</kbd><span>Save / open workspace</span><kbd>Ctrl S / Ctrl O</kbd><span>Toggle focused terminal</span><kbd>Ctrl Shift F</kbd><span>Hide / show sidebar</span><kbd>Ctrl/Cmd Shift B</kbd><span>Reveal sidebar search</span><kbd>/</kbd><span>Find terminal (Command on macOS)</span><kbd>Ctrl Shift P</kbd><span>Choose / reveal / cancel in the switcher</span><kbd>↑ ↓ / Enter / Esc</kbd><span>Move to the nearest terminal in a direction, also while typing</span><kbd>Ctrl Alt Shift + arrow keys</kbd><span>Type in the selected terminal / back to the canvas</span><kbd>Enter / Ctrl Shift E</kbd><span>Copy selected terminal text</span><kbd>Ctrl C / Ctrl Shift C</kbd><span>Paste terminal text</span><kbd>Ctrl V / Ctrl Shift V</kbd><span>Interrupt (clear text selection first)</span><kbd>Ctrl C</kbd><span>Select / hand / text / note</span><kbd>V / H / T / N</kbd><span>Rectangle / ellipse / frame</span><kbd>R / O / Shift F</kbd><span>Arrange the selection</span><kbd>F</kbd><span>Line / arrow (drag between items to connect)</span><kbd>L / A</kbd><span>Add to selection / select area</span><kbd>Shift click / Shift drag</kbd><span>Snap to the grid and items / place freely while dragging</span><kbd>Toolbar magnet / hold Alt</kbd><span>Group / ungroup (groups can nest)</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>Undo / redo board changes</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Copy / cut / paste / duplicate items</span><kbd>Ctrl C / X / V / D</kbd><span>Edit text / delete items</span><kbd>Double-click / Delete</kbd><span>Add an image</span><kbd>Paste or drop a file</kbd><span>Pan the canvas</span><kbd>Drag background / middle-drag</kbd><span>Zoom at pointer over empty canvas</span><kbd>Scroll / two-finger scroll</kbd><span>Zoom at pointer elsewhere</span><kbd>Ctrl / Cmd + scroll</kbd><span>Terminal text size: over the selected terminal or in Focus / reset</span><kbd>Ctrl + scroll / Ctrl 0</kbd></div><p class="info-note">Scroll or two-finger scroll over empty canvas to zoom at the pointer. Plain scrolling over terminals, board items, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A scroll gesture stays with its starting area; pause before scrolling a different area.</p><p class="info-note">Sidebar search and Ctrl Alt Shift + arrow keys apply to the current canvas. From a terminal, Ctrl Alt Shift + arrow keys move your typing to the nearest terminal that way; from the canvas, they select it without typing in it. Alt + arrow keys inside a terminal reach the program. Press Ctrl Shift E to leave a terminal, then Enter to type in the one you chose. A terminal that is not running gets its Start button instead. In Focus view, Ctrl Alt Shift + arrow keys change the focused terminal.</p><p class="info-note">Terminal shortcuts work in canvas and fullscreen Focus views. Ctrl C copies selected text and interrupts the shell when no text is selected. Click inside the terminal to clear a text selection before interrupting. On macOS, Command C/V also copy/paste; Ctrl C still interrupts without a selection.</p><p class="info-note">Workspaces save layouts, folders, launch commands, and board items. Images stay in this app&rsquo;s data folder; use Export portable copy to embed them in a file you can move to another computer. Terminal output and running processes are not restored. Commands only run when you start a terminal.</p>');
 $('#plugins').onclick = () => info('One canvas. More possibilities.', '<p class="info-copy">Terminal Canvas starts with a terminal card type and a desktop host API. This is the foundation for bringing other tools into the workspace.</p><p class="info-note"><strong>WebCanvas · Planned</strong><br>Browser cards alongside AI terminals, using isolated browser views. Plugin loading and browser integration are not implemented in this version.</p>');
 document.addEventListener('keydown', event => {
     if (!ready || event.isComposing || document.querySelector('dialog[open]')) return;
@@ -2120,6 +2198,14 @@ document.addEventListener('keydown', event => {
         return;
     }
     if (canvasShortcut(event)) return;
+    // Ctrl+Alt+Shift+Arrow also works while typing in a terminal, and then types in the terminal it reaches.
+    const direction = navigationDirection(event);
+    if (direction) {
+        event.preventDefault();
+        const card = event.target.closest('.terminal-card');
+        navigateTerminals(direction, { from: card?.dataset.id || null, type: !!card && !!event.target.closest('.xterm') });
+        return;
+    }
     // A held Enter never presses a terminal's buttons: Enter on the board moves focus to a stopped
     // terminal's Start or Resume button, and only a separate press may start it.
     if (event.key === 'Enter' && event.repeat && event.target.closest('.terminal-card button')) { event.preventDefault(); return; }
@@ -2150,11 +2236,6 @@ document.addEventListener('keydown', event => {
         if (!event.shiftKey && onBoard && (key === 'c' || key === 'x') && copySelection({ cut: key === 'x' })) event.preventDefault();
         if (!event.shiftKey && onBoard && key === 'd') { event.preventDefault(); duplicateSelection(); }
         return;
-    }
-    // Alt+Arrow inside a terminal or text field stays there; the minimap handles its own arrow keys first.
-    const direction = NAV_DIRECTIONS[event.key];
-    if (direction && event.altKey && !event.shiftKey && !event.target.closest('input,textarea,select,.xterm,[contenteditable="true"]')) {
-        event.preventDefault(); navigateTerminals(direction); return;
     }
     if (event.altKey || event.target.closest('input,textarea,select,.xterm,[contenteditable="true"]')) return;
     if (event.key === '/') {

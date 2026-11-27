@@ -39,8 +39,9 @@ even without command-line flags. Release builds reject the `e2e` feature.
 ## Use the workspace
 
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
-- Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** opens the searchable terminal switcher; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior.
+- Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** opens the searchable terminal switcher; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior. On Windows, WebView2's own browser menu never opens, including its Cut/Copy/Paste menu over terminals and text fields; use the keyboard shortcuts to copy and paste.
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan.
+- Moves and resizes **snap** to the grid and to other elements; the magnet in the canvas toolbar turns this off. See [Snapping](#snapping).
 - Scroll or two-finger scroll over empty space to zoom the canvas at the pointer. Plain scrolling over terminals, board items, the minimap, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A gesture stays with its starting area until you pause, so crossing a terminal does not change zooming into terminal scrolling. Ctrl + scroll (Command on macOS) also zooms the canvas elsewhere; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
@@ -48,7 +49,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Select a terminal and use the canvas style bar to color its frame/title bar. The same seven colors work across terminals and board items; **Default color** restores the original look. Profile badges keep identifying the terminal's tool. Card colors also appear in the sidebar and minimap.
 - Choose **Default theme** above the canvas for all terminals, or **Theme** in the selected terminal's style bar to override it. **Workspace default** clears an override; **Current** explicitly keeps the original theme. Current, Midnight (dark blue), and Paper (light) include complete ANSI palettes. Changes apply immediately, preserving running shells and scrollback. Themes and colors are saved in the workspace and support undo/redo. Duplicate copies the source card's color and theme override.
 - Use the canvas icon in the top toolbar or **Ctrl/Cmd + Shift + B** to hide or show the sidebar, including while typing in a terminal. Click a sidebar section heading to collapse it; its terminal count stays visible. **/** outside text fields and terminals reveals the sidebar search. These choices are remembered on this device, separately from workspace files. Focus mode temporarily hides the sidebar and restores your choice when you return; the toggle or search can reveal it during Focus mode. Small windows keep your manual choice.
-- Move between terminals from the keyboard with **Alt + arrow keys**. See [Keyboard navigation](#keyboard-navigation).
+- Move between terminals from the keyboard with **Ctrl + Alt + Shift + arrow keys**, even while typing in one. See [Keyboard navigation](#keyboard-navigation).
 - Use the bottom-right **minimap** to locate terminals and see the current view. Click to recenter or drag the view rectangle to pan; with the minimap focused, use arrow keys (Shift for larger steps). Toggle it from the canvas toolbar. It hides when the canvas is empty or in Focus mode.
 - Use **Duplicate** in a card header or **Ctrl + Shift + D** to start a fresh plain shell in that terminal's current directory. It gets a separate process and empty output; the source launch command and AI session are not copied. Ctrl + D keeps its normal terminal behavior.
 - **Browse** opens at the valid folder displayed in the creation dialog. Invalid or unavailable paths fall back to home, then the app's working directory; canceling preserves the input.
@@ -134,7 +135,7 @@ Hidden canvases do not fit terminals or paint their board; terminals refit when 
 
 Use Command in place of Ctrl on macOS. These shortcuts also work inside terminals. Finish a
 drag, image import, terminal creation, or open dialog before changing canvases. Sidebar search,
-Arrange, Fit, and Alt + arrow navigation apply to the current canvas. A terminal jump by ID
+Arrange, Fit, and Ctrl + Alt + Shift + arrow navigation apply to the current canvas. A terminal jump by ID
 switches to its canvas first; an agent requesting a terminal beside a hidden parent also switches
 to that parent's canvas. Moving terminals between canvases is a follow-up; board items can be
 copied and pasted using the existing clipboard controls.
@@ -163,6 +164,25 @@ The left canvas toolbar adds items around your terminals. Click to place an item
 - **Delete** or **Backspace** removes selected board items. Terminals are only removed with their close button, which stops running shells safely.
 
 Line styles and fonts other than the size choices are not configurable.
+
+### Snapping
+
+The magnet in the canvas toolbar turns snapping on or off. It starts on, with a 24-pixel grid, and your choice
+is remembered on this device, separately from workspace files.
+
+- While snapping is on, moving a terminal or board item lines its edges or middle up with those of any other
+  element in view that is within six screen pixels, at every zoom. Each axis snaps on its own; where nothing is
+  that close, the left or top edge goes to the nearest grid line instead. A pink guide shows each line it shares.
+  A whole selection, a group, or a frame with its contents snaps as one rectangle; lines move with it, and
+  attached connectors follow.
+- Resizing from the lower-right corner snaps the right and bottom edges the same way, and also matches the width
+  or height of another element. Markers above or beside both elements show a matched size. Images keep their
+  proportions, so only their width snaps. Terminals and items still keep their smallest and largest sizes.
+- Choose the grid size beside the magnet: 8 to 64 pixels, or **No grid** to snap only to other elements. While
+  snapping to a grid, the background dots mark its lines.
+- Hold **Alt** while dragging to place freely; pressing or releasing it takes effect at once. On Linux desktops
+  where Alt + drag moves the window, start dragging first, then press Alt.
+- Each move or resize is still one undo step, and browser controllers save the result once the drag ends.
 
 ### Hook pointers
 
@@ -337,7 +357,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + Shift + F | Toggle focus for the selected terminal |
 | Ctrl + Shift + P / Command + Shift + P | Open the terminal switcher, including while typing in a terminal |
 | Ctrl/Cmd + Shift + B | Hide / show sidebar, including inside terminals |
-| Alt + arrow keys, outside a terminal | Select the nearest terminal in that direction |
+| Ctrl + Alt + Shift + arrow keys | Move to the nearest terminal in that direction; from a terminal, type in it |
 | Enter, outside a terminal | Type in the selected terminal (a stopped one gets its Start button) |
 | Ctrl + Shift + E | Leave the terminal you are typing in, keeping it selected |
 | Scroll / two-finger scroll over empty canvas | Zoom at the pointer |
@@ -355,15 +375,16 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + G / Ctrl + Shift + G | Group / ungroup the selection |
 | Ctrl + Z / Ctrl + Shift + Z or Ctrl + Y | Undo / redo board changes |
 | Ctrl + C / X / V / D | Copy, cut, paste, or duplicate board items |
+| Alt while dragging, with snapping on | Place freely without snapping |
 | Delete / Backspace | Delete selected board items |
 
 Single-key and board shortcuts apply only when focus is outside a terminal or text field, so they never reach a running shell.
 
 ### Keyboard navigation
 
-The keyboard is either on the canvas or typing in one terminal. Selecting a terminal from the
-keyboard never types in it, and a terminal you type in receives every key except the app's
-Ctrl + Shift shortcuts, Alt + arrow keys included, so shells and full-screen programs keep them.
+The keyboard is either on the canvas or typing in one terminal. A terminal you type in receives
+every key except the app's Ctrl + Shift shortcuts, Ctrl + Alt + Shift + arrow keys among them, so
+shells and full-screen programs keep Alt + arrow keys and Ctrl + Shift + arrow keys.
 
 **Find terminal:** press **Ctrl + Shift + P** (**Command + Shift + P** on macOS), or use the search
 button beside **ON THIS CANVAS**. The dialog focuses its query. Search by the displayed title,
@@ -380,9 +401,12 @@ or camera, restoring the previous input/button (or the canvas if it is gone or h
 keystrokes stay out of shells. **Ctrl + P** remains available to terminal programs; **/** still
 focuses sidebar search and **Ctrl + Shift + F** still toggles Focus. Search works locally without AI.
 
-- **Alt + ←/→/↑/↓** on the canvas selects the nearest terminal that way. It works from the
-  canvas itself, the sidebar, and the toolbars, but not inside a text field. With the minimap
-  focused, arrow keys still pan the view.
+- **Ctrl + Alt + Shift + ←/→/↑/↓** (Command + Option + Shift on macOS) moves to the nearest
+  terminal that way. On the canvas, the sidebar, and the toolbars it selects that terminal
+  without typing in it. While you type in a terminal, it moves your typing straight into the next
+  one, as Enter would; a terminal that is not running gets its Start or Resume button instead,
+  and with no terminal that way you keep typing where you are. It does not apply while you edit
+  board text. With the minimap focused, plain arrow keys still pan the view.
 - **Enter** types in the selected terminal. If the terminal is not running, Enter moves to its
   Start or Resume button instead, so a command never starts without a second Enter.
 - **Ctrl + Shift + E** (Command + Shift + E on macOS) leaves the terminal you are typing in and
@@ -397,7 +421,7 @@ Which terminal is nearest:
   oversized cards have no gap, so a card partly under another is still reachable. Ties go to the
   candidate whose center is closest to the line of travel, then the nearer one, then the one
   nearest the top left, then the lower terminal ID. The same layout always gives the same answer.
-- Navigation starts from the selected element. A selected group starts from the element you
+- Navigation starts from the terminal you are typing in, otherwise from the selected element. A selected group starts from the element you
   selected in it, and a selected note, shape, or other item starts from that item. Reaching a
   grouped terminal selects its group, as clicking it does, and highlights that terminal.
 - With nothing selected, any arrow selects the terminal nearest the middle of the view. With no
@@ -406,8 +430,8 @@ Which terminal is nearest:
 
 The selected terminal gets a bright outline while the canvas has the keyboard. The canvas pans as
 little as needed to show it clear of the toolbars and keeps its zoom; a terminal larger than the
-view is aligned by its top-left corner so its header shows. In **Focus** view, Alt + arrow keys
-switch the focused terminal using the canvas layout, and the canvas is panned so the terminal is
+view is aligned by its top-left corner so its header shows. In **Focus** view, Ctrl + Alt + Shift + arrow keys
+switch the focused terminal using the canvas layout, typing in it when you started in a terminal, and the canvas is panned so the terminal is
 in view when you return.
 
 ### Directory tracking and fallback

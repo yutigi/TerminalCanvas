@@ -427,7 +427,10 @@ async function boot(workspace, { initialized = true, respond, terminals = false,
         querySelectorAll: () => [], createElement: () => new Element(), createElementNS: () => new Element(), addEventListener(type, fn) { documentListeners.set(type, fn); Element.prototype.addEventListener.call(this, type, fn); }
     });
     for (const element of elements.values()) element.ownerDocument = document;
-    const window = Object.assign(new Element(), { terminalCanvas: bridge }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
+    // Most tests drag by exact pointer distances, so they start with snapping off; snapping tests pass their own storage.
+    const stored = new Map([['terminal-canvas.snapping.v1', JSON.stringify({ enabled: false, grid: 24 })]]);
+    const localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+    const window = Object.assign(new Element(), { terminalCanvas: bridge, localStorage }, terminals ? { Terminal: KeyboardTerminal, FitAddon: { FitAddon: class {} } } : {}, windowOverrides);
     const frames = [];
     const context = vm.createContext({ document, window, ResizeObserver: class { observe() {} disconnect() {} }, crypto: { randomUUID }, setTimeout: () => 1, clearTimeout() {}, requestAnimationFrame: callback => frames.push(callback) });
     // Load renderer scripts in the same order as index.html.
@@ -3048,6 +3051,8 @@ function navigationKey(context, key, values = {}) {
     for (const handler of vm.runInContext('document', context).listeners.get('keydown')) handler(event);
     return event;
 }
+// Ctrl+Alt+Shift: with an arrow key, the chord that moves between terminals.
+const NAV_CHORD = Object.freeze({ ctrlKey: true, altKey: true, shiftKey: true });
 const insideTerminal = id => ({ closest: selector => (selector.includes('.terminal-card') ? { dataset: { id } } : selector.includes('.xterm') ? {} : null) });
 
 function sidebarStorage(initial) {
@@ -3270,13 +3275,13 @@ async function navigationBoard({ cards, items = [], camera = { x: 48, y: 48, z: 
     return { ...booted, id, state };
 }
 
-test('Alt+arrow keys select the nearest terminal without typing in it, highlight it, and pan to it at the same zoom', async () => {
+test('Ctrl+Alt+Shift+arrow keys on the board select the nearest terminal without typing in it, highlight it, and pan to it', async () => {
     const { context, elements, id, state } = await navigationBoard({
         cards: [['A', 0, 0], ['B', 2000, 0], ['C', 0, 470], ['D', 2000, 470]], camera: { x: 100, y: 48, z: .8 }
     });
     const viewport = elements.get('#viewport');
     // Nothing selected: any arrow starts at the terminal in the middle of the view.
-    const first = navigationKey(context, 'ArrowRight', { altKey: true });
+    const first = navigationKey(context, 'ArrowRight', NAV_CHORD);
     assert.equal(first.prevented, true);
     let now = state();
     assert.equal(now.selected, id('A'));
@@ -3284,7 +3289,7 @@ test('Alt+arrow keys select the nearest terminal without typing in it, highlight
     assert.deepEqual(now.camera, { x: 100, y: 72, z: .8 }, 'selection reveals the terminal below its newly visible style toolbar');
     assert.ok(viewport.focusCount >= 1, 'the keyboard stays on the board');
     // B is far to the right, beyond the view: the canvas pans just enough, keeping zoom.
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     now = state();
     assert.equal(now.selected, id('B'));
     assert.deepEqual(now.highlighted, [id('B')]);
@@ -3292,46 +3297,80 @@ test('Alt+arrow keys select the nearest terminal without typing in it, highlight
     assert.equal(now.camera.y, 72);
     assert.equal(now.camera.x + (2000 + 660) * .8, 1100 - 24, 'the right edge lands just inside the view');
     // No terminal further right: the selection stays where it is.
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     assert.equal(state().selected, id('B'));
     // Back along the row: A, not C, which is as far across and also lower.
-    navigationKey(context, 'ArrowLeft', { altKey: true });
+    navigationKey(context, 'ArrowLeft', NAV_CHORD);
     assert.equal(state().selected, id('A'));
-    navigationKey(context, 'ArrowDown', { altKey: true });
+    navigationKey(context, 'ArrowDown', NAV_CHORD);
     assert.equal(state().selected, id('C'));
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     assert.equal(state().selected, id('D'));
-    navigationKey(context, 'ArrowUp', { altKey: true });
+    navigationKey(context, 'ArrowUp', NAV_CHORD);
     now = state();
     assert.equal(now.selected, id('B'), 'up from D reaches B, straight above it');
     assert.deepEqual(Object.values(now.typed), [0, 0, 0, 0], 'navigation never moves typing into a terminal');
-    // Plain arrows and Shift+Alt+arrows are left alone.
-    assert.equal(navigationKey(context, 'ArrowRight').prevented, false);
-    assert.equal(navigationKey(context, 'ArrowRight', { altKey: true, shiftKey: true }).prevented, false);
+    // Plain arrows, the former Alt+arrow keys, and chords with fewer modifiers are left alone (#58).
+    for (const values of [{}, { altKey: true }, { altKey: true, shiftKey: true }, { ctrlKey: true, shiftKey: true }, { ctrlKey: true, altKey: true }]) {
+        assert.equal(navigationKey(context, 'ArrowLeft', values).prevented, false, JSON.stringify(values));
+    }
     assert.equal(state().selected, id('B'));
+    // Command takes the place of Ctrl on macOS.
+    assert.equal(navigationKey(context, 'ArrowLeft', { metaKey: true, altKey: true, shiftKey: true }).prevented, true);
+    assert.equal(state().selected, id('A'));
 });
 
-test('Alt+arrow keys inside a terminal or text field reach it, and the minimap keeps its own arrow keys', async () => {
-    const { context, elements, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 700, 0]] });
+// #58: the chord moves between terminals while typing, and Alt+arrow keys stay with the program.
+test('inside a terminal, Alt+arrow keys reach the program and Ctrl+Alt+Shift+arrow keys type in the next terminal', async () => {
+    const { context, elements, calls, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 700, 0], ['C', 700, 470]] });
     vm.runInContext(`select(${JSON.stringify(id('A'))})`, context);
+    assert.equal(state().typed[id('A')], 1);
     const terminal = vm.runInContext(`sessions.get(${JSON.stringify(id('A'))}).terminal`, context);
-    const alt = { type: 'keydown', key: 'ArrowRight', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, preventDefault() {}, stopPropagation() {} };
-    assert.equal(terminal.keyHandler(alt), true, 'xterm sends Alt+arrow keys to the program');
-    const inTerminal = navigationKey(context, 'ArrowRight', { altKey: true, target: insideTerminal(id('A')) });
-    assert.equal(inTerminal.prevented, false);
+    const key = values => ({ type: 'keydown', key: 'ArrowRight', altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+        preventDefault() {}, stopPropagation() {}, ...values });
+    assert.equal(terminal.keyHandler(key({ altKey: true })), true, 'xterm sends Alt+arrow keys to the program');
+    assert.equal(terminal.keyHandler(key({ ctrlKey: true, shiftKey: true })), true, 'Ctrl+Shift+arrow keys still select words');
+    for (const values of [{ altKey: true }, { ctrlKey: true, shiftKey: true }]) {
+        assert.equal(navigationKey(context, 'ArrowRight', { ...values, target: insideTerminal(id('A')) }).prevented, false, JSON.stringify(values));
+    }
     const inField = navigationKey(context, 'ArrowRight', { altKey: true, target: { closest: selector => (selector.includes('input') ? {} : null) } });
     assert.equal(inField.prevented, false);
     assert.equal(state().selected, id('A'));
+    // The chord never reaches the program, and moves typing straight into the next terminal that way.
+    assert.equal(terminal.keyHandler(key(NAV_CHORD)), false);
+    assert.equal(terminal.keyHandler(key({ metaKey: true, altKey: true, shiftKey: true })), false, 'Command+Option+Shift on macOS');
+    assert.equal(navigationKey(context, 'ArrowRight', { ...NAV_CHORD, target: insideTerminal(id('A')) }).prevented, true);
+    let now = state();
+    assert.equal(now.selected, id('B'));
+    assert.equal(now.typed[id('B')], 1, 'the next terminal is ready to type in, as after Enter');
+    // With no terminal further that way, typing stays in this one without passing through the board.
+    const boardFocus = elements.get('#viewport').focusCount || 0;
+    navigationKey(context, 'ArrowRight', { ...NAV_CHORD, target: insideTerminal(id('B')) });
+    now = state();
+    assert.equal(now.selected, id('B'));
+    assert.equal(now.typed[id('B')], 1);
+    assert.equal(elements.get('#viewport').focusCount || 0, boardFocus);
+    // A stopped terminal gets its Start button instead, so the keyboard never starts it.
+    vm.runInContext(`sessions.get(${JSON.stringify(id('C'))}).status = 'exited'`, context);
+    navigationKey(context, 'ArrowDown', { ...NAV_CHORD, target: insideTerminal(id('B')) });
+    const toggle = vm.runInContext(`sessions.get(${JSON.stringify(id('C'))}).element.querySelector('[data-action="toggle"]')`, context);
+    assert.equal(state().selected, id('C'));
+    assert.equal(toggle.focusCount, 1);
+    assert.equal(state().typed[id('C')], 0);
+    assert.equal(calls.some(call => call.action === 'start'), false);
+    // The minimap keeps its own arrow keys, Alt+arrow keys included, but lets the chord through.
     const camera = state().camera;
     elements.get('#minimap-map').dispatch('keydown', { key: 'ArrowLeft', altKey: true });
     assert.notDeepEqual(state().camera, camera, 'the focused minimap pans');
-    assert.equal(state().selected, id('A'));
+    const panned = state().camera;
+    elements.get('#minimap-map').dispatch('keydown', { key: 'ArrowLeft', ...NAV_CHORD });
+    assert.deepEqual(state().camera, panned);
 });
 
 test('Enter types in the selected terminal, Ctrl+Shift+E leaves it, and clicking still types on the first click', async () => {
     const { context, elements, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 700, 0]] });
-    navigationKey(context, 'ArrowRight', { altKey: true });
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     assert.equal(state().selected, id('B'));
     const enter = navigationKey(context, 'Enter');
     assert.equal(enter.prevented, true);
@@ -3368,7 +3407,7 @@ test('Enter types in the selected terminal, Ctrl+Shift+E leaves it, and clicking
 
 test('Enter on a stopped terminal moves to its Start button instead of starting it', async () => {
     const { context, calls, id, state } = await navigationBoard({ cards: [['A', 0, 0]], running: false });
-    navigationKey(context, 'ArrowUp', { altKey: true });
+    navigationKey(context, 'ArrowUp', NAV_CHORD);
     assert.equal(state().selected, id('A'));
     navigationKey(context, 'Enter');
     const toggle = vm.runInContext(`sessions.get(${JSON.stringify(id('A'))}).element.querySelector('[data-action="toggle"]')`, context);
@@ -3387,7 +3426,7 @@ test('Enter on a stopped terminal moves to its Start button instead of starting 
 
 test('navigation on an empty canvas explains itself, and items and groups are valid starting points', async () => {
     const empty = await navigationBoard({ cards: [] });
-    navigationKey(empty.context, 'ArrowRight', { altKey: true });
+    navigationKey(empty.context, 'ArrowRight', NAV_CHORD);
     assert.match(empty.elements.get('#toast').textContent, /no terminals/i);
     assert.equal(empty.state().selected, null);
 
@@ -3397,30 +3436,30 @@ test('navigation on an empty canvas explains itself, and items and groups are va
     });
     // From a selected note, the nearest terminal to its right.
     vm.runInContext('select("n")', context);
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     assert.equal(state().selected, id('Right'));
     // From a note with nothing above it, the selection stays on the note.
     vm.runInContext('select("n")', context);
-    navigationKey(context, 'ArrowUp', { altKey: true });
+    navigationKey(context, 'ArrowUp', NAV_CHORD);
     assert.equal(state().selected, 'n');
     assert.deepEqual(state().highlighted, []);
     // Reaching a grouped terminal selects its group, with that terminal highlighted and primary.
     vm.runInContext(`select(${JSON.stringify(id('Right'))})`, context);
-    navigationKey(context, 'ArrowLeft', { altKey: true });
+    navigationKey(context, 'ArrowLeft', NAV_CHORD);
     let now = state();
     assert.equal(now.selected, id('Left'));
     assert.deepEqual(now.selection.sort(), [id('Left'), id('Below')].sort());
     assert.deepEqual(now.highlighted, [id('Left')]);
     // A group moves from its primary terminal, not from the whole group's bounds.
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     assert.equal(state().selected, id('Right'));
 });
 
-test('in Focus mode Alt+arrow keys switch the focused terminal without typing, and Enter types in it', async () => {
+test('in Focus mode the chord switches the focused terminal, typing in it only when sent from a terminal', async () => {
     const { context, elements, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 3000, 0]] });
     vm.runInContext(`setFocus(${JSON.stringify(id('A'))})`, context);
     assert.equal(state().typed[id('A')], 1, 'opening Focus with the button still types');
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     let now = state();
     assert.equal(now.focusedTerminal, id('B'));
     assert.equal(now.selected, id('B'));
@@ -3428,7 +3467,7 @@ test('in Focus mode Alt+arrow keys switch the focused terminal without typing, a
     assert.equal(now.typed[id('B')], 0);
     assert.deepEqual(now.camera, { x: 48, y: 48, z: 1 }, 'the canvas waits for its toolbars before panning');
     assert.equal(elements.get('#exit-focus').hidden, false);
-    navigationKey(context, 'ArrowRight', { altKey: true });
+    navigationKey(context, 'ArrowRight', NAV_CHORD);
     assert.equal(state().focusedTerminal, id('B'), 'no terminal further right');
     navigationKey(context, 'Enter');
     assert.equal(state().typed[id('B')], 1);
@@ -3441,13 +3480,20 @@ test('in Focus mode Alt+arrow keys switch the focused terminal without typing, a
     const camera = now.camera;
     vm.runInContext(`setFocus(${JSON.stringify(id('A'))}); setFocus(null)`, context);
     assert.deepEqual(state().camera, camera);
+    // Typing in the focused terminal, the chord moves Focus and typing to the next terminal.
+    vm.runInContext(`setFocus(${JSON.stringify(id('A'))})`, context);
+    const typed = state().typed[id('B')];
+    assert.equal(navigationKey(context, 'ArrowRight', { ...NAV_CHORD, target: insideTerminal(id('A')) }).prevented, true);
+    now = state();
+    assert.equal(now.focusedTerminal, id('B'));
+    assert.equal(now.typed[id('B')], typed + 1);
 });
 
 test('a terminal revealed from the keyboard clears the minimap and toolbars', async () => {
     // B lies below A and to the right, so a plain reveal would bring it to the lower-right corner.
     const { context, id, state } = await navigationBoard({ cards: [['A', 0, 0], ['B', 500, 900]] });
     vm.runInContext(`select(${JSON.stringify(id('A'))}, { type: false })`, context);
-    navigationKey(context, 'ArrowDown', { altKey: true });
+    navigationKey(context, 'ArrowDown', NAV_CHORD);
     const { selected, camera } = state();
     assert.equal(selected, id('B'));
     assert.equal(camera.z, 1);
@@ -4189,4 +4235,165 @@ test('a refused Keep running switch keeps the shown state and reports why', asyn
     assert.equal(elements.get('#keep-toggle').attributes.get('aria-pressed'), 'false');
     assert.equal(elements.get('#keep-toggle').disabled, false);
     assert.match(elements.get('#toast').textContent, /needs tmux, which was not found/);
+});
+
+function snapStorage(saved) {
+    const values = new Map(saved === undefined ? [] : [['terminal-canvas.snapping.v1', typeof saved === 'string' ? saved : JSON.stringify(saved)]]);
+    return { values, getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+}
+const resizeHandle = (context, id) => vm.runInContext(`itemViews.get(${JSON.stringify(id)}).element.children.find(child => child.className === 'item-resize')`, context);
+const guideClasses = elements => elements.get('#snap-guides').children.map(guide => guide.className);
+const snapBoard = (...items) => { const board = createWorkspace(); board.camera = { x: 0, y: 0, z: 1 }; board.items.push(...items); return board; };
+
+test('snapping starts on, is remembered on this device, and ignores stored values it does not offer', async () => {
+    const storage = snapStorage();
+    const { elements, context, calls } = await boot(snapBoard(), { localStorage: storage });
+    const toggle = elements.get('#snap-toggle'), grid = elements.get('#snap-grid');
+    assert.deepEqual(json(context, 'snapPreferences'), { enabled: true, grid: 24 });
+    assert.equal(toggle.attributes.get('aria-pressed'), 'true');
+    assert.equal(grid.hidden, false);
+    assert.equal(grid.value, '24');
+    toggle.click();
+    assert.equal(toggle.attributes.get('aria-pressed'), 'false');
+    assert.equal(grid.hidden, true, 'the grid size shows only while snapping is on');
+    assert.deepEqual(JSON.parse(storage.values.get('terminal-canvas.snapping.v1')), { enabled: false, grid: 24 });
+    toggle.click();
+    grid.value = '48'; grid.onchange();
+    assert.deepEqual(JSON.parse(storage.values.get('terminal-canvas.snapping.v1')), { enabled: true, grid: 48 });
+    grid.value = '7'; grid.onchange();
+    assert.equal(grid.value, '48', 'a size the menu does not offer is refused');
+    grid.value = '0'; grid.onchange();
+    assert.deepEqual(json(context, 'snapPreferences'), { enabled: true, grid: 0 }, 'No grid still snaps to items');
+    assert.deepEqual(calls.map(call => call.action), ['initialize'], 'a preference never saves the workspace');
+    assert.equal(json(context, 'boardHistory.undo.length'), 0);
+    assert.equal(json(context, '"snapping" in workspaceSnapshot()'), false);
+    for (const saved of [{ enabled: true, grid: 48 }, { enabled: 'yes', grid: 7 }, 'not json']) {
+        const reopened = await boot(snapBoard(), { localStorage: snapStorage(saved) });
+        assert.deepEqual(json(reopened.context, 'snapPreferences'), typeof saved === 'object' && saved.enabled === true ? saved : { enabled: true, grid: 24 });
+    }
+    const blocked = await boot(snapBoard(), { localStorage: { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } } });
+    blocked.elements.get('#snap-toggle').click();
+    assert.equal(json(blocked.context, 'snapPreferences.enabled'), false, 'blocked storage still lets snapping turn off');
+    elements.get('#help').onclick();
+    assert.match(elements.get('#info-content').innerHTML, /Snap to the grid and items.*hold Alt/);
+});
+
+test('a snapped move is one undo step, and holding Alt places freely at once', async () => {
+    const { elements, context, window } = await boot(snapBoard(note('a', 0, 0), note('far', 5000, 5000)), { localStorage: snapStorage({ enabled: true, grid: 24 }) });
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    const position = () => json(context, '[workspace.items[0].x, workspace.items[0].y]');
+    drag(element, [0, 0], [100, 50]);
+    assert.deepEqual(position(), [96, 48]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 110, clientY: 70, altKey: true });
+    assert.deepEqual(position(), [206, 118]);
+    let prevented = 0;
+    window.dispatch('keyup', { key: 'Alt', preventDefault() { prevented++; } });
+    assert.deepEqual(position(), [216, 120], 'releasing Alt snaps without moving the pointer');
+    window.dispatch('keydown', { key: 'Alt', preventDefault() { prevented++; } });
+    assert.deepEqual(position(), [206, 118]);
+    assert.equal(prevented, 2, 'Alt does not reach the window during a drag');
+    element.dispatch('pointerup', { clientX: 110, clientY: 70 });
+    assert.deepEqual(position(), [206, 118]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 2);
+    window.dispatch('keyup', { key: 'Alt', preventDefault() { prevented++; } });
+    assert.deepEqual(position(), [206, 118], 'Alt does nothing once the drag ends');
+    assert.equal(prevented, 2);
+    vm.runInContext('undo()', context);
+    assert.deepEqual(position(), [96, 48]);
+    // Turned off, moves follow the pointer exactly.
+    elements.get('#snap-toggle').click();
+    drag(element, [0, 0], [5, 7]);
+    assert.deepEqual(position(), [101, 55]);
+});
+
+test('moves snap to the edges of elements in view, guided, at a constant screen distance', async () => {
+    const board = snapBoard(note('a', 0, 0), note('b', 300, 0), note('hidden', 197, 2000), { id: 'wire', type: 'line', start: { id: 'a' }, end: { id: 'b' } });
+    const { elements, context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 0 }) });
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    const a = () => json(context, '[workspace.items[0].x, workspace.items[0].y]');
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 97, clientY: 3 });
+    assert.deepEqual(a(), [100, 0], 'the right edge meets b, and the top edges align');
+    assert.deepEqual(guideClasses(elements), ['snap-guide vertical', 'snap-guide horizontal', 'snap-guide horizontal', 'snap-guide horizontal']);
+    assert.deepEqual(elements.get('#snap-guides').children.map(guide => [guide.style.left, guide.style.top, guide.style.width, guide.style.height]),
+        [['300px', '0px', '0px', '200px'], ['100px', '0px', '400px', '0px'], ['100px', '100px', '400px', '0px'], ['100px', '200px', '400px', '0px']]);
+    assert.equal(vm.runInContext('itemViews.get("wire").stroke.attributes.get("d")', context), 'M300 100L300 100', 'the connector follows');
+    element.dispatch('pointerup', { clientX: 97, clientY: 3 });
+    assert.deepEqual(guideClasses(elements), [], 'guides leave with the drag');
+    // An element out of view is not a target, even where it would line up.
+    drag(element, [0, 0], [99, 30]);
+    assert.deepEqual(a(), [199, 30]);
+    // The reach is 6 screen pixels: 3 world pixels at 200%, 12 at 50%.
+    for (const [z, dx, x] of [[2, 194, 100], [2, 192, 96], [.5, 44, 100], [.5, 43, 86]]) {
+        vm.runInContext(`Object.assign(workspace.items[0], { x: 0, y: 30 }); renderItem(workspace.items[0]); workspace.camera.z = ${z}`, context);
+        drag(element, [0, 0], [dx, 0]);
+        assert.deepEqual(a(), [x, 30], `zoom ${z}, ${dx} screen pixels`);
+    }
+});
+
+test('frames, their contents, and free line ends snap as one selection', async () => {
+    const board = snapBoard(
+        { id: 'frame', type: 'frame', x: 5, y: 5, w: 700, h: 400, title: 'Frame' }, note('inside', 50, 50),
+        { id: 'free', type: 'line', start: { x: 100, y: 300 }, end: { x: 200, y: 300 } });
+    const { context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 24 }) });
+    drag(vm.runInContext('itemViews.get("frame").title', context), [0, 0], [10, 20]);
+    const items = Object.fromEntries(json(context, 'workspace.items').map(item => [item.id, item]));
+    assert.deepEqual([items.frame.x, items.frame.y, items.inside.x, items.inside.y], [24, 24, 69, 69]);
+    assert.deepEqual([items.free.start, items.free.end], [{ x: 119, y: 319 }, { x: 219, y: 319 }]);
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+});
+
+test('terminal and item resizes snap to the grid and to matching sizes, within their limits', async () => {
+    const board = snapBoard(note('note', 0, 984), { id: 'photo', type: 'image', asset: 'a.png', x: 480, y: 1000, w: 320, h: 240 });
+    board.cards.push(createCard({ x: 0, y: 0, w: 660, h: 430 }), createCard({ x: 800, y: 0, w: 500, h: 300 }));
+    const { elements, context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 24 }) });
+    const handle = vm.runInContext('sessions.get(workspace.cards[0].id).element.querySelector(".card-resize")', context);
+    const card = () => json(context, '[workspace.cards[0].w, workspace.cards[0].h]');
+    handle.dispatch('pointerdown', { clientX: 660, clientY: 430 });
+    handle.dispatch('pointermove', { clientX: 505, clientY: 302 });
+    assert.deepEqual(card(), [500, 300], 'the other terminal sets the width and the bottom edge');
+    assert.equal(guideClasses(elements).filter(name => name.endsWith(' size')).length, 4, 'size markers for both terminals, on both axes');
+    handle.dispatch('pointerup', { clientX: 505, clientY: 302 });
+    assert.equal(json(context, 'boardHistory.undo.length'), 1);
+    drag(handle, [500, 300], [0, 0]);
+    assert.deepEqual(card(), [408, 288], 'the smallest terminal size whose edges lie on the grid');
+    vm.runInContext('workspace.camera.y = -1000; renderCamera()', context);
+    drag(resizeHandle(context, 'note'), [0, 0], [13, 30]);
+    assert.deepEqual(json(context, '[workspace.items[0].w, workspace.items[0].h]'), [216, 240]);
+    drag(resizeHandle(context, 'photo'), [0, 0], [10, 50]);
+    assert.deepEqual(json(context, '[workspace.items[1].w, workspace.items[1].h]'), [336, 252], 'an image keeps its proportions');
+    assert.equal(json(context, 'boardHistory.undo.length'), 4);
+});
+
+test('the background dots mark the snapping grid without crowding at low zoom', async () => {
+    const board = snapBoard(); board.camera = { x: 40, y: 10, z: .5 };
+    const { elements, context } = await boot(board, { localStorage: snapStorage({ enabled: true, grid: 8 }) });
+    const style = elements.get('#viewport').style;
+    assert.deepEqual([style.backgroundSize, style.backgroundPosition], ['16px 16px', '32px 2px']);
+    vm.runInContext('zoom(3)', context);
+    assert.equal(style.backgroundSize, '12px 12px');
+    elements.get('#snap-toggle').click();
+    assert.equal(style.backgroundSize, `${24 * 1.5}px ${24 * 1.5}px`, 'off, the usual 24-pixel dots return');
+    assert.equal(style.backgroundPosition, json(context, '`${workspace.camera.x}px ${workspace.camera.y}px`'));
+});
+
+test('a browser controller saves the snapped layout only after the drag ends', async () => {
+    const board = snapBoard(note('a', 0, 0));
+    const { context, calls } = await boot(board, { remote: true, localStorage: snapStorage({ enabled: true, grid: 24 }),
+        respond: (action, payload) => action === 'remote-terminal' ? { workspace: payload.command.workspace } : null });
+    vm.runInContext('layoutDigest = async () => "digest"', context);
+    const element = vm.runInContext('itemViews.get("a").element', context);
+    element.dispatch('pointerdown', { clientX: 0, clientY: 0 });
+    element.dispatch('pointermove', { clientX: 100, clientY: 50 });
+    await vm.runInContext('saveRemoteLayout()', context);
+    assert.equal(calls.some(call => call.action === 'remote-terminal'), false, 'nothing is sent mid-drag');
+    element.dispatch('pointerup', { clientX: 100, clientY: 50 });
+    await vm.runInContext('saveRemoteLayout()', context);
+    const sent = calls.filter(call => call.action === 'remote-terminal');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].payload.command.action, 'layout');
+    assert.deepEqual(JSON.parse(JSON.stringify(sent[0].payload.command.workspace.items.map(item => [item.x, item.y]))), [[96, 48]]);
+    assert.deepEqual(json(context, '[workspace.items[0].x, workspace.items[0].y]'), [96, 48]);
 });

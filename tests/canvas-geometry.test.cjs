@@ -370,3 +370,79 @@ test('the arranged cards move down clear of other items and stay there on the ne
     assert.deepEqual(G.arrangeCards(cards, list, [{ x: 5000, y: 5000, w: 10, h: 10 }]), G.arrangeCards(cards, list),
         'an item away from the cards changes nothing');
 });
+
+test('moves snap to the grid, or to a nearby target line, one axis at a time', () => {
+    const rect = { x: 101, y: 37, w: 100, h: 50 };
+    assert.deepEqual(G.snapMove(rect, [], { grid: 24 }), { x: 96, y: 48, guides: [] });
+    assert.deepEqual(G.snapMove(rect, [], {}), { x: 101, y: 37, guides: [] }, 'no grid and no targets leaves it alone');
+    assert.equal(Object.is(G.snapMove({ x: -1, y: -11, w: 10, h: 10 }, [], { grid: 24 }).x, 0), true, 'never -0');
+    // The right edge is 3 from the target's left edge: the target wins over the grid on x only.
+    const target = { x: 200, y: 0, w: 100, h: 100 };
+    const moved = G.snapMove({ x: 97, y: 305, w: 100, h: 40 }, [target], { threshold: 5, grid: 24 });
+    assert.deepEqual({ x: moved.x, y: moved.y }, { x: 100, y: 312 });
+    assert.deepEqual(moved.guides, [{ x1: 200, y1: 0, x2: 200, y2: 352 }]);
+    // A target line beats a closer grid line while it is within the threshold.
+    assert.equal(G.snapMove({ x: 98, y: 0, w: 200, h: 10 }, [{ x: 103, y: 500, w: 50, h: 50 }], { threshold: 5, grid: 24 }).x, 103);
+    assert.equal(G.snapMove({ x: 97.9, y: 0, w: 200, h: 10 }, [{ x: 103, y: 500, w: 50, h: 50 }], { threshold: 5, grid: 24 }).x, 96);
+});
+
+test('edges snap to edges and middles to middles, and ties never depend on target order', () => {
+    const wide = { x: 0, y: 0, w: 100, h: 100 };
+    // Middle 247 is 3 from the target's middle 250.
+    assert.equal(G.snapMove({ x: 217, y: 400, w: 60, h: 10 }, [{ x: 200, y: 0, w: 100, h: 100 }], { threshold: 5 }).x, 220);
+    // A left edge 2 from the target's middle does not snap to it.
+    assert.equal(G.snapMove({ x: 52, y: 400, w: 30, h: 10 }, [wide], { threshold: 5 }).x, 52);
+    // Exactly at the threshold snaps; just past it does not.
+    assert.equal(G.snapMove({ x: 105, y: 400, w: 10, h: 10 }, [wide], { threshold: 5 }).x, 100);
+    assert.equal(G.snapMove({ x: 105.5, y: 400, w: 10, h: 10 }, [wide], { threshold: 5 }).x, 105.5);
+    // Equally near lines on both sides: the move toward lower coordinates wins either way round.
+    const left = { x: 0, y: 0, w: 95, h: 10 }, right = { x: 105, y: 0, w: 50, h: 10 };
+    for (const targets of [[left, right], [right, left]]) assert.equal(G.snapMove({ x: 100, y: 400, w: 1000, h: 10 }, targets, { threshold: 5 }).x, 95);
+});
+
+test('guides span every target that shares a line, one per line', () => {
+    const a = { x: 0, y: -300, w: 100, h: 100 }, b = { x: 0, y: 500, w: 40, h: 40 }, c = { x: 300, y: 0, w: 50, h: 120 };
+    const { x, y, guides } = G.snapMove({ x: 2, y: 3, w: 200, h: 120 }, [a, b, c], { threshold: 5 });
+    assert.deepEqual({ x, y }, { x: 0, y: 0 });
+    assert.deepEqual(guides, [
+        { x1: 0, y1: -300, x2: 0, y2: 540 },
+        { x1: 0, y1: 0, x2: 350, y2: 0 },
+        { x1: 0, y1: 60, x2: 350, y2: 60 },
+        { x1: 0, y1: 120, x2: 350, y2: 120 }
+    ]);
+});
+
+test('resizes snap the far edges to target edges and the size to target sizes, within limits', () => {
+    const target = { x: 300, y: 0, w: 200, h: 150 };
+    const matched = G.snapResize({ x: 0, y: 0, w: 203, h: 97 }, [target], { threshold: 5, gap: 10 });
+    assert.deepEqual({ w: matched.w, h: matched.h }, { w: 200, h: 97 });
+    assert.deepEqual(matched.guides, [
+        { x1: 0, y1: 0, x2: 500, y2: 0 },
+        { x1: 0, y1: -10, x2: 200, y2: -10, size: true },
+        { x1: 300, y1: -10, x2: 500, y2: -10, size: true }
+    ]);
+    // The bottom edge meets the target's bottom edge.
+    assert.equal(G.snapResize({ x: 0, y: 0, w: 100, h: 147 }, [target], { threshold: 5 }).h, 150);
+    // The grid places the far edge on a grid line; the start edge stays where it is.
+    assert.deepEqual(G.snapResize({ x: 10, y: 10, w: 100, h: 100 }, [], { grid: 24 }), { w: 110, h: 110, guides: [] });
+    // A size below the minimum is never chosen: the grid line above it is used instead.
+    const small = G.snapResize({ x: 0, y: 0, w: 395, h: 300 }, [{ x: 385, y: 900, w: 10, h: 10 }], { threshold: 8, grid: 24, min: { w: 400, h: 280 } });
+    assert.equal(small.w, 408);
+    // Nor above the maximum.
+    assert.equal(G.snapResize({ x: 0, y: 0, w: 2398, h: 300 }, [], { grid: 24, max: { w: 2390 } }).w, 2376);
+    // Only the listed axes snap, and only they get size markers.
+    const image = G.snapResize({ x: 0, y: 0, w: 198, h: 147 }, [target], { threshold: 5, axes: ['x'] });
+    assert.deepEqual({ w: image.w, h: image.h }, { w: 200, h: 147 });
+    assert.equal(image.guides.filter(guide => guide.size).length, 2);
+});
+
+test('a matched size is marked against the nearest target of that size', () => {
+    const near = { x: 300, y: 0, w: 100, h: 50 }, far = { x: 3000, y: 0, w: 100, h: 50 };
+    for (const targets of [[near, far], [far, near]]) {
+        const markers = G.snapGuides({ x: 0, y: 200, w: 100, h: 80 }, targets, { sizes: ['x', 'y'], gap: 6 }).filter(guide => guide.size);
+        assert.deepEqual(markers, [
+            { x1: 0, y1: 194, x2: 100, y2: 194, size: true },
+            { x1: 300, y1: -6, x2: 400, y2: -6, size: true }
+        ]);
+    }
+});
