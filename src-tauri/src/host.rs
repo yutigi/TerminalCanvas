@@ -667,6 +667,12 @@ impl Host {
                 ),
                 TerminalEvent::Data { id, data } => state.launches.output(id, data),
                 TerminalEvent::Exit { id, status } => state.launches.exited(id, status.code),
+                TerminalEvent::Recovered {
+                    id,
+                    previous_exit: Some(status),
+                } => {
+                    state.launches.exited(id, status.code);
+                }
                 _ => {}
             }
             if let TerminalEvent::Metadata { id, metadata, .. } = &event {
@@ -775,7 +781,11 @@ impl Host {
                     expires: 0,
                 },
             ),
-            TerminalEvent::Exit { id, status } => (
+            TerminalEvent::Exit { id, status }
+            | TerminalEvent::Recovered {
+                id,
+                previous_exit: Some(status),
+            } => (
                 id,
                 tc_core::pointers::Report {
                     kind: "exit".into(),

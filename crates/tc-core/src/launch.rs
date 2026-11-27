@@ -23,7 +23,7 @@
 
 use std::collections::BinaryHeap;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -50,6 +50,7 @@ pub const REQUEST_BYTES: u64 = 16 * 1024;
 pub const REQUESTS_PER_POLL: usize = 4;
 /// The extension of a finished request; temporary files from atomic writes end in `.tmp`.
 pub const EXTENSION: &str = "json";
+const FINISH_FILE: &str = "finish.request";
 
 /// A validated request, with the card defaults its profile supplies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -216,6 +217,24 @@ pub(crate) fn write_inbox_request(
     let file = inbox.join(format!("{id}.{extension}"));
     atomic::write(&file, &serde_json::to_vec(request)?, Access::Private)?;
     Ok((id, file))
+}
+
+/// Asks the app to end the terminal whose private inbox this is.
+pub fn write_finish(inbox: &Path, code: i32) -> io::Result<()> {
+    atomic::write(&inbox.join(FINISH_FILE), code.to_string().as_bytes(), Access::Private)
+}
+
+/// Takes an explicit finish request. The app's shared launch inbox never calls this.
+pub fn take_finish(inbox: &Path) -> Option<i32> {
+    let claimed = claim(&inbox.join(FINISH_FILE), ".finishing").ok()?;
+    let mut code = String::new();
+    let read = fs::symlink_metadata(&claimed)
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() <= 11)
+        .and_then(|_| fs::File::open(&claimed).ok())
+        .and_then(|file| file.take(12).read_to_string(&mut code).ok());
+    let _ = fs::remove_file(claimed);
+    read.and_then(|_| code.parse().ok())
 }
 
 /// Moves request `file` aside under a name ending in `suffix`, which no poll takes. A rename is

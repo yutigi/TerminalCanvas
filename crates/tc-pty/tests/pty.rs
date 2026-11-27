@@ -126,7 +126,7 @@ mod unix {
     // not contain.
 
     #[test]
-    fn a_shell_runs_input_and_reports_its_exit_code() {
+    fn a_shell_recovers_from_an_exit_and_accepts_input_again() {
         let mut live = sh();
         let (card, id) = card(json!({}));
         let started = live.manager.start(&card, None, None, None).unwrap();
@@ -145,15 +145,16 @@ mod unix {
         );
         live.manager.write(&id, "exit 3\r").unwrap();
         assert!(
-            live.pump(Duration::from_secs(10), |live| live.exit().is_some()),
+            live.pump(Duration::from_secs(10), |live| live
+                .events
+                .contains(&json!({ "type": "recovered", "id": id, "exitCode": 3 }))),
             "{}",
             live.output
         );
-        assert_eq!(
-            *live.exit().unwrap(),
-            json!({ "type": "exit", "id": id, "exitCode": 3 })
-        );
-        assert!(!live.manager.is_running(&id));
+        assert!(live.manager.is_running(&id));
+        live.manager.write(&id, "echo fresh-$((6*8))\r").unwrap();
+        assert!(live.pump(Duration::from_secs(10), |live| live.has("fresh-48")));
+        assert!(live.exit().is_none());
     }
 
     #[test]
@@ -163,12 +164,10 @@ mod unix {
         live.manager.start(&card, None, None, None).unwrap();
         live.manager.write(&id, "kill -KILL $$\r").unwrap();
         assert!(
-            live.pump(Duration::from_secs(10), |live| live.exit().is_some()),
-            "{}",
-            live.output
+            live.pump(Duration::from_secs(10), |live| live.events.contains(
+                &json!({ "type": "recovered", "id": id, "exitCode": 0, "signal": 9 })
+            ))
         );
-        let exit = live.exit().unwrap();
-        assert_eq!((exit["exitCode"].as_i64(), exit["signal"].as_i64()), (Some(0), Some(9)));
     }
 
     #[test]

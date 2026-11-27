@@ -1193,9 +1193,10 @@ async fn linked_cards_exchange_messages_and_send_input_to_running_terminals() {
     assert_eq!(child_process.lock().unwrap().writes.last().unwrap(), "hello 世界\r");
     assert_eq!(bridge_call(&app_inbox, &to_parent).await["status"], "refused");
 
+    // The host replaces the parent's exited shell; replies addressed to the old shell are refused.
     parent_events(parent_key, SessionEvent::Exit(ExitStatus { code: 0, signal: None }));
-    h.host.running().await;
-    h.host.command("start", Some(&json!({"card":parent}))).await.unwrap();
+    assert_eq!(h.host.running().await, 2);
+    assert_eq!(h.launches.lock().unwrap().len(), 3);
     assert!(
         bridge_call(&child_inbox, &to_parent).await["error"]
             .as_str()
@@ -1294,6 +1295,30 @@ async fn pointer_setup_checks_readiness_without_saving_or_sending_input() {
     assert_eq!(h.read_saved(), saved);
     check["target"] = json!("missing");
     assert!(h.host.command("pointer-check", Some(&check)).await.is_err());
+}
+
+#[tokio::test]
+async fn an_exit_pointer_fires_when_its_source_shell_is_replaced() {
+    let h = Harness::with_hook(true);
+    let source = h.start().await;
+    let target = h.start().await;
+    h.pointer_config(&source, &target, "recover-exit", "shell", "exit")
+        .await;
+    h.pointer_output(1, "\x1b]777;tc-ready;1\x07".into()).await;
+
+    let (key, events, _) = h.launches.lock().unwrap()[0].clone();
+    events(key, SessionEvent::Exit(ExitStatus { code: 7, signal: None }));
+
+    assert_eq!(h.host.running().await, 2);
+    assert_eq!(h.launches.lock().unwrap().len(), 3);
+    assert!(h.pointer_writes(1).contains(&"echo delivered\r".into()));
+    assert!(
+        h.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| { event["type"] == "recovered" && event["id"] == source["id"] && event["exitCode"] == 7 })
+    );
 }
 
 #[tokio::test]

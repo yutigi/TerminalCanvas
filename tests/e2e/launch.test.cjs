@@ -42,7 +42,7 @@ test('a program in a terminal opens a started terminal beside it, joined by an a
     assert.equal(received.status, 'received');
     assert.deepEqual(received.messages.map(({ from, text }) => ({ from, text })), [{ from: helper.id, text: 'Helper finished' }]);
 
-    // The caller learns the new card's ID and can follow its output, through to its exit code.
+    // A shell exit finalizes the log with the original exit code and leaves a fresh shell on the card.
     const report = path.join(project, 'report.json');
     await input(h.page, parent.id, `& $env:TC_HOOK new-terminal --title Logged --command 'Write-Output LOGGED_LINE; exit 5' --log --json | Set-Content -LiteralPath ${psQuote(report)}\r`);
     const answer = await until(async () => JSON.parse(await fs.readFile(report, 'utf8').catch(() => 'null')), 'tc-hook did not report the opened terminal.');
@@ -56,6 +56,17 @@ test('a program in a terminal opens a started terminal beside it, joined by an a
     }, 'The output log did not record the exit.');
     assert.match(text, /^LOGGED_LINE$/m);
     assert.match(text, /\[Terminal Canvas: the process exited with code 5\]\n$/);
+    await until(async () => !(await directory(h.page, logged)).warning, 'The replacement shell did not reach its prompt.');
+    await input(h.page, logged.id, 'Write-Output (40 + 2)\r');
+    await until(async () => hasOutputLine(await h.output(logged.id), '42'), 'The replacement shell did not accept input.');
+    assert.equal(await h.page.evaluate(id => sessions.get(id).status, logged.id), 'running');
+
+    // An explicit finish request stops only the terminal that sent it and keeps its output visible.
+    await input(h.page, helper.id, '& $env:TC_HOOK finish 7\r');
+    await until(() => h.page.evaluate(id => window.__e2eEvents.some(event =>
+        event.type === 'exit' && event.id === id && event.exitCode === 7), helper.id), 'The terminal did not finish.');
+    assert.equal(await h.page.evaluate(id => sessions.get(id).status, helper.id), 'exited');
+    assert.equal((await h.state()).host.running, 2);
 
     // A refused request reports a non-zero exit and opens nothing.
     await input(h.page, parent.id, `& $env:TC_HOOK new-terminal --cwd ${psQuote('missing folder')}; Write-Output "REFUSED_EXIT=$LASTEXITCODE"\r`);

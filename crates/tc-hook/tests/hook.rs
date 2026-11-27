@@ -53,6 +53,39 @@ fn hook(args: &[&str], folder: &Path) -> Command {
 }
 
 #[test]
+fn lifecycle_callbacks_from_kept_sessions_succeed_quietly() {
+    let folder = temp_folder("lifecycle-compat");
+    let payload = json!({ "hook_event_name": "Stop", "last_assistant_message": "test" }).to_string();
+    for provider in ["codex", "claude"] {
+        let mut child = hook(&["lifecycle", provider], &folder)
+            .env(tc_core::launch::ENV, &folder)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.stdout.is_empty() && result.stderr.is_empty());
+    }
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+    std::fs::remove_dir(folder).unwrap();
+}
+
+#[test]
+fn finish_queues_an_exit_code_only_in_the_current_terminals_inbox() {
+    let folder = temp_folder("finish");
+    assert!(!hook(&["finish"], &folder).output().unwrap().status.success());
+    let mut command = hook(&["finish", "7"], &folder);
+    command.env(tc_core::launch::ENV, &folder);
+    assert!(command.output().unwrap().status.success());
+    assert_eq!(tc_core::launch::take_finish(&folder), Some(7));
+    assert_eq!(tc_core::launch::take_finish(&folder), None);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
 fn emit_matches_the_javascript_hook() {
     let golden = golden();
     let folder = temp_folder("emit");

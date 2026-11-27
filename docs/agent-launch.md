@@ -202,7 +202,7 @@ last line:
 So a program can wait for a result by reading the file until that line appears:
 
 ```bash
-report=$("$TC_HOOK" new-terminal --title "Tests" --command 'npm test; exit $?' --log --json)
+report=$("$TC_HOOK" new-terminal --title "Tests" --command 'npm test; "$TC_HOOK" finish "$?"' --log --json)
 log=$(printf '%s' "$report" | sed -n 's/.*"log":"\([^"]*\)".*/\1/p')
 # No log means nothing opened (or will): the report's error says why.
 [ -n "$log" ] || { printf '%s\n' "$report"; exit 1; }
@@ -210,14 +210,25 @@ until grep -q '^\[Terminal Canvas: the process exited' "$log" 2>/dev/null; do sl
 tail -n 40 "$log"
 ```
 
-The command is typed into an interactive shell, so the process that ends is that shell. End the
-command with `exit` (`npm test; exit $?`, or `npm test; exit $LASTEXITCODE` in PowerShell) when the
-caller should see it finish; otherwise the terminal stays open for you to use.
+The command runs in an interactive shell. If that shell exits, the log records its exit code
+and Terminal Canvas tries to start a fresh shell on the same card.
 
 A log keeps the first 16 MB of output; after that it notes that it stopped, and the terminal keeps
 running. Logs live in the request folder: a log requested from inside a terminal is deleted when that
 terminal ends, and logs in the app inbox are deleted when the app next starts. Copy anything you want
 to keep. Output is only written to disk when a request asks for a log.
+
+## Finish a terminal
+
+Run `"$TC_HOOK" finish [exit-code]` from inside the terminal you want to end. In PowerShell use
+`& $env:TC_HOOK finish`, or `& $env:TC_HOOK finish $LASTEXITCODE` after a command. The exit
+code defaults to zero. The hook queues a request for the app and returns immediately. The card
+stays visible with its output and shows **Exited**. If the card has an output log, the app
+records the requested exit code there.
+
+An agent should use this hook only when asked to end its own terminal or when it has finished a
+worker that was explicitly set up to end. Routine AI lifecycle hooks and the AI tool returning to
+its shell leave the terminal running.
 
 ## Examples
 
@@ -261,8 +272,9 @@ opened: tell the user the `error`, which says what to do next, and the folder an
 `request` so they can open the terminal themselves. If `TC_HOOK` is unset, this terminal has no
 Terminal Canvas integration (the app showed why) or your harness dropped the variable: say so, and
 give the folder and command the same way.
-To follow its output, add `--log` and read the file named by `log`; a line starting with
-`[Terminal Canvas: the process exited` marks the end. Never open more terminals than the task needs.
+To follow its output, add `--log` and read the file named by `log`. To explicitly end your own
+terminal, use `"$TC_HOOK" finish [exit-code]` when asked. The log's final line starts with
+`[Terminal Canvas: the process exited`. Never open more terminals than the task needs.
 Use `"$TC_HOOK" send-message --to <card ID> --text "<message>" --json` for agent messages,
 `send-message --parent` to reply to the terminal that opened yours, and
 `receive-messages --wait 30 --json` to read replies. Use `send-input --to <card ID>` when you intend
