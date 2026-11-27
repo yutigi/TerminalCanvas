@@ -157,7 +157,11 @@ test('snapping lines up native terminal moves and resizes with guides, and Alt p
     assert.deepEqual([scene.added, scene.width, scene.menu, scene.enabled], [50, 31, 64, true], 'a divider, the magnet, and its menu; snapping starts on');
     await click(page, scene.toggle);
     assert.equal(await page.evaluate(() => snapPreferences.enabled), false);
-    await click(page, scene.toggle);
+    // The menu hides while snapping is off, so the centered toolbar and its magnet move.
+    await click(page, await page.evaluate(() => {
+        const toggle = document.querySelector('#snap-toggle').getBoundingClientRect();
+        return { x: Math.round(toggle.x + toggle.width / 2), y: Math.round(toggle.y + toggle.height / 2) };
+    }));
     assert.deepEqual(await page.evaluate(() => [snapPreferences.enabled, document.querySelector('#snap-grid').hidden,
         JSON.parse(localStorage.getItem('terminal-canvas.snapping.v1')).enabled]), [true, false, true]);
     const box = selector => page.evaluate(selector => {
