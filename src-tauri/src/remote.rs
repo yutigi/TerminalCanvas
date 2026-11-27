@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
@@ -31,6 +31,7 @@ const MAX_CONTROLLER_MESSAGE: usize = tc_core::workspace::limits::BYTES as usize
 // Startup sends the workspace and up to 2 MiB of replay before JSON escaping.
 const SNAPSHOT_WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 const EVENT_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+const MIN_RESYNC_INTERVAL: Duration = Duration::from_secs(2);
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub type Assets = Arc<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>;
@@ -133,14 +134,26 @@ struct Server {
     authority: String,
     origin: String,
     https: bool,
+    include_scrollback: bool,
     cookie: String,
     assets: Assets,
     security: Mutex<Security>,
+    capture: tokio::sync::Mutex<()>,
     stop: watch::Sender<bool>,
     task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl Server {
+    async fn attach(&self) -> Result<(Value, tokio::sync::broadcast::Receiver<Value>), ()> {
+        // One desktop capture can repair the replay for several clients attaching at once.
+        let _ = tokio::time::timeout(Duration::from_secs(4), async {
+            let _capture = self.capture.lock().await;
+            self.host.remote_refresh(secret(), self.include_scrollback).await;
+        })
+        .await;
+        self.host.remote_attach().await.ok_or(())
+    }
+
     fn status(&self, tokens: bool) -> Value {
         let mut security = self.security.lock().unwrap_or_else(|e| e.into_inner());
         security.expire();
@@ -267,18 +280,24 @@ impl Remote {
                     None
                 };
                 let (stop, _) = watch::channel(false);
+                let include_scrollback = payload
+                    .and_then(|p| p.get("includeScrollback"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let server = Arc::new(Server {
                     host: self.host.clone(),
                     origin,
                     https: tls.is_some(),
+                    include_scrollback,
                     authority,
                     cookie: format!("tc_remote_{port}"),
                     assets: self.assets.clone(),
                     security: Mutex::new(Security::new()),
+                    capture: tokio::sync::Mutex::new(()),
                     stop,
                     task: Mutex::new(None),
                 });
-                self.host.remote_begin(secret()).await;
+                self.host.remote_begin(secret(), include_scrollback).await;
                 let router = router(server.clone());
                 let mut stopping = server.stop.subscribe();
                 let serving = server.clone();
@@ -603,26 +622,30 @@ async fn connected(server: Arc<Server>, id: String, role: Role, mut socket: WebS
         return;
     };
     server.notify();
-    let Some((mut snapshot, mut events)) = server.host.remote_attach().await else {
-        disconnect(&server, &id);
-        return;
+    let initialize = async {
+        let (mut snapshot, events) = server.attach().await?;
+        snapshot["type"] = json!("remote-initialize");
+        snapshot["role"] = json!(if matches!(role, Role::Control) {
+            "control"
+        } else {
+            "view"
+        });
+        send(&mut socket, snapshot, SNAPSHOT_WRITE_TIMEOUT).await?;
+        Ok::<_, ()>(events)
     };
-    snapshot["type"] = json!("remote-initialize");
-    snapshot["role"] = json!(if matches!(role, Role::Control) {
-        "control"
-    } else {
-        "view"
-    });
     // A cancelled or timed-out write can leave part of the snapshot buffered in
     // the socket. Drop it without flushing if the session ends during startup.
     let initialized = tokio::select! {
         biased;
-        _ = session_ended(&server, &active) => false,
-        result = send(&mut socket, snapshot, SNAPSHOT_WRITE_TIMEOUT) => result.is_ok(),
+        _ = session_ended(&server, &active) => Err(()),
+        result = initialize => result,
     };
-    if initialized {
-        let close = stream_events(&server, &active, role, &mut socket, &mut events).await;
-        let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(close))).await;
+    if let Ok(mut events) = initialized
+        && stream_events(&server, &active, role, &mut socket, &mut events)
+            .await
+            .is_ok()
+    {
+        let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(Message::Close(None))).await;
     }
     disconnect(&server, &id);
 }
@@ -646,41 +669,50 @@ async fn stream_events(
     role: Role,
     socket: &mut WebSocket,
     events: &mut tokio::sync::broadcast::Receiver<Value>,
-) -> Option<CloseFrame> {
+) -> Result<(), ()> {
     let ended = session_ended(server, active);
     tokio::pin!(ended);
     let mut messages = 0;
     let mut started = Instant::now();
+    let mut last_resync = None;
     let mut next_sequence = 0u64;
     let mut pending: Option<BoxFuture<Value>> = None;
     'connection: loop {
         if !active.load(Ordering::Acquire) || *server.stop.borrow() {
             break;
         }
-        tokio::select! {
+        let mut reply = None;
+        let lagged = tokio::select! {
             _ = &mut ended => break,
             event = events.recv() => {
-                // Lagging clients reconnect for a fresh snapshot; never pause the desktop PTY.
                 if !active.load(Ordering::Acquire) { break; }
                 match event {
-                    Ok(event) => if send(socket, event, EVENT_WRITE_TIMEOUT).await.is_err() { break; },
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        return Some(CloseFrame {
-                            code: close_code::AGAIN,
-                            reason: "Browser connection fell behind terminal output. Reload to reconnect.".into(),
-                        });
+                    Ok(event) => {
+                        send(socket, event, EVENT_WRITE_TIMEOUT).await?;
+                        false
                     }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => true,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
             result = async { pending.as_mut().expect("pending command").await }, if pending.is_some() => {
                 pending = None;
+                reply = Some(result);
+                let mut lagged = false;
                 // Deliver the lifecycle changes queued by the desktop before its reply.
                 for _ in 0..events.len() {
-                    let Ok(event) = events.try_recv() else { break 'connection; };
-                    if !active.load(Ordering::Acquire) || send(socket, event, EVENT_WRITE_TIMEOUT).await.is_err() { break 'connection; }
+                    if !active.load(Ordering::Acquire) { break 'connection; }
+                    match events.try_recv() {
+                        Ok(event) => send(socket, event, EVENT_WRITE_TIMEOUT).await?,
+                        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
+                            lagged = true;
+                            break;
+                        }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break 'connection,
+                        Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                    }
                 }
-                if !active.load(Ordering::Acquire) || send(socket, result, EVENT_WRITE_TIMEOUT).await.is_err() { break; }
+                lagged
             }
             message = socket.recv() => {
                 let Some(Ok(message)) = message else { break; };
@@ -715,12 +747,36 @@ async fn stream_events(
                     }
                     Err(_) => Some(json!({ "type": "error", "message": "Unsupported browser request." })),
                 };
-                if let Some(response) = response
-                    && send(socket, response, EVENT_WRITE_TIMEOUT).await.is_err() { break; }
+                reply = response;
+                false
             }
+        };
+        if lagged {
+            let resync = async {
+                // Collapse repeated gaps into one refresh, without blocking the desktop actor.
+                if let Some(previous) = last_resync {
+                    tokio::time::sleep_until(previous + MIN_RESYNC_INTERVAL).await;
+                }
+                let (mut snapshot, live) = server.attach().await?;
+                snapshot["type"] = json!("remote-resync");
+                send(socket, snapshot, SNAPSHOT_WRITE_TIMEOUT).await?;
+                Ok(live)
+            };
+            *events = tokio::select! {
+                biased;
+                _ = &mut ended => return Err(()),
+                result = resync => result?,
+            };
+            last_resync = Some(tokio::time::Instant::now());
+        }
+        if let Some(reply) = reply {
+            if !active.load(Ordering::Acquire) || *server.stop.borrow() {
+                break;
+            }
+            send(socket, reply, EVENT_WRITE_TIMEOUT).await?;
         }
     }
-    None
+    Ok(())
 }
 
 async fn send(socket: &mut WebSocket, event: Value, timeout: Duration) -> Result<(), ()> {
@@ -886,9 +942,11 @@ mod tests {
             host,
             origin: format!("http://{authority}"),
             https: false,
+            include_scrollback: false,
             authority,
             cookie: format!("tc_remote_{port}"),
             security: Mutex::new(Security::new()),
+            capture: tokio::sync::Mutex::new(()),
             stop: watch::channel(false).0,
             task: Mutex::new(None),
             assets: Arc::new(|path| Some((path.as_bytes().to_vec(), "text/plain".into()))),
@@ -1093,7 +1151,7 @@ mod tests {
     async fn real_websockets_share_live_state_and_enforce_controller_and_viewer_roles() {
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let server = server(host(), listener.local_addr().unwrap().port());
-        server.host.remote_begin("test".into()).await;
+        server.host.remote_begin("test".into(), false).await;
         let (requests, mut desktop) = tokio::sync::mpsc::unbounded_channel();
         server.host.connect(Arc::new(move |event| {
             if event["type"] == "remote-terminal-request" {
@@ -1145,6 +1203,18 @@ mod tests {
         assert!(matches!(result, Err(tungstenite::Error::Http(response)) if response.status() == StatusCode::CONFLICT));
         let (mut viewer, _) = tokio_tungstenite::connect_async(make_request(view)).await.unwrap();
         assert_eq!(socket_event(&mut viewer, "remote-initialize").await["role"], "view");
+        // The current-thread server cannot consume events in the middle of this synchronous burst.
+        // Both clients must refresh on their existing sockets and keep their original roles.
+        for _ in 0..2 {
+            for _ in 0..128 {
+                server.host.emit(json!({"type": "pointer"}));
+            }
+            for socket in [&mut controller, &mut viewer] {
+                let refreshed = socket_event(socket, "remote-resync").await;
+                assert_eq!(refreshed["workspace"], event["workspace"]);
+                assert_eq!(refreshed["titleEpoch"], epoch);
+            }
+        }
         let ping = b"still connected".to_vec();
         viewer
             .send(tungstenite::Message::Ping(ping.clone().into()))

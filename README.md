@@ -85,6 +85,9 @@ View and control Terminal Canvas in a browser on this computer or another device
 6. **Revoke sessions** disconnects every browser without changing the tokens. **Rotate tokens**
    also invalidates both tokens. **Stop access** stops listening and disconnects everyone. Starting
    again generates fresh tokens. Reload a disconnected browser to reconnect or enter a new token.
+7. Scroll over a terminal to read its available history. To include recent output from before the
+   browser server started, enable **Share recent scrollback** on the desktop before clicking **Start**.
+   In a full-screen program that handles the wheel, use a controller session to scroll in the program.
 
 Browser access is off by default on every launch, including debug, test, and E2E builds. It never
 starts from an environment variable, saved setting, command-line argument, or remote request.
@@ -97,9 +100,11 @@ disconnects active connections.
 Network mode binds one private IPv4 interface with HTTPS and secure session cookies, including a
 Tailscale interface when you supply its `100.64.0.0/10` address. Both modes check the exact browser
 address and origin. When you start Browser access, it shares the current screen of each running terminal, including
-any text already on that screen. Earlier scrollback stays on the desktop. The screens and subsequent
-output share a 2 MiB, memory-only replay buffer. Slow clients disconnect and can reload to replay
-recent output. They never acknowledge or stall the desktop's PTY output. Full-screen programs may
+any text already on that screen. The optional scrollback capture includes up to 1,000 older lines
+per terminal as space allows. Screens, optional history, and subsequent output share a 2 MiB,
+memory-only replay buffer. A browser that falls behind receives a fresh snapshot and resumes live
+updates on the same connection. If the connection stalls and closes, reload to reconnect.
+Browser clients never acknowledge or stall the desktop's PTY output. Full-screen programs may
 need a redraw after attachment, especially once older output has dropped out of the buffer. Treat
 controller tokens like access to your shells, and viewer tokens like access to terminal output and
 the workspace.

@@ -1939,6 +1939,11 @@ function remoteTerminals(terminals) {
         }
     }
 }
+function replayRemoteOutput(session, output) {
+    if (!session?.terminal) return;
+    session.replaying = (session.replaying || 0) + 1;
+    session.terminal.write(output, () => { session.replaying--; });
+}
 async function canReplace() {
     if (canvasMutation || boardBusy() || imageImports || formBusy || duplicateBusy) return false;
     if (canvasStates.length === 1 && !workspace.cards.length && !workspace.items.length) return true;
@@ -2181,36 +2186,65 @@ installPointerControls();
 const HIDDEN_PARSE_BACKLOG = 4_000_000;
 // The host ignores a larger acknowledgment.
 const ACK_CHUNK = 1024 * 1024;
+const REMOTE_REPLAY_BYTES = 2 * 1024 * 1024;
+const REMOTE_SCROLLBACK_LINES = 1000;
+
+function serializeRemoteScreen(terminal, addon, scrollback) {
+    let screen = addon.serialize({ scrollback });
+    if (!scrollback && terminal.buffer.active.type === 'alternate') {
+        // The normal screen is hidden while the alternate buffer is active.
+        const start = screen.indexOf('\x1b[?1049h');
+        screen = start < 0 ? '' : screen.slice(start);
+    }
+    // xterm 6 serializes the tracking protocol but omits its encoding. Legacy binary
+    // reports never reach the browser bridge, so preserve the active SGR mode.
+    const encoding = terminal._core?.coreMouseService?.activeEncoding;
+    if (encoding === 'SGR') screen += '\x1b[?1006h';
+    if (encoding === 'SGR_PIXELS') screen += '\x1b[?1016h';
+    // xterm 6 also omits DECTCEM, which keeps full-screen cursors from drawing over text.
+    if (terminal._core?.coreService?.isCursorHidden) screen += '\x1b[?25l';
+    return screen;
+}
+
 async function captureRemoteScreens(event) {
     const encoder = new TextEncoder();
-    let remaining = 2 * 1024 * 1024;
+    let remaining = REMOTE_REPLAY_BYTES, historyBudget = REMOTE_REPLAY_BYTES;
     const screens = Object.create(null);
+    const histories = new Map();
     await Promise.all(event.ids.map(id => {
         const s = sessions.get(id);
-        if (!s?.terminal || s.status !== 'running') return;
+        if (!s?.terminal || !['starting', 'running'].includes(s.status)) return;
         const generation = s.generation;
         // This barrier runs after PTY writes before the host's capture event and before later writes.
         return new Promise((resolve, reject) => s.terminal.write('', () => {
-            if (sessions.get(id) !== s || s.status !== 'running' || s.generation !== generation) return resolve();
+            if (sessions.get(id) !== s || !['starting', 'running'].includes(s.status) || s.generation !== generation) return resolve();
             const addon = new window.SerializeAddon.SerializeAddon();
             s.terminal.loadAddon(addon);
             try {
-                let screen = addon.serialize({ scrollback: 0 });
-                if (s.terminal.buffer.active.type === 'alternate') {
-                    // The addon emits the normal screen first, followed by DECSET 1049 and the alternate screen.
-                    const start = screen.indexOf('\x1b[?1049h');
-                    screen = start < 0 ? '' : screen.slice(start);
-                }
-                // xterm 6's serializer omits DECTCEM. Preserve it so focusing a browser copy
-                // cannot draw a block cursor over a cell where the desktop hides the cursor.
-                if (s.terminal._core?.coreService?.isCursorHidden) screen += '\x1b[?25l';
+                const screen = serializeRemoteScreen(s.terminal, addon, 0);
                 const bytes = encoder.encode(screen).length;
-                if (bytes <= remaining) { screens[id] = screen; remaining -= bytes; }
+                if (bytes > remaining) return resolve();
+                screens[id] = screen;
+                remaining -= bytes;
+                if (event.includeScrollback && historyBudget && s.terminal.buffer.normal.baseY > 0) {
+                    const history = serializeRemoteScreen(s.terminal, addon, REMOTE_SCROLLBACK_LINES);
+                    const historyBytes = encoder.encode(history).length;
+                    if (historyBytes <= historyBudget) {
+                        histories.set(id, { history, extraBytes: historyBytes - bytes });
+                        historyBudget -= historyBytes;
+                    }
+                }
                 resolve();
             } catch (error) { reject(error); }
             finally { addon.dispose(); }
         }));
     }));
+    // Give the current screens room before spending the replay budget on older lines.
+    for (const [id, { history, extraBytes }] of histories) {
+        if (extraBytes > remaining) continue;
+        screens[id] = history;
+        remaining -= extraBytes;
+    }
     await invoke('remote-snapshot', { requestId: event.requestId, screens });
 }
 
@@ -2239,6 +2273,16 @@ if (bridge) {
         if (!bridge.remote && event.type === 'remote-terminal-request') run(() => runRemoteTerminalRequest(event));
         if (bridge.remote && event.type === 'remote-workspace' && ready) receiveRemoteWorkspace(event.workspace, event.titleEpoch);
         if (bridge.remote && event.type === 'remote-terminals' && ready) remoteTerminals(event.terminals);
+        if (bridge.remote && event.type === 'remote-resync' && ready) {
+            receiveRemoteWorkspace(event.workspace, event.titleEpoch);
+            remoteTerminals(event.terminals);
+            // An incomplete replay can start in the middle of a terminal sequence.
+            if (event.replayTruncated) return;
+            for (const [id, output] of Object.entries(event.output)) {
+                // Cancel an unfinished escape and reset in the write queue before replaying recent output.
+                replayRemoteOutput(sessions.get(id), '\x18\x1bc' + output);
+            }
+        }
         if (bridge.remote && event.type === 'remote-disconnected') {
             document.body.classList.remove('remote-controller');
             $('#workspace-name').readOnly = true;
@@ -2322,8 +2366,7 @@ if (bridge) {
             document.body.append(banner);
             remoteTerminals(initial.terminals || []);
             for (const [id, output] of Object.entries(initial.output || {})) {
-                const s = sessions.get(id);
-                if (s?.terminal) { s.replaying = true; s.terminal.write(output, () => { s.replaying = false; }); }
+                replayRemoteOutput(sessions.get(id), output);
             }
         }
         if (initial.warning) toast(initial.warning);

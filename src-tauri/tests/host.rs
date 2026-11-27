@@ -269,7 +269,7 @@ async fn title_edits_survive_stale_saves_export_import_and_restart_without_start
 async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_manual_precedence() {
     let h = Harness::new();
     let initial = h.host.command("initialize", None).await.unwrap();
-    h.host.remote_begin("test".into()).await;
+    h.host.remote_begin("test".into(), false).await;
     let mut card = create_card(&json!({"cwd":h.folder,"titleMode":"automatic"})).unwrap();
     card.claude_account = Some("Naming test".into());
     h.host
@@ -346,7 +346,7 @@ async fn automatic_titles_reach_attached_browsers_with_the_desktop_epoch_and_man
 async fn remote_workspace_replacement_broadcasts_a_new_epoch_even_when_the_board_is_identical() {
     let h = Harness::new();
     h.host.command("initialize", None).await.unwrap();
-    h.host.remote_begin("test".into()).await;
+    h.host.remote_begin("test".into(), false).await;
     let (snapshot, mut events) = h.host.remote_attach().await.unwrap();
     let replacement = h.host.command("new", None).await.unwrap();
     assert_eq!(snapshot["workspace"], replacement["workspace"]);
@@ -386,12 +386,13 @@ async fn remote_attachment_preserves_desktop_state_sequences_and_event_delivery(
         }
         desktop.lock().unwrap().push(event);
     }));
-    tokio::join!(h.host.remote_begin("test".into()), async {
+    tokio::join!(h.host.remote_begin("test".into(), true), async {
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), request)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(event["ids"], json!([id]));
+        assert_eq!(event["includeScrollback"], true);
         events(key.clone(), SessionEvent::Output("during-capture".into()));
         h.host
             .remote_snapshot("stale".into(), [(id.clone(), "stale-screen".into())].into())

@@ -3,6 +3,9 @@
 #remote-address { display: block; padding: 0 10px 8px; color: #a7bb9b; font: 10px/1.5 Consolas, monospace; overflow-wrap: anywhere; }
 #remote-dialog, #remote-limitations { width: 580px; }
 #remote-control-token, #remote-view-token { font-family: Consolas, monospace; }
+#remote-dialog .remote-scrollback { align-items: center; justify-content: flex-start; gap: 8px; font-size: 12px; }
+#remote-scrollback { width: 16px; height: 16px; padding: 0; margin: 0; accent-color: var(--accent); }
+#remote-scrollback-hint { color: #a2acba; font-size: 11px; }
 .remote-login { color: #c8d1dc; background: #15191f; font: 16px/1.6 system-ui, sans-serif; margin: 0; }
 .remote-login main { width: min(480px, calc(100% - 48px)); margin: 10vh auto; }
 .remote-login h1 { font-size: 28px; color: #c8ecb5; }

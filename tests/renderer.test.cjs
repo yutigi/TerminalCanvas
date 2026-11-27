@@ -857,6 +857,15 @@ test('browser snapshots reconcile every canvas while preserving local navigation
     assert.deepEqual(json(context, 'output'), ['background output']);
     assert.equal(json(context, 'sessions.get(first).status'), 'running');
     assert.equal(json(context, 'sessions.get(first).terminal.cols'), 117);
+    const terminalState = [first, hidden].map(id => ({ id, running: true, generation: 1, cols: 117, rows: 39 }));
+    vm.runInContext('sessions.get(hiddenId).terminal.write = (data, done) => { output.push(data); done(); }', context);
+    onEvent({ type: 'remote-resync', workspace: update, terminals: terminalState, output: { [first]: 'replayed output' } });
+    onEvent({ type: 'remote-resync', workspace: update, terminals: terminalState,
+        replayTruncated: true, output: { [first]: 'incomplete output' } });
+    onEvent({ type: 'data', id: first, data: 'new live output' });
+    assert.deepEqual(json(context, 'output'), ['background output', '\x18\x1bcreplayed output', 'new live output']);
+    assert.equal(json(context, 'activeCanvas.id'), 'canvas-1');
+    assert.equal(json(context, 'sessions.get(hiddenId).terminal === originalTerminal'), true);
     vm.runInContext(`switchCanvas('canvas-0')`, context);
     assert.deepEqual(json(context, 'workspace.camera'), { x: 123, y: -456, z: .6 });
     assert.equal(json(context, 'focused'), first);

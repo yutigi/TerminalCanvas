@@ -293,6 +293,83 @@ test('loopback controller manages and types in shared terminals while the viewer
     assert.deepEqual(browserErrors, []);
 });
 
+test('browser wheel scrolls shared history and reports mouse input in the captured encoding', {
+    skip: process.platform !== 'win32', timeout: 60000
+}, async t => {
+    const h = await launch(); t.after(() => h.dispose());
+    const { id } = await h.page.evaluate(async () => {
+        const { workspace: board, titleEpoch } = await invoke('new');
+        loadWorkspace(board, titleEpoch);
+        const { card } = await invoke('create-card', { title: 'Browser scrollback', x: 35, y: 25 });
+        workspace.cards.push(card); mount(card); renderCamera();
+        await start(card); await invoke('autosave', workspace);
+        return card;
+    });
+    await until(async () => !(await h.page.evaluate(id => invoke('duplicate-directory', sessions.get(id).card), id)).warning,
+        'The isolated PowerShell did not reach its prompt.');
+    await h.page.evaluate(id => new Promise(resolve => {
+        const terminal = sessions.get(id).terminal;
+        const lines = Array.from({ length: terminal.rows + 10 }, (_, index) => `line ${index}`).join('\r\n');
+        terminal.write(`\r\nREMOTE_SCROLLBACK_MARKER\r\n${lines}\r\n\x1b[?1000h\x1b[?1006h`, resolve);
+    }), id);
+    if (!await h.page.locator('#remote-settings').isVisible()) await h.page.locator('#sidebar-toggle').click();
+    await h.page.locator('#remote-settings').click();
+    const share = h.page.getByRole('checkbox', { name: 'Share recent scrollback' });
+    assert.equal(await share.isChecked(), false);
+    await share.check();
+    await h.page.locator('#remote-start-stop').click();
+    const access = await until(async () => {
+        const status = await h.page.evaluate(() => invoke('remote-status'));
+        return status.running && status;
+    }, 'Browser access did not start.');
+    assert.equal(await share.isDisabled(), true);
+
+    const browser = await chromium.launch({ channel: 'msedge', headless: true,
+        args: ['--disable-background-networking', '--disable-component-update', '--no-first-run'] });
+    t.after(() => browser.close());
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    let wheelReport;
+    page.on('websocket', socket => {
+        socket.on('framesent', ({ payload }) => {
+            const { action, data } = JSON.parse(payload);
+            if (action === 'input' && /^\x1b\[<64;\d+;\d+M$/.test(data)) wheelReport = data;
+        });
+    });
+    await page.goto(access.url);
+    await page.locator('#pair-token').fill(access.controlToken);
+    await page.locator('#pair-submit').click();
+    await page.waitForFunction(id => typeof ready !== 'undefined' && ready
+        && sessions.get(id)?.terminal.modes.mouseTrackingMode === 'vt200', id);
+    const scrollback = () => page.evaluate(id => {
+        const { terminal } = sessions.get(id);
+        const buffer = terminal.buffer.active;
+        const lines = Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true));
+        return { base: buffer.baseY, viewport: buffer.viewportY, marker: lines.indexOf('REMOTE_SCROLLBACK_MARKER') };
+    }, id);
+    assert.ok((await scrollback()).marker >= 0, 'The requested history was absent from the browser replay.');
+    assert.equal(await visibleTerminalLine(page, id, 'REMOTE_SCROLLBACK_MARKER'), false);
+    const screen = page.locator(`.terminal-card[data-id="${id}"] .xterm-screen`);
+    await screen.hover();
+    await page.mouse.wheel(0, -480);
+    await until(() => wheelReport, 'The browser did not send an SGR mouse wheel report.');
+
+    // After the application releases mouse tracking, the same wheel scrolls the browser buffer.
+    await page.evaluate(id => new Promise(resolve => {
+        sessions.get(id).terminal.write('\x1b[?1000l\x1b[?1006l', resolve);
+    }), id);
+    for (let turn = 0; turn < 8 && !await visibleTerminalLine(page, id, 'REMOTE_SCROLLBACK_MARKER'); turn++) {
+        const { viewport } = await scrollback();
+        if (viewport === 0) break;
+        await page.mouse.wheel(0, -240);
+        await until(async () => (await scrollback()).viewport < viewport, 'The browser wheel did not move the terminal viewport.');
+    }
+    assert.ok(await visibleTerminalLine(page, id, 'REMOTE_SCROLLBACK_MARKER'),
+        `The browser did not reveal the old line: ${JSON.stringify(await scrollback())}`);
+    await h.page.locator('#remote-start-stop').click();
+    await until(async () => !await share.isDisabled(), 'Browser access did not stop.');
+    assert.equal(await share.isChecked(), false);
+});
+
 const privateAddress = Object.values(os.networkInterfaces()).flat().find(entry => !entry.internal && entry.family === 'IPv4'
     && /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry.address))?.address;
 

@@ -36,6 +36,8 @@
         </div>
         <label class="field-label" for="remote-port">Port (0 chooses an available port)</label>
         <input id="remote-port" type="number" min="0" max="65535" value="0">
+        <label class="field-label remote-scrollback"><input id="remote-scrollback" type="checkbox" aria-describedby="remote-scrollback-hint"> Share recent scrollback</label>
+        <p class="field-hint" id="remote-scrollback-hint">Viewers and controllers can see recent terminal output from before Browser access started.</p>
         <p id="remote-state" class="info-copy" role="status">Off</p>
         <div id="remote-credentials" hidden>
             <label class="field-label" for="remote-control-token">Controller token · create and manage terminals, run commands</label>
@@ -55,6 +57,7 @@
     const find = selector => dialog.querySelector(selector);
     let state = { running: false, clients: 0 }, busy = false;
     const render = update => {
+        const wasRunning = state.running;
         state = { ...state, ...update };
         button.textContent = state.running ? `Browser access · ${state.clients} connected` : 'Browser access · Off';
         button.classList.toggle('remote-running', state.running);
@@ -63,6 +66,8 @@
         find('#remote-state').textContent = state.running ? `${state.url} · ${state.clients} connected` : 'Off · no browser server listening';
         find('#remote-credentials').hidden = !state.running;
         find('#remote-port').disabled = state.running || busy;
+        find('#remote-scrollback').disabled = state.running || busy;
+        if (wasRunning && !state.running) find('#remote-scrollback').checked = false;
         find('#remote-scope').disabled = state.running || busy;
         find('#remote-ip').disabled = state.running || busy;
         find('#remote-network').hidden = (state.running ? !state.https : find('#remote-scope').value !== 'network');
@@ -92,6 +97,7 @@
     find('#remote-scope').onchange = () => render({});
     find('#remote-start-stop').onclick = () => call(state.running ? 'remote-stop' : 'remote-start', {
         port: Number(find('#remote-port').value),
+        includeScrollback: find('#remote-scrollback').checked,
         address: find('#remote-scope').value === 'network' ? find('#remote-ip').value.trim() : null
     });
     find('#remote-save-certificate').onclick = () => call('remote-certificate');

@@ -153,7 +153,7 @@ remote_actions! {
     remote_revoke => "remote-revoke",
 }
 
-/// The visible xterm screens requested by the host when Browser access starts.
+/// The xterm screens requested by the host when Browser access starts.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ScreenCapture {

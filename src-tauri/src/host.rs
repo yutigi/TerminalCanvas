@@ -299,6 +299,7 @@ struct NameEntry {
 struct RemoteCapture {
     request_id: String,
     generations: HashMap<String, u64>,
+    position: u64,
     done: tokio::sync::oneshot::Sender<()>,
 }
 
@@ -1817,35 +1818,64 @@ impl Host {
     }
 
     /// Start buffering PTY output at the same point in the desktop event stream as the capture.
-    pub async fn remote_begin(&self, request_id: String) {
+    pub async fn remote_begin(&self, request_id: String, include_scrollback: bool) {
+        self.with_state(|_, state| state.mirror = Some(crate::remote_mirror::Mirror::new()))
+            .await;
+        self.capture_remote(request_id, include_scrollback, false).await;
+    }
+
+    pub(crate) async fn remote_refresh(&self, request_id: String, include_scrollback: bool) {
+        self.capture_remote(request_id, include_scrollback, true).await;
+    }
+
+    async fn capture_remote(&self, request_id: String, include_scrollback: bool, truncated_only: bool) {
         let (done, captured) = tokio::sync::oneshot::channel();
-        self.with_state(move |host, state| {
-            let generations: HashMap<_, _> = state
-                .recovery
-                .board()
-                .cards
-                .iter()
-                .filter_map(|card| state.manager.view(&card.id).map(|v| (card.id.clone(), v.0)))
-                .collect();
-            state.mirror = Some(crate::remote_mirror::Mirror::new());
-            if !generations.is_empty() {
+        let capture_id = request_id.clone();
+        let started = self
+            .with_state(move |host, state| {
+                let Some(mirror) = &mut state.mirror else {
+                    return false;
+                };
+                if state
+                    .remote_capture
+                    .as_ref()
+                    .is_some_and(|capture| !capture.done.is_closed())
+                    || (truncated_only && !mirror.replay_truncated())
+                {
+                    return false;
+                }
+                let generations: HashMap<_, _> = state
+                    .recovery
+                    .board()
+                    .cards
+                    .iter()
+                    .filter_map(|card| state.manager.view(&card.id).map(|v| (card.id.clone(), v.0)))
+                    .collect();
+                if generations.is_empty() {
+                    return false;
+                }
+                let position = mirror.begin_capture();
                 let event = json!({
                     "type": "remote-capture",
                     "requestId": request_id,
+                    "includeScrollback": include_scrollback,
                     "ids": generations.keys().collect::<Vec<_>>(),
                 });
                 state.remote_capture = Some(RemoteCapture {
                     request_id,
                     generations,
+                    position,
                     done,
                 });
                 host.emit(event);
-            }
-        })
-        .await;
-        if tokio::time::timeout(Duration::from_secs(3), captured).await.is_err() {
-            // An unresponsive desktop can still start the server with live output.
-            self.with_state(|_, state| state.remote_capture = None).await;
+                true
+            })
+            .await;
+        if started && tokio::time::timeout(Duration::from_secs(3), captured).await.is_err() {
+            self.with_state(move |_, state| {
+                state.remote_capture.take_if(|capture| capture.request_id == capture_id);
+            })
+            .await;
         }
     }
 
@@ -1860,8 +1890,14 @@ impl Host {
                     .view(id)
                     .is_some_and(|v| capture.generations.get(id) == Some(&v.0))
             });
+            let complete = capture.generations.iter().all(|(id, generation)| {
+                screens.contains_key(id) || state.manager.view(id).is_none_or(|view| view.0 != *generation)
+            });
             if let Some(mirror) = &mut state.mirror {
-                mirror.seed(screens);
+                mirror.seed(capture.position, screens);
+                if complete {
+                    mirror.finish_capture(capture.position);
+                }
             }
             let _ = capture.done.send(());
         })
