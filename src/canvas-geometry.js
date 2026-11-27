@@ -209,10 +209,98 @@
         search(inset, 0);
         return found || place(inset);
     }
+    // Snapping. Rectangles, `threshold` (a fixed screen distance divided by the zoom), and `grid`
+    // (0 for none) are in world units. Each axis snaps on its own: to the nearest target line within
+    // `threshold`, otherwise to the grid. A rectangle's lines on an axis are its two edges and its
+    // middle; edges snap to edges and middles to middles. A tie goes to the smaller move, then the
+    // move toward lower coordinates, so the order of `targets` never matters.
+    const SNAP_AXES = { x: { start: 'x', size: 'w', across: 'y', depth: 'h' }, y: { start: 'y', size: 'h', across: 'x', depth: 'w' } };
+    const SNAP_EPSILON = 1e-6;
+    const snapLines = (r, axis) => { const { start, size } = SNAP_AXES[axis]; return [r[start], r[start] + r[size] / 2, r[start] + r[size]]; };
+    const closer = (offset, best) => !best || Math.abs(offset) < Math.abs(best.offset) || (Math.abs(offset) === Math.abs(best.offset) && offset < best.offset);
+    // Adding zero turns a rounded -0 into 0.
+    const toGrid = (value, grid) => Math.round(value / grid) * grid + 0;
+    // Where a moved rectangle lands: `{ x, y, guides }`.
+    function snapMove(rect, targets, { threshold = 0, grid = 0 } = {}) {
+        const result = { ...rect };
+        for (const axis of ['x', 'y']) {
+            const { start, size } = SNAP_AXES[axis], own = snapLines(rect, axis);
+            let best = null;
+            for (const target of targets) {
+                snapLines(target, axis).forEach((line, j) => own.forEach((mine, i) => {
+                    const offset = line - mine;
+                    if ((i === 1) === (j === 1) && Math.abs(offset) <= threshold && closer(offset, best)) best = { offset, line, i };
+                }));
+            }
+            if (best) result[start] = best.line - best.i * rect[size] / 2;
+            else if (grid > 0) result[start] = toGrid(rect[start], grid);
+        }
+        return { x: result.x, y: result.y, guides: snapGuides(result, targets) };
+    }
+    // The size a rectangle resized from its bottom-right corner snaps to: `{ w, h, guides }`. Its right
+    // and bottom edges snap to target edges, and its width and height to target sizes, on the listed
+    // `axes`. A size outside `min`..`max` is never chosen; the caller still clamps the result.
+    // `gap` places the markers that show a matched size, beside the two rectangles' edges.
+    function snapResize(rect, targets, { threshold = 0, grid = 0, axes = ['x', 'y'], min = {}, max = {}, gap = 0 } = {}) {
+        const result = { ...rect };
+        for (const axis of axes) {
+            const { start, size } = SNAP_AXES[axis];
+            const fits = value => value >= (min[size] ?? 0) && value <= (max[size] ?? Infinity);
+            let best = null;
+            const consider = value => {
+                const offset = value - rect[size];
+                if (fits(value) && Math.abs(offset) <= threshold && closer(offset, best)) best = { offset, value };
+            };
+            for (const target of targets) {
+                consider(target[start] - rect[start]);
+                consider(target[start] + target[size] - rect[start]);
+                consider(target[size]);
+            }
+            if (best) result[size] = best.value;
+            else if (grid > 0) {
+                const end = rect[start] + rect[size];
+                const sizes = [toGrid(end, grid), Math.floor(end / grid) * grid, Math.ceil(end / grid) * grid].map(line => line - rect[start]).filter(fits);
+                if (sizes.length) result[size] = sizes.reduce((a, b) => (Math.abs(b - rect[size]) < Math.abs(a - rect[size]) ? b : a));
+            }
+        }
+        return { w: result.w, h: result.h, guides: snapGuides(result, targets, { sizes: axes, gap }) };
+    }
+    // The guides for `rect` where it now lies: `{ x1, y1, x2, y2 }` segments, one along each line it
+    // shares with a target, spanning both. For each axis in `sizes`, the nearest target of the same
+    // width (x) or height (y) gets a marker beside its top or left edge, and so does `rect`; markers
+    // carry `size: true`.
+    function snapGuides(rect, targets, { sizes = [], gap = 0 } = {}) {
+        const guides = [];
+        for (const axis of ['x', 'y']) {
+            const { across, depth } = SNAP_AXES[axis], own = snapLines(rect, axis), spans = new Map();
+            for (const target of targets) {
+                snapLines(target, axis).forEach((line, j) => own.forEach((mine, i) => {
+                    if ((i === 1) !== (j === 1) || Math.abs(line - mine) > SNAP_EPSILON) return;
+                    const [from, to] = spans.get(mine) || [rect[across], rect[across] + rect[depth]];
+                    spans.set(mine, [Math.min(from, target[across]), Math.max(to, target[across] + target[depth])]);
+                }));
+            }
+            for (const [at, [from, to]] of [...spans].sort((a, b) => a[0] - b[0])) {
+                guides.push(axis === 'x' ? { x1: at, y1: from, x2: at, y2: to } : { x1: from, y1: at, x2: to, y2: at });
+            }
+        }
+        const c = center(rect), distance = b => Math.hypot(center(b).x - c.x, center(b).y - c.y);
+        const nearer = (a, b) => distance(b) < distance(a) || (distance(b) === distance(a) && (b.y - a.y || b.x - a.x) < 0);
+        for (const axis of sizes) {
+            const { size } = SNAP_AXES[axis];
+            const same = targets.filter(target => Math.abs(target[size] - rect[size]) <= SNAP_EPSILON);
+            if (!same.length) continue;
+            for (const r of [rect, same.reduce((a, b) => (nearer(a, b) ? b : a))]) {
+                guides.push(axis === 'x' ? { x1: r.x, y1: r.y - gap, x2: r.x + r.w, y2: r.y - gap, size: true }
+                    : { x1: r.x - gap, y1: r.y, x2: r.x - gap, y2: r.y + r.h, size: true });
+            }
+        }
+        return guides;
+    }
     const geometry = {
         center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
         outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt,
-        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera
+        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, snapMove, snapResize, snapGuides
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;
     else root.TerminalCanvasGeometry = geometry;

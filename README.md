@@ -41,6 +41,7 @@ even without command-line flags. Release builds reject the `e2e` feature.
 - Choose **New terminal** or a sidebar profile. Set a name, project folder, and optional shell command, then start it.
 - Right-click empty canvas space for **New terminal here** and choose a profile. The usual launch form opens; after you press Start, the card appears where you right-clicked, at any zoom. **Find terminal…** opens the searchable terminal switcher; choosing a result highlights and brings the terminal into view. With the canvas focused, the Menu key or Shift + F10 opens the menu at the last background pointer position (or the center of the view). Use Up/Down, Home/End, and Enter to choose; Escape closes it. Clicking elsewhere, scrolling, zooming, or leaving the window also closes it. Right-clicks on terminals, board items, and canvas controls keep their existing behavior.
 - Drag a card's header to move it; drag its lower-right corner to resize. Drag empty canvas or middle-drag to pan.
+- Turn on **snapping** with the magnet in the canvas toolbar to line up moves and resizes. See [Snapping](#snapping).
 - Scroll or two-finger scroll over empty space to zoom the canvas at the pointer. Plain scrolling over terminals, board items, the minimap, and controls keeps its usual behavior. Horizontal-only scrolling and plain scrolling in Focus view do not zoom. A gesture stays with its starting area until you pause, so crossing a terminal does not change zooming into terminal scrolling. Ctrl + scroll (Command on macOS) also zooms the canvas elsewhere; over the selected terminal, it changes that terminal's text size instead.
 - Hold Ctrl (Command on macOS) and scroll over the selected terminal to make its text larger or smaller. In **Focus** view this works anywhere. Each wheel notch changes the size by one pixel, from 8 to 32 (the default is 12), and the running program gets the new number of rows and columns. **Ctrl + 0** (Command + 0) in a terminal resets it; Ctrl + − and Ctrl + = still reach the shell. Each terminal keeps its own size, saved with the workspace. **Duplicate** copies it; other new terminals start at the default. Over a terminal that is not selected or has not started, Ctrl + scroll still zooms the canvas.
 - Use **Arrange**, **Fit canvas**, and **Focus** to organize your terminals. Filter the sidebar to find a terminal by name, profile, or folder.
@@ -162,6 +163,25 @@ The left canvas toolbar adds items around your terminals. Click to place an item
 - **Delete** or **Backspace** removes selected board items. Terminals are only removed with their close button, which stops running shells safely.
 
 Line styles and fonts other than the size choices are not configurable.
+
+### Snapping
+
+The magnet in the canvas toolbar turns snapping on or off. It starts off, and the choice is remembered on
+this device, separately from workspace files.
+
+- While snapping is on, moving a terminal or board item lines its edges or middle up with those of any other
+  element in view that is within six screen pixels, at every zoom. Each axis snaps on its own; where nothing is
+  that close, the left or top edge goes to the nearest grid line instead. A pink guide shows each line it shares.
+  A whole selection, a group, or a frame with its contents snaps as one rectangle; lines move with it, and
+  attached connectors follow.
+- Resizing from the lower-right corner snaps the right and bottom edges the same way, and also matches the width
+  or height of another element. Markers above or beside both elements show a matched size. Images keep their
+  proportions, so only their width snaps. Terminals and items still keep their smallest and largest sizes.
+- Choose the grid size beside the magnet: 8 to 64 pixels, or **No grid** to snap only to other elements. While
+  snapping to a grid, the background dots mark its lines.
+- Hold **Alt** while dragging to place freely; pressing or releasing it takes effect at once. On Linux desktops
+  where Alt + drag moves the window, start dragging first, then press Alt.
+- Each move or resize is still one undo step, and browser controllers save the result once the drag ends.
 
 ### Hook pointers
 
@@ -353,6 +373,7 @@ Before the first report, after a failed lookup, or in a PowerShell non-filesyste
 | Ctrl + G / Ctrl + Shift + G | Group / ungroup the selection |
 | Ctrl + Z / Ctrl + Shift + Z or Ctrl + Y | Undo / redo board changes |
 | Ctrl + C / X / V / D | Copy, cut, paste, or duplicate board items |
+| Alt while dragging, with snapping on | Place freely without snapping |
 | Delete / Backspace | Delete selected board items |
 
 Single-key and board shortcuts apply only when focus is outside a terminal or text field, so they never reach a running shell.
