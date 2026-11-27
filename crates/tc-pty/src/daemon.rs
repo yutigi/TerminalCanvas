@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -116,7 +117,7 @@ fn receive(reader: &mut impl BufRead) -> io::Result<Value> {
 }
 
 /// A handshake line, at most [`HANDSHAKE_LIMIT`] bytes.
-fn receive_short(reader: &mut BufReader<TcpStream>) -> io::Result<Value> {
+fn receive_short(reader: &mut BufReader<impl Read>) -> io::Result<Value> {
     receive(&mut reader.take(HANDSHAKE_LIMIT))
 }
 
@@ -481,7 +482,7 @@ impl Server {
         let writer = stream.try_clone()?;
         thread::Builder::new()
             .name("tc-daemon-write".into())
-            .spawn(move || write_lines(writer, &lines, None))?;
+            .spawn(move || write_lines(&writer, &lines, None))?;
         Ok(Attached {
             id: self.attachments.fetch_add(1, Ordering::SeqCst),
             out,
@@ -678,7 +679,7 @@ fn sink(server: Weak<Server>) -> EventSink {
 }
 
 /// Writes queued lines, several at a time, until the queue or the connection closes.
-fn write_lines(mut stream: TcpStream, lines: &Receiver<String>, keepalive: Option<Duration>) {
+fn write_lines(mut stream: &TcpStream, lines: &Receiver<String>, keepalive: Option<Duration>) {
     let next = || match keepalive {
         Some(interval) => match lines.recv_timeout(interval) {
             Ok(message) => Some(message),
@@ -907,13 +908,53 @@ impl Daemon {
     }
 }
 
+/// The app's end of a connection, shared by the threads that read and write it.
+///
+/// It is one socket handle, never a clone. On Windows a clone taken while the connection is still
+/// completing can keep the unconnected state for good: it reads and writes, but its `shutdown`
+/// fails (WSAENOTCONN) without reaching the helper, which then kept a detached view open.
+#[derive(Clone)]
+struct Socket(Arc<TcpStream>);
+
+impl Deref for Socket {
+    type Target = TcpStream;
+
+    fn deref(&self) -> &TcpStream {
+        &self.0
+    }
+}
+
+impl Read for Socket {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (&*self.0).read(buf)
+    }
+}
+
+impl Write for Socket {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        (&*self.0).write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        (&*self.0).flush()
+    }
+}
+
 /// An authenticated connection to the helper.
 struct Connection {
-    writer: TcpStream,
-    reader: BufReader<TcpStream>,
+    writer: Socket,
+    reader: BufReader<Socket>,
 }
 
 impl Connection {
+    fn new(stream: TcpStream) -> Self {
+        let socket = Socket(Arc::new(stream));
+        Connection {
+            writer: socket.clone(),
+            reader: BufReader::new(socket),
+        }
+    }
+
     fn open(state: &State) -> io::Result<Self> {
         if state.protocol != PROTOCOL {
             return Err(io::Error::other(MISMATCH));
@@ -922,10 +963,7 @@ impl Connection {
         let stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)?;
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
-        let mut connection = Connection {
-            writer: stream.try_clone()?,
-            reader: BufReader::new(stream),
-        };
+        let mut connection = Connection::new(stream);
         let nonce = random();
         send(&mut connection.writer, &json!({ "protocol": PROTOCOL, "nonce": nonce }))?;
         let hello = receive_short(&mut connection.reader)?;
@@ -961,7 +999,6 @@ impl Connection {
 /// Turns an attached connection into a [`Process`] that reports to `events`.
 fn attachment((connection, reply): (Connection, Value), key: SessionKey, events: EventSink) -> io::Result<Attachment> {
     let Connection { writer, mut reader } = connection;
-    // On Windows a cloned socket keeps its own timeout, so clear it where the reading happens.
     reader.get_ref().set_read_timeout(None)?;
     let pid = reply
         .get("pid")
@@ -969,12 +1006,12 @@ fn attachment((connection, reply): (Connection, Value), key: SessionKey, events:
         .and_then(|pid| u32::try_from(pid).ok());
     let shell = text(&reply, "shell").to_owned();
     let (input, lines) = mpsc::channel();
-    let output = writer.try_clone()?;
+    let output = writer.clone();
     // Older helpers ignore this frame, but reading it keeps their handshake timeout from firing.
     let keepalive = (reply.get("supportsIdle") != Some(&Value::Bool(true))).then_some(LEGACY_KEEPALIVE);
     thread::Builder::new()
         .name("tc-daemon-input".into())
-        .spawn(move || write_lines(output, &lines, keepalive))?;
+        .spawn(move || write_lines(&output, &lines, keepalive))?;
     let detached = Arc::new(AtomicBool::new(false));
     let ended = Arc::clone(&detached);
     thread::Builder::new().name("tc-daemon-output".into()).spawn(move || {
@@ -1023,7 +1060,7 @@ fn attachment((connection, reply): (Connection, Value), key: SessionKey, events:
 struct AttachedProcess {
     pid: Option<u32>,
     input: Sender<String>,
-    stream: TcpStream,
+    stream: Socket,
     detached: Arc<AtomicBool>,
 }
 
@@ -1116,12 +1153,8 @@ mod tests {
         let (peer, _) = listener.accept().unwrap();
         peer.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).unwrap();
         let mut peer = BufReader::new(peer);
-        let connection = Connection {
-            writer: stream.try_clone().unwrap(),
-            reader: BufReader::new(stream),
-        };
         let mut attached = attachment(
-            (connection, json!({ "ok": true, "shell": "test" })),
+            (Connection::new(stream), json!({ "ok": true, "shell": "test" })),
             SessionKey {
                 id: "legacy".into(),
                 generation: 1,
@@ -1138,6 +1171,42 @@ mod tests {
         assert_eq!(
             receive(&mut peer).unwrap(),
             json!({ "t": "in", "d": "echo still here\r" })
+        );
+    }
+
+    /// The helper lets a view go only once it sees the app's end of the connection, so detaching
+    /// must reach it while the app still holds the attachment.
+    #[test]
+    fn detaching_reaches_the_helper_and_ends_the_view_without_an_error() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let stream = TcpStream::connect_timeout(&listener.local_addr().unwrap(), CONNECT_TIMEOUT).unwrap();
+        stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).unwrap();
+        let (sender, events) = mpsc::channel();
+        let mut attached = attachment(
+            (
+                Connection::new(stream),
+                json!({ "ok": true, "shell": "test", "supportsIdle": true }),
+            ),
+            SessionKey {
+                id: "detached".into(),
+                generation: 1,
+            },
+            Arc::new(move |_, event| {
+                let _ = sender.send(event);
+            }),
+        )
+        .unwrap();
+
+        attached.process.kill();
+        let mut rest = Vec::new();
+        (&peer).read_to_end(&mut rest).expect("the helper sees the app hang up");
+        assert!(rest.is_empty());
+        drop(peer);
+        assert_eq!(
+            events.recv_timeout(HANDSHAKE_TIMEOUT),
+            Ok(SessionEvent::Exit(ExitStatus { code: 0, signal: None }))
         );
     }
 
