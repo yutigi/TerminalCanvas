@@ -68,6 +68,45 @@ test('minimap native navigation preserves zoom and Focus mode hides the overview
     await screenshot(h.page, 'minimap');
 });
 
+test('Arrange lays out a branched terminal workflow left to right in one undo step', windows, async t => {
+    const h = await launch({ clean: true }); t.after(() => h.dispose());
+    // Mixed sizes in scattered places: plan -> build -> test, plan -> docs, and build -> review -> plan closes a cycle.
+    const sizes = { plan: [660, 430], build: [520, 360], docs: [700, 300], test: [600, 480], review: [480, 330], notes: [560, 340] };
+    await fixtureScene(h.page, Object.keys(sizes).map((title, index) => ({
+        profile: ['shell', 'claude', 'codex', 'gemini'][index % 4], title, x: (5 - index) * 410, y: (index % 3) * 520
+    })));
+    const before = await h.page.evaluate(({ sizes, pairs }) => {
+        const byTitle = Object.fromEntries(workspace.cards.map(card => [card.title, card]));
+        for (const [title, [w, h]] of Object.entries(sizes)) Object.assign(byTitle[title], { w, h });
+        workspace.cards.forEach(renderCardGeometry);
+        for (const [from, to] of pairs) {
+            const line = { id: crypto.randomUUID(), type: 'line', start: { id: byTitle[from].id }, end: { id: byTitle[to].id }, arrow: true };
+            workspace.items.push(line); mountItem(line);
+        }
+        renderLines(); clearHistory();
+        return workspace.cards.map(({ id, title, x, y, w, h }) => ({ id, title, x, y, w, h }));
+    }, { sizes, pairs: [['plan', 'build'], ['plan', 'docs'], ['build', 'test'], ['build', 'review'], ['review', 'plan']] });
+    const layout = () => h.page.evaluate(() => ({
+        cards: Object.fromEntries(workspace.cards.map(({ title, x, y, w, h }) => [title, { x, y, w, h }])),
+        steps: boardHistory.undo.length
+    }));
+    await h.page.locator('#arrange').click();
+    const { cards, steps } = await layout();
+    assert.equal(steps, 1);
+    for (const card of before) assert.deepEqual([cards[card.title].w, cards[card.title].h], [card.w, card.h], `${card.title} keeps its size`);
+    for (const [from, to] of [['plan', 'build'], ['plan', 'docs'], ['build', 'test'], ['build', 'review']]) {
+        assert.ok(cards[to].x > cards[from].x + cards[from].w, `${to} sits right of ${from}`);
+    }
+    assert.equal(cards.build.y, cards.plan.y, 'the first branch continues the row');
+    assert.ok(cards.docs.y > cards.build.y, 'the second branch sits below the first');
+    assert.ok(cards.notes.y > Math.max(...['plan', 'build', 'docs', 'test', 'review'].map(t => cards[t].y + cards[t].h)), 'unconnected terminals follow the flow');
+    await screenshot(h.page, 'arrange-branched');
+    await h.page.locator('#arrange').click();
+    assert.deepEqual(await layout(), { cards, steps: 1 }, 'a second Arrange changes nothing and adds no undo step');
+    await h.page.locator('#undo').click();
+    assert.deepEqual(await h.page.evaluate(() => workspace.cards.map(({ id, title, x, y, w, h }) => ({ id, title, x, y, w, h }))), before);
+});
+
 test('board connectors, native clipboard, file drops, cleanup, and portable workspace images roundtrip', windows, async t => {
     await withSavedClipboard(async () => {
         const h = await launch({ clean: true }); t.after(() => h.dispose());

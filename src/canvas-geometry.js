@@ -209,6 +209,103 @@
         search(inset, 0);
         return found || place(inset);
     }
+    // Arrange. `cards` are the elements to arrange, `{ id, x, y, w, h }` in board order (terminal cards, or a selection
+    // that may include board items), and `links` are `{ from, to }` IDs. Cards joined
+    // by links form left-to-right flows: a card's column is its longest path from a card with no incoming link,
+    // and each branch stacks below the first one, so a chain stays on one row. A link that closes a cycle and a
+    // self-link are ignored. Each set of linked cards gets its own section, in order of its first card, and the
+    // unconnected cards follow in a grid. Sizes never change. The result is `[{ id, x, y }]` in card order and
+    // depends only on card order, sizes, links, and the cards' top-left corner, which it keeps, so arranging
+    // its own output changes nothing. The whole layout then moves down until no card overlaps an `obstacles`
+    // rectangle.
+    const ARRANGE_GAP = { column: 120, branch: 60, section: 120, grid: 60, clear: 40 };
+    function arrangeCards(cards, links = [], obstacles = []) {
+        if (!cards.length) return [];
+        const gap = ARRANGE_GAP, count = cards.length;
+        const index = new Map(cards.map((card, i) => [card.id, i]));
+        const out = cards.map(() => new Set()), into = cards.map(() => new Set());
+        for (const { from, to } of links) {
+            const a = index.get(from), b = index.get(to);
+            if (a === undefined || b === undefined || a === b) continue;
+            out[a].add(b); into[b].add(a);
+        }
+        const linked = v => out[v].size > 0 || into[v].size > 0;
+        // Depth-first from cards without incoming links, then from any card left on a cycle. A link back to
+        // a card still being visited closes a cycle; dropping those leaves an acyclic flow. The first visit
+        // to each card defines the tree that places branches.
+        const visiting = 1, done = 2, state = new Array(count).fill(0);
+        const kept = cards.map(() => []), branches = cards.map(() => []), roots = [], finished = [];
+        const visit = v => {
+            state[v] = visiting;
+            for (const w of [...out[v]].sort((a, b) => a - b)) {
+                if (state[w] === visiting) continue;
+                kept[v].push(w);
+                if (!state[w]) { branches[v].push(w); visit(w); }
+            }
+            state[v] = done; finished.push(v);
+        };
+        for (let v = 0; v < count; v++) if (linked(v) && !into[v].size && !state[v]) { roots.push(v); visit(v); }
+        for (let v = 0; v < count; v++) if (linked(v) && !state[v]) { roots.push(v); visit(v); }
+        // Reverse finishing order is a topological order of the kept links.
+        const column = new Array(count).fill(0);
+        for (const v of finished.reverse()) for (const w of kept[v]) column[w] = Math.max(column[w], column[v] + 1);
+        const band = new Array(count).fill(0);
+        const measure = v => {
+            const stacked = branches[v].reduce((sum, w, i) => sum + measure(w) + (i ? gap.branch : 0), 0);
+            return (band[v] = Math.max(cards[v].h, stacked));
+        };
+        // Sets of linked cards, found from links in either direction, in order of their first card.
+        const parent = cards.map((_, i) => i);
+        const find = v => (parent[v] === v ? v : (parent[v] = find(parent[v])));
+        out.forEach((targets, a) => targets.forEach(b => { parent[find(a)] = find(b); }));
+        const sections = new Map();
+        for (const root of roots) {
+            const key = find(root);
+            if (!sections.has(key)) sections.set(key, { first: count, roots: [], members: [] });
+            sections.get(key).roots.push(root);
+        }
+        for (let v = 0; v < count; v++) if (linked(v)) {
+            const section = sections.get(find(v));
+            section.members.push(v); section.first = Math.min(section.first, v);
+        }
+        const position = new Array(count);
+        const offsets = (sizes, spacing) => sizes.reduce((list, size, i) => [...list, i ? list[i - 1] + sizes[i - 1] + spacing : 0], []);
+        let top = 0;
+        for (const section of [...sections.values()].sort((a, b) => a.first - b.first)) {
+            const widths = [];
+            for (const v of section.members) widths[column[v]] = Math.max(widths[column[v]] || 0, cards[v].w);
+            const left = offsets(Array.from(widths, w => w || 0), gap.column);
+            const place = (v, y) => {
+                position[v] = { x: left[column[v]], y };
+                for (const w of branches[v]) { place(w, y); y += band[w] + gap.branch; }
+            };
+            for (const root of section.roots) { const height = measure(root); place(root, top); top += height + gap.branch; }
+            top += gap.section - gap.branch;
+        }
+        const loose = cards.map((_, v) => v).filter(v => !linked(v));
+        if (loose.length) {
+            const across = Math.ceil(Math.sqrt(loose.length)), widths = [], heights = [];
+            loose.forEach((v, i) => {
+                const c = i % across, r = Math.floor(i / across);
+                widths[c] = Math.max(widths[c] || 0, cards[v].w); heights[r] = Math.max(heights[r] || 0, cards[v].h);
+            });
+            const xs = offsets(widths, gap.grid), ys = offsets(heights, gap.grid);
+            loose.forEach((v, i) => { position[v] = { x: xs[i % across], y: top + ys[Math.floor(i / across)] }; });
+        }
+        const origin = { x: Math.round(Math.min(...cards.map(c => c.x))), y: Math.round(Math.min(...cards.map(c => c.y))) };
+        const rect = (v, shift) => ({ x: origin.x + position[v].x, y: origin.y + position[v].y + shift, w: cards[v].w, h: cards[v].h });
+        const padded = b => ({ x: b.x - gap.clear, y: b.y - gap.clear, w: b.w + gap.clear * 2, h: b.h + gap.clear * 2 });
+        let shift = 0;
+        for (let moved = true; moved;) {
+            moved = false;
+            for (let v = 0; v < count && !moved; v++) {
+                const card = rect(v, shift), hit = obstacles.find(b => intersects(padded(b), card));
+                // Whole pixels keep the moved layout's corner where the next Arrange reads it.
+                if (hit) { shift = Math.ceil(hit.y + hit.h + gap.clear - origin.y - position[v].y); moved = true; }
+            }
+        }
+        return cards.map((card, v) => ({ id: card.id, x: origin.x + position[v].x, y: origin.y + position[v].y + shift }));
+    }
     // Snapping. Rectangles, `threshold` (a fixed screen distance divided by the zoom), and `grid`
     // (0 for none) are in world units. Each axis snaps on its own: to the nearest target line within
     // `threshold`, otherwise to the grid. A rectangle's lines on an axis are its two edges and its
@@ -300,7 +397,7 @@
     const geometry = {
         center, rectFromPoints, containsPoint, containsRect, intersects, clipToBounds, resolveLine, boundsOfPoints, unionBounds,
         outerGroup, expandGroups, selectionUnits, groupPaths, ungroupPaths, pruneGroupPaths, frameContents, marquee, topmostAt,
-        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, snapMove, snapResize, snapGuides
+        placeBeside, placeNear, nearestInDirection, nearestToPoint, revealCamera, snapMove, snapResize, snapGuides, arrangeCards, ARRANGE_GAP
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = geometry;
     else root.TerminalCanvasGeometry = geometry;
