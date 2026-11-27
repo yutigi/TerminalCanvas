@@ -1763,6 +1763,51 @@ test('repeating a color, text size, or Arrange that changes nothing adds no undo
     assert.deepEqual(json(context, 'workspace.cards.map(c => [c.x, c.y])'), [[30, 40], [900, 40]]);
 });
 
+test('Arrange follows terminal connectors, keeps sizes and attachments, and is one undo step', async () => {
+    const board = createWorkspace();
+    const [a, b, c, loose] = [{ x: 900, y: 700 }, { x: 40, y: 2000, w: 500, h: 300 }, { x: 1600, y: 50, w: 800, h: 600 }, { x: 300, y: 300 }]
+        .map(options => createCard(options));
+    board.cards.push(c, a, loose, b);
+    board.items.push(
+        { id: 'a-b', type: 'line', start: { id: a.id }, end: { id: b.id }, arrow: true },
+        { id: 'a-c', type: 'line', start: { id: a.id }, end: { id: c.id }, arrow: true },
+        // A plain line still sets the flow; one to a note, a free end, and other canvases' cards do not.
+        { id: 'c-b', type: 'line', start: { id: c.id }, end: { id: b.id } },
+        { id: 'to-note', type: 'line', start: { id: loose.id }, end: { id: 'pad' }, arrow: true },
+        { id: 'free', type: 'line', start: { id: loose.id }, end: { x: 0, y: 0 }, arrow: true },
+        { id: 'frame', type: 'frame', x: 0, y: 0, w: 4000, h: 4000, title: 'Frames stay behind' },
+        note('pad', 0, 0)
+    );
+    const { elements, context } = await boot(board);
+    const steps = () => json(context, 'boardHistory.undo.length');
+    const before = json(context, 'workspace.cards.map(({ id, x, y, w, h }) => ({ id, x, y, w, h }))');
+    const camera = json(context, 'workspace.camera');
+    elements.get('#arrange').onclick();
+    assert.equal(steps(), 1);
+    const after = new Map(json(context, 'workspace.cards').map(card => [card.id, card]));
+    const at = card => [after.get(card.id).x, after.get(card.id).y];
+    const gap = json(context, 'Geometry.ARRANGE_GAP'), top = 200 + gap.clear;
+    // c is first in card order but has an incoming connector, so the flow starts at a.
+    assert.deepEqual(at(a), [40, top], 'the note at the top-left corner pushes the cards below it; the frame does not');
+    assert.deepEqual(at(c), [40 + 660 + gap.column, top], 'a -> c, found first in card order, continues the row');
+    assert.deepEqual(at(b), [40 + 660 + gap.column + 800 + gap.column, top], 'b follows its longest path through c');
+    assert.deepEqual(at(loose), [40, top + 600 + gap.section], 'the unconnected terminal goes below the flow');
+    for (const card of before) assert.deepEqual([after.get(card.id).w, after.get(card.id).h], [card.w, card.h], 'sizes are kept');
+    assert.deepEqual(json(context, 'workspace.items.filter(i => i.type === "line").map(l => [l.id, l.start.id, l.end.id])'),
+        [['a-b', a.id, b.id], ['a-c', a.id, c.id], ['c-b', c.id, b.id], ['to-note', loose.id, 'pad'], ['free', loose.id, null]]);
+    assert.deepEqual(json(context, '["pad", "frame"].map(id => findItem(id)).map(({ x, y, w, h }) => [x, y, w, h])'),
+        [[0, 0, 200, 200], [0, 0, 4000, 4000]], 'other items stay put');
+    assert.notDeepEqual(json(context, 'workspace.camera'), camera, 'Arrange still fits the canvas');
+    const arranged = json(context, 'workspace.cards');
+    elements.get('#arrange').onclick();
+    assert.deepEqual(json(context, 'workspace.cards'), arranged, 'a second Arrange changes nothing');
+    assert.equal(steps(), 1, 'and adds no undo step');
+    vm.runInContext('undo()', context);
+    assert.deepEqual(json(context, 'workspace.cards.map(({ id, x, y, w, h }) => ({ id, x, y, w, h }))'), before, 'one undo restores the old layout');
+    vm.runInContext('redo()', context);
+    assert.deepEqual(json(context, 'workspace.cards'), arranged);
+});
+
 test('deleting the other part of an outer group leaves only the inner group', async () => {
     const workspace = createWorkspace();
     workspace.items.push(note('a', 0, 0), note('b', 300, 0), note('c', 600, 0));

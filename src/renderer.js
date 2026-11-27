@@ -1995,8 +1995,18 @@ $('#canvas-nav').onclick = () => { if (ready) fitCanvas(); };
 $('#add-terminal').onclick = $('#empty-add').onclick = () => openLaunch();
 $('#arrange').onclick = () => {
     if (!ready || boardBusy()) return; setFocus(null);
-    const columns = Math.max(1, Math.ceil(Math.sqrt(workspace.cards.length)));
-    recordChange(() => workspace.cards.forEach((c, i) => { c.x = (i % columns) * 700; c.y = Math.floor(i / columns) * 470; c.w = 660; c.h = 430; renderGeometry(c); }));
+    // Connectors between two terminals on this canvas set the flow; other board items keep their place,
+    // and the terminals move below any note, shape, text, or image they would cover. Frames may sit behind them.
+    const cards = new Set(workspace.cards.map(card => card.id));
+    const links = workspace.items.filter(item => item.type === 'line' && cards.has(item.start.id) && cards.has(item.end.id))
+        .map(line => ({ from: line.start.id, to: line.end.id }));
+    const obstacles = workspace.items.filter(item => item.type !== 'line' && item.type !== 'frame').map(boundsOf);
+    const placed = Geometry.arrangeCards(workspace.cards, links, obstacles);
+    recordChange(() => placed.forEach(({ id, x, y }) => {
+        const card = findCard(id);
+        card.x = clampCoordinate(x); card.y = clampCoordinate(y); renderCardGeometry(card);
+    }));
+    renderLines(); renderSelectionBox(); renderMinimap();
     fitCanvas();
 };
 $('#focus-toggle').onclick = () => { if (ready) setFocus(focused ? null : selected); };

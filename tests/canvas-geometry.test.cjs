@@ -104,7 +104,7 @@ test('terminals requested from outside open centered in view, or in the nearest 
     assert.deepEqual(G.placeNear(center, size, [everywhere]), { x: 700, y: 300 });
 });
 
-// A 3 x 2 grid as Arrange lays it out: 660 x 430 cards, 40 px apart.
+// A 3 x 2 grid of 660 x 430 cards, 40 px apart.
 const grid = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, i) => ({ id, bounds: { x: (i % 3) * 700, y: Math.floor(i / 3) * 470, w: 660, h: 430 } }));
 const from = (list, id) => list.find(c => c.id === id).bounds;
 const others = (list, id) => list.filter(c => c.id !== id);
@@ -246,4 +246,127 @@ test('clearing an overlay never pushes the card past the edge of a small view', 
     assert.equal(camera.z, .65);
     assert.ok(shown.x >= 0 && shown.y >= 0 && shown.x + shown.w <= view.width && shown.y + shown.h <= view.height, JSON.stringify(shown));
     for (const box of [tools, toolbar, minimap]) assert.equal(G.intersects(shown, box), false);
+});
+
+// Arrange: cards `{ id, x, y, w, h }`, links `{ from, to }`. Results are `{ id, x, y }` in card order.
+const GAP = G.ARRANGE_GAP;
+const card = (id, w = 660, h = 430, x = 0, y = 0) => ({ id, x, y, w, h });
+const links = pairs => pairs.map(([from, to]) => ({ from, to }));
+const arranged = (cards, list = [], obstacles = []) => {
+    const placed = G.arrangeCards(cards, list, obstacles);
+    return { placed, at: id => placed.find(p => p.id === id) };
+};
+const noOverlaps = (cards, placed) => {
+    const boxes = placed.map((p, i) => ({ id: p.id, x: p.x, y: p.y, w: cards[i].w, h: cards[i].h }));
+    for (const a of boxes) for (const b of boxes) if (a !== b) assert.equal(G.intersects(a, b), false, `${a.id} overlaps ${b.id}`);
+};
+// Arranges, then arranges the result again, which must change nothing.
+const rerun = (cards, list, obstacles = []) => {
+    const first = G.arrangeCards(cards, list, obstacles);
+    const moved = cards.map((c, i) => ({ ...c, x: first[i].x, y: first[i].y }));
+    assert.deepEqual(G.arrangeCards(moved, list, obstacles), first, 'arranging the result again changes nothing');
+    return first;
+};
+
+test('a chain of mixed sizes reads left to right on one row, keeping the top-left corner', () => {
+    const cards = [card('c', 500, 300, 900, 900), card('a', 660, 430, 120, 80), card('b', 800, 600, 400, 2000)];
+    const { placed, at } = arranged(cards, links([['a', 'b'], ['b', 'c']]));
+    assert.deepEqual(placed.map(p => p.id), ['c', 'a', 'b'], 'results follow card order');
+    assert.deepEqual(at('a'), { id: 'a', x: 120, y: 80 });
+    assert.deepEqual(at('b'), { id: 'b', x: 120 + 660 + GAP.column, y: 80 });
+    assert.deepEqual(at('c'), { id: 'c', x: 120 + 660 + GAP.column + 800 + GAP.column, y: 80 });
+    noOverlaps(cards, placed);
+});
+
+test('branches stack below the first branch in card order, and a merge lands right of both parents', () => {
+    // a -> b, a -> c, b -> d, c -> d, c -> e: a diamond with an extra branch from c.
+    const cards = ['a', 'b', 'c', 'd', 'e'].map(id => card(id, 400, id === 'b' ? 500 : 300));
+    const { placed, at } = arranged(cards, links([['c', 'e'], ['a', 'c'], ['b', 'd'], ['a', 'b'], ['c', 'd']]));
+    const column = n => n * (400 + GAP.column);
+    assert.deepEqual(at('a'), { id: 'a', x: column(0), y: 0 });
+    assert.deepEqual(at('b'), { id: 'b', x: column(1), y: 0 }, 'the first branch continues the row');
+    assert.deepEqual(at('d'), { id: 'd', x: column(2), y: 0 }, 'd is reached first through b and sits right of both parents');
+    assert.deepEqual(at('c'), { id: 'c', x: column(1), y: 500 + GAP.branch }, 'the second branch starts below the first');
+    assert.deepEqual(at('e'), { id: 'e', x: column(2), y: 500 + GAP.branch });
+    noOverlaps(cards, placed);
+});
+
+test('cycles and self-links are laid out once, from the first card of a cycle with no way in', () => {
+    const cards = ['b', 'a', 'c'].map(id => card(id, 300, 200));
+    const list = links([['a', 'b'], ['b', 'c'], ['c', 'a'], ['a', 'a'], ['c', 'c']]);
+    const { at } = arranged(cards, list);
+    const column = n => n * (300 + GAP.column);
+    assert.deepEqual([at('b'), at('c'), at('a')].map(p => [p.x, p.y]), [[column(0), 0], [column(1), 0], [column(2), 0]],
+        'b is first in card order, then c, and a closes the cycle');
+    // A flow that enters a cycle starts from its source instead.
+    const entered = arranged([...cards, card('s', 300, 200)], [...list, { from: 's', to: 'a' }]);
+    assert.deepEqual(['s', 'a', 'b', 'c'].map(id => entered.at(id).x), [0, 1, 2, 3].map(column));
+    assert.deepEqual(arranged([card('x', 300, 200, 5, 5)], links([['x', 'x']])).at('x'), { id: 'x', x: 5, y: 5 },
+        'a self-link alone leaves the card unconnected');
+    rerun(cards, list);
+});
+
+test('separate flows stack in order of their first card, with unconnected cards in a grid below', () => {
+    const cards = [card('loose1', 300, 200), card('f2a', 500, 250), card('f1a', 400, 300), card('loose2', 600, 100),
+        card('f1b', 400, 350), card('f2b', 450, 250), card('loose3', 200, 400), card('loose4', 300, 150)];
+    const list = links([['f1a', 'f1b'], ['f2a', 'f2b']]);
+    const { placed, at } = arranged(cards, list);
+    assert.deepEqual(at('f2a'), { id: 'f2a', x: 0, y: 0 }, 'f2a comes first in card order');
+    assert.deepEqual(at('f2b'), { id: 'f2b', x: 500 + GAP.column, y: 0 });
+    const second = 250 + GAP.section;
+    assert.deepEqual(at('f1a'), { id: 'f1a', x: 0, y: second });
+    assert.deepEqual(at('f1b'), { id: 'f1b', x: 400 + GAP.column, y: second });
+    // Two columns as wide as their widest card, and two rows as tall as their tallest card.
+    const grid = second + 350 + GAP.section, left = 300 + GAP.grid, lower = grid + 200 + GAP.grid;
+    assert.deepEqual(['loose1', 'loose2', 'loose3', 'loose4'].map(id => [at(id).x, at(id).y]),
+        [[0, grid], [left, grid], [0, lower], [left, lower]]);
+    noOverlaps(cards, placed);
+    rerun(cards, list);
+});
+
+test('without connectors Arrange is a grid in card order', () => {
+    // Columns are as wide as their widest card (a and c), rows as tall as their tallest (a and b).
+    const cards = [card('a', 660, 430, 50, 60), card('b', 300, 800, -400, 900), card('c', 900, 200, 10, 10)];
+    assert.deepEqual(G.arrangeCards(cards), [{ id: 'a', x: -400, y: 10 }, { id: 'b', x: -400 + 900 + GAP.grid, y: 10 },
+        { id: 'c', x: -400, y: 10 + 800 + GAP.grid }]);
+    assert.deepEqual(G.arrangeCards([], links([['a', 'b']])), []);
+});
+
+test('Arrange ignores link order, links to other items, and duplicate links', () => {
+    const cards = ['a', 'b', 'c', 'd'].map((id, i) => card(id, 300 + i * 50, 200 + i * 40));
+    const list = links([['a', 'b'], ['a', 'c'], ['c', 'd'], ['b', 'd']]);
+    const expected = G.arrangeCards(cards, list);
+    assert.deepEqual(G.arrangeCards(cards, [...list].reverse()), expected);
+    assert.deepEqual(G.arrangeCards(cards, [...list, ...list, { from: 'a', to: 'gone' }, { from: 'note', to: 'b' }]), expected);
+});
+
+test('mixed sizes never overlap and repeated runs are stable, from any starting corner', () => {
+    // A deterministic pseudo-random board: sizes, positions, and links vary, including cycles and self-links.
+    let seed = 7;
+    const next = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    for (let round = 0; round < 40; round++) {
+        const cards = Array.from({ length: 3 + next(14) }, (_, i) => card(`t${i}`, 280 + next(900), 180 + next(700),
+            next(5000) - 2500 + .5, next(5000) - 2500 + .25));
+        const list = Array.from({ length: next(cards.length * 2) }, () => ({ from: `t${next(cards.length)}`, to: `t${next(cards.length)}` }));
+        const placed = rerun(cards, list);
+        noOverlaps(cards, placed);
+        assert.deepEqual([Math.min(...placed.map(p => p.x)), Math.min(...placed.map(p => p.y))],
+            [Math.round(Math.min(...cards.map(c => c.x))), Math.round(Math.min(...cards.map(c => c.y)))]);
+    }
+});
+
+test('the arranged cards move down clear of other items and stay there on the next run', () => {
+    const cards = [card('a', 400, 300, 100, 100), card('b', 400, 300, 2000, 100), card('c', 400, 300, 0, 0)];
+    const list = links([['a', 'b']]);
+    // A note inside the flow's row, and a label below it where c would land after the first move.
+    const note = { x: 700, y: 150, w: 200, h: 200 }, label = { x: 0, y: 900, w: 100, h: 20.5 };
+    const placed = rerun(cards, list, [note, label]);
+    for (const [i, p] of placed.entries()) for (const item of [note, label]) {
+        const padded = { x: item.x - GAP.clear, y: item.y - GAP.clear, w: item.w + GAP.clear * 2, h: item.h + GAP.clear * 2 };
+        assert.equal(G.intersects({ ...p, w: cards[i].w, h: cards[i].h }, padded), false, `${p.id} covers an item`);
+    }
+    assert.equal(Math.min(...placed.map(p => p.x)), 0, 'the layout keeps its left edge');
+    assert.ok(Number.isInteger(Math.min(...placed.map(p => p.y))), 'the moved corner stays on whole pixels');
+    assert.deepEqual(G.arrangeCards(cards, list, [{ x: 5000, y: 5000, w: 10, h: 10 }]), G.arrangeCards(cards, list),
+        'an item away from the cards changes nothing');
 });
